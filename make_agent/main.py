@@ -30,9 +30,15 @@ def main() -> None:
         metavar="PROMPT",
         help="If set skip interactive mode and send this prompt to the model (default: None)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Log all messages to make-agent.log",
+    )
     args = parser.parse_args()
 
-    run(makefile_path=Path(args.file), model=args.model, prompt=args.prompt)
+    run(makefile_path=Path(args.file), model=args.model, prompt=args.prompt, debug=args.debug)
 
 
 if __name__ == "__main__":

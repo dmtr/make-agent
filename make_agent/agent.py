@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import cmd
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +14,7 @@ from make_agent.parser import parse_file
 from make_agent.tools import build_tools, run_tool
 
 _DEFAULT_MODEL = "openai/gpt-4o"
+_log = logging.getLogger(__name__)
 
 
 class Agent:
@@ -33,6 +35,7 @@ class Agent:
         self._messages: list[dict] = []
         if mf.system_prompt:
             self._messages.append({"role": "system", "content": mf.system_prompt})
+            _log.debug("[system]\n%s", mf.system_prompt)
 
     @property
     def tool_names(self) -> list[str]:
@@ -45,6 +48,7 @@ class Agent:
         text response.
         """
         self._messages.append({"role": "user", "content": user_input})
+        _log.debug("[user]\n%s", user_input)
 
         while True:
             response = litellm.completion(
@@ -64,7 +68,9 @@ class Agent:
                     except json.JSONDecodeError:
                         arguments = {}
 
+                    _log.debug("[tool_call] %s args=%s", target, arguments)
                     output = run_tool(target, arguments, self._makefile_path)
+                    _log.debug("[tool_result] %s -> %s", target, output)
 
                     self._messages.append(
                         {
@@ -76,6 +82,7 @@ class Agent:
             else:
                 content = msg.content or ""
                 self._messages.append({"role": "assistant", "content": content})
+                _log.debug("[assistant]\n%s", content)
                 return content
 
 
@@ -113,13 +120,23 @@ class MakeAgentShell(cmd.Cmd):
         return True
 
 
-def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] = None) -> None:
+def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] = None, debug: bool = False) -> None:
     """Start the interactive shell.
 
     Reads the system prompt and tool definitions from *makefile_path*, then
     enters a :class:`MakeAgentShell` loop.  Press Ctrl-D, Ctrl-C, or type
     ``exit`` / ``quit`` to leave.
+
+    When *debug* is ``True`` all messages are logged to ``make-agent.log`` in
+    the current working directory.
     """
+    if debug:
+        log_file = Path("make-agent.log")
+        handler = logging.FileHandler(log_file)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        _log.addHandler(handler)
+        _log.setLevel(logging.DEBUG)
+        print(f"Debug logging enabled → {log_file}\n")
     agent = Agent(makefile_path, model)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")
     print("Type your message. Press Ctrl-D or Ctrl-C to exit.\n")
