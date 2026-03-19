@@ -10,16 +10,16 @@ Each Makefile target annotated with a `# <tool>` comment block becomes a callabl
 uv pip install .
 ```
 
-Requires Python 3.10+ and a working `make` binary. Uses [litellm](https://github.com/BerriAI/litellm) for model access, so any API keys (e.g. `OPENAI_API_KEY`) must be set in the environment.
+Requires Python 3.10+ and a working `make` binary. Uses [litellm](https://github.com/BerriAI/litellm) for model access, so any API keys (e.g. `ANTHROPIC_API_KEY`) must be set in the environment.
 
 ## Usage
 
 ```
-OPENAI_API_KEY=<key> uv run make_agent [-f FILE] [--model MODEL] [--prompt PROMPT]
+ANTHROPIC_API_KEY=<key> uv run make_agent [-f FILE] [--model MODEL] [--prompt PROMPT]
 ```
 
 - `-f FILE` — Makefile to load (default: `./Makefile`)
-- `--model MODEL` — litellm model string (default: `openai/gpt-4o`)
+- `--model MODEL` — litellm model string (default: `anthropic/claude-haiku-4-5-20251001`)
 - `--prompt PROMPT` — send a single prompt and exit instead of entering the interactive shell
 
 Without `--prompt`, the agent starts an interactive REPL. Type `exit`, `quit`, or press Ctrl-D to leave.

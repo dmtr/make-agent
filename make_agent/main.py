@@ -20,9 +20,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--model",
-        default="openai/gpt-4o",
+        default="anthropic/claude-haiku-4-5-20251001",
         metavar="MODEL",
-        help="litellm model string (default: openai/gpt-4o)",
+        help="litellm model string (default: anthropic/claude-haiku-4-5-20251001)",
     )
     parser.add_argument(
         "--prompt",

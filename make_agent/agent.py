@@ -13,7 +13,7 @@ import litellm
 from make_agent.parser import parse_file
 from make_agent.tools import build_tools, run_tool
 
-_DEFAULT_MODEL = "openai/gpt-4o"
+_DEFAULT_MODEL = "anthropic/claude-haiku-4-5-20251001"
 _log = logging.getLogger(__name__)
 
 
@@ -22,7 +22,7 @@ class Agent:
 
     Call the instance with a user message to get the assistant's reply::
 
-        agent = Agent(Path("Makefile"), model="openai/gpt-4o")
+        agent = Agent(Path("Makefile"), model="anthropic/claude-haiku-4-5-20251001")
         reply = agent("List the files in the current directory.")
     """
 
