@@ -5,6 +5,7 @@ from __future__ import annotations
 import cmd
 import json
 from pathlib import Path
+from typing import Optional
 
 import litellm
 
@@ -90,7 +91,10 @@ class MakeAgentShell(cmd.Cmd):
 
     def default(self, line: str) -> None:
         """Send *line* to the agent and print the reply."""
-        print(self._agent(line))
+        try:
+            print(self._agent(line))
+        except Exception as e:
+            print(f"Error: {e}")
 
     def emptyline(self) -> None:
         """Do nothing on an empty line (overrides cmd.Cmd's repeat-last-command)."""
@@ -109,7 +113,7 @@ class MakeAgentShell(cmd.Cmd):
         return True
 
 
-def run(makefile_path: Path, model: str = _DEFAULT_MODEL) -> None:
+def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] = None) -> None:
     """Start the interactive shell.
 
     Reads the system prompt and tool definitions from *makefile_path*, then
@@ -119,6 +123,11 @@ def run(makefile_path: Path, model: str = _DEFAULT_MODEL) -> None:
     agent = Agent(makefile_path, model)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")
     print("Type your message. Press Ctrl-D or Ctrl-C to exit.\n")
+
+    if prompt:
+        print("Sending initial prompt...\n")
+        print(agent(prompt))
+        return
 
     shell = MakeAgentShell(agent)
     try:

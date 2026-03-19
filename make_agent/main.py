@@ -24,9 +24,15 @@ def main() -> None:
         metavar="MODEL",
         help="litellm model string (default: openai/gpt-4o)",
     )
+    parser.add_argument(
+        "--prompt",
+        default=None,
+        metavar="PROMPT",
+        help="If set skip interactive mode and send this prompt to the model (default: None)",
+    )
     args = parser.parse_args()
 
-    run(makefile_path=Path(args.file), model=args.model)
+    run(makefile_path=Path(args.file), model=args.model, prompt=args.prompt)
 
 
 if __name__ == "__main__":
