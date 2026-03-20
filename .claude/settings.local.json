@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(/Users/dmtr/proj/python/make-agent/.venv/bin/python -m pytest tests/)"
-    ]
-  }
-}
