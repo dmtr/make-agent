@@ -99,6 +99,37 @@ def test_run_tool_error_on_nonzero_exit(tmp_path):
     assert result.startswith("Error")
 
 
+def test_run_tool_error_includes_stdout(tmp_path):
+    """Stdout output produced before a failure must not be discarded."""
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: partial
+        partial:
+        \t@echo partial output
+        \t@exit 1
+    """,
+    )
+    result = run_tool("partial", {}, mf)
+    assert result.startswith("Error")
+    assert "partial output" in result
+
+
+def test_run_tool_error_includes_stderr(tmp_path):
+    """Stderr is included in the error output."""
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: warn
+        warn:
+        \t@echo error detail >&2; exit 2
+    """,
+    )
+    result = run_tool("warn", {}, mf)
+    assert result.startswith("Error (exit 2)")
+    assert "error detail" in result
+
+
 def test_run_tool_unknown_target(tmp_path):
     mf = _write_makefile(
         tmp_path,

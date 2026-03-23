@@ -43,14 +43,19 @@ def run_tool(
     arguments: dict[str, str],
     makefile_path: Path,
 ) -> str:
-    """Invoke ``make -f <makefile_path> <target> KEY=val …`` and return stdout.
+    """Invoke ``make -f <makefile_path> <target> KEY=val …`` and return output.
 
-    On a non-zero exit code the error message (with stderr) is returned instead
-    so the LLM can reason about failures.
+    On a non-zero exit code an error message combining stdout and stderr is
+    returned so the LLM receives all available context without losing partial
+    output produced before the failure.
     """
     cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target] + [f"{k}={v}" for k, v in arguments.items()]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except OSError as e:
+        return f"Error (failed to run make): {e}"
     if result.returncode != 0:
-        stderr = result.stderr.strip()
-        return f"Error (exit {result.returncode}):\n{stderr}" if stderr else f"Error (exit {result.returncode})"
+        parts = [p for p in [result.stdout.strip(), result.stderr.strip()] if p]
+        body = "\n".join(parts)
+        return f"Error (exit {result.returncode}):\n{body}" if body else f"Error (exit {result.returncode})"
     return result.stdout

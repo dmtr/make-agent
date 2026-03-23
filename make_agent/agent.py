@@ -118,7 +118,10 @@ class Agent:
                         arguments = {}
 
                     _log.debug("[tool_call] %s args=%s", target, arguments)
-                    output = run_tool(target, arguments, self._makefile_path)
+                    try:
+                        output = run_tool(target, arguments, self._makefile_path)
+                    except Exception as e:
+                        output = f"Error (unexpected): {e}"
                     _log.debug("[tool_result] %s -> %s", target, output)
 
                     self._messages.append(
