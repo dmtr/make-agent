@@ -1,38 +1,52 @@
 # <system>
 # You are an orchestrator agent that manages a library of specialist agents.
-# Specialist agents live as Makefile files in the ./agents/ directory.
+# Specialist agents live as Makefile files in $(AGENTS_DIR).
 # Each agent has a focused set of tools for a specific domain.
 #
 # Your workflow for every task:
 # 1. Call list-agents to discover available specialists.
 # 2. If a suitable agent exists, call run-agent to delegate the task.
-# 3. If no suitable agent exists, design a new specialist Makefile and call
+# 3. If no suitable agent exists, design a new specialist and call
 #    create-agent to save it, then run-agent to execute it.
-# 4. To improve an existing agent, create a new one with the same NAME —
+# 4. To improve an existing agent, call create-agent with the same NAME —
 #    this overwrites the previous version.
 #
-# When writing a new agent Makefile, follow this exact format:
-#   - A # <system> ... # </system> block with the agent's purpose
-#   - One or more # <tool> ... # </tool> blocks, each above a Make target
-#   - Use @param NAME TYPE DESCRIPTION inside <tool> blocks to declare parameters
-#     where TYPE is a JSON Schema primitive (string, number, integer, boolean)
-#     Example: @param DEPTH integer How many levels deep to show (default: 3)
-#   - Separate lines with the literal \n in the CONTENT string
+# When creating a new agent, pass a JSON spec with this structure:
+#   {
+#     "system_prompt": "You are a specialist that ...",
+#     "tools": [
+#       {
+#         "name": "tool-name",
+#         "description": "What this tool does.",
+#         "params": [
+#           {"name": "PARAM", "type": "string", "description": "The param purpose"}
+#         ],
+#         "recipe": ["@shell command $(PARAM)"]
+#       }
+#     ]
+#   }
+# "params" may be omitted for tools that take no arguments.
+# "type" must be one of: string, number, integer, boolean.
+# Each "recipe" entry becomes one shell line in the Makefile target.
 #
 # Always delegate work to specialist agents rather than attempting tasks directly.
 # </system>
 
+AGENTS_DIR := ./tmp/make-agent/agents
+
+export SPEC
+
 .PHONY: list-agents read-agent create-agent run-agent
 
 # <tool>
-# List all available specialist agents in the agents/ library.
-# Returns each agent filename and the first line of its system prompt.
+# List all available specialist agents in the library.
+# Returns each agent name and the first line of its system prompt.
 # </tool>
 list-agents:
-	@if [ -z "$$(ls -A agents/*.mk 2>/dev/null)" ]; then \
+	@if [ -z "$$(ls -A $(AGENTS_DIR)/*.mk 2>/dev/null)" ]; then \
 		echo "No agents found. The agents/ library is empty."; \
 	else \
-		for f in agents/*.mk; do \
+		for f in $(AGENTS_DIR)/*.mk; do \
 			name=$$(basename "$$f" .mk); \
 			prompt=$$(awk '/<system>/{found=1; next} /\/<system>/{exit} found && /[^[:space:]]/{print; exit}' "$$f"); \
 			echo "$$name: $$prompt"; \
@@ -46,19 +60,22 @@ list-agents:
 # @param NAME string The agent name (without .mk extension)
 # </tool>
 read-agent:
-	@cat "agents/$(NAME).mk"
+	@cat "$(AGENTS_DIR)/$(NAME).mk"
 
 # <tool>
-# Create or overwrite a specialist agent Makefile in the agents/ library.
-# The CONTENT must be the full Makefile text with \n as line separators.
+# Create or overwrite a specialist agent in the library.
+# Writes the JSON spec to a temp file then generates the Makefile from it.
 # The agent is immediately available for use with run-agent after creation.
 # @param NAME string The agent name (without .mk extension, e.g. "file-search")
-# @param CONTENT string The full Makefile content with \n as line separators
+# @param SPEC string JSON agent spec (see system prompt for schema)
 # </tool>
 create-agent:
-	@mkdir -p agents
-	@printf '%b\n' "$(CONTENT)" > "agents/$(NAME).mk"
-	@echo "Created agents/$(NAME).mk"
+	@mkdir -p $(AGENTS_DIR); \
+	tmpfile=$$(mktemp "/tmp/make-agent-spec-XXXXXX.json"); \
+	printf '%s' "$$SPEC" > "$$tmpfile"; \
+	make-agent-create --file "$$tmpfile" -o "$(AGENTS_DIR)/$(NAME).mk"; \
+	rm -f "$$tmpfile"; \
+	echo "Created $(AGENTS_DIR)/$(NAME).mk"
 
 # <tool>
 # Run a specialist agent with a single task prompt and return its output.
@@ -67,4 +84,8 @@ create-agent:
 # @param TASK string The task or question to send to the agent
 # </tool>
 run-agent:
-	@ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "agents/$(NAME).mk" --model anthropic/claude-haiku-4-5-20251001 --debug --prompt "$(TASK)" || echo "Error running agent $(NAME). Check if the agent exists and is correctly formatted."
+	#OPENAI_API_KEY=key uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --model llama.cpp/gpt-oss-120b --debug --prompt "$(TASK)" || echo "Error running agent $(NAME). Check if the agent exists and is correctly formatted."
+
+#	@ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --model anthropic/claude-haiku-4-5-20251001 --debug --prompt "$(TASK)" || echo "Error running agent $(NAME). Check if the agent exists and is correctly formatted."
+	@ANTHROPIC_BASE_URL="http://localhost:8080" ANTHROPIC_API_KEY=dummy uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --model anthropic/claude-sonnet-4-5 --debug --prompt "$(TASK)" || echo "Error running agent $(NAME). Check if the agent exists and is correctly formatted."
+
