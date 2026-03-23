@@ -84,8 +84,5 @@ create-agent:
 # @param TASK string The task or question to send to the agent
 # </tool>
 run-agent:
-	#OPENAI_API_KEY=key uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --model llama.cpp/gpt-oss-120b --debug --prompt "$(TASK)" || echo "Error running agent $(NAME). Check if the agent exists and is correctly formatted."
-
-#	@ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --model anthropic/claude-haiku-4-5-20251001 --debug --prompt "$(TASK)" || echo "Error running agent $(NAME). Check if the agent exists and is correctly formatted."
-	@ANTHROPIC_BASE_URL="http://localhost:8080" ANTHROPIC_API_KEY=dummy uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --model anthropic/claude-sonnet-4-5 --debug --prompt "$(TASK)" || echo "Error running agent $(NAME). Check if the agent exists and is correctly formatted."
+	@ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --debug --prompt "$(TASK)"
 
