@@ -14,7 +14,9 @@
 # When writing a new agent Makefile, follow this exact format:
 #   - A # <system> ... # </system> block with the agent's purpose
 #   - One or more # <tool> ... # </tool> blocks, each above a Make target
-#   - Use @param NAME type description inside <tool> blocks to declare parameters
+#   - Use @param NAME TYPE DESCRIPTION inside <tool> blocks to declare parameters
+#     where TYPE is a JSON Schema primitive (string, number, integer, boolean)
+#     Example: @param DEPTH integer How many levels deep to show (default: 3)
 #   - Separate lines with the literal \n in the CONTENT string
 #
 # Always delegate work to specialist agents rather than attempting tasks directly.
@@ -65,4 +67,4 @@ create-agent:
 # @param TASK string The task or question to send to the agent
 # </tool>
 run-agent:
-	@make-agent -f "agents/$(NAME).mk" --prompt "$(TASK)"
+	@ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "agents/$(NAME).mk" --model anthropic/claude-haiku-4-5-20251001 --debug --prompt "$(TASK)" || echo "Error running agent $(NAME). Check if the agent exists and is correctly formatted."
