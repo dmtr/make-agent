@@ -5,8 +5,9 @@ from __future__ import annotations
 import cmd
 import json
 import logging
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import litellm
 
@@ -14,7 +15,53 @@ from make_agent.parser import parse_file
 from make_agent.tools import build_tools, run_tool
 
 _DEFAULT_MODEL = "anthropic/claude-haiku-4-5-20251001"
+_DEFAULT_MAX_RETRIES = 5
 _log = logging.getLogger(__name__)
+
+
+def _parse_retry_after(e: litellm.RateLimitError) -> float | None:
+    """Return the wait time in seconds from a RateLimitError's response headers.
+
+    Checks ``retry-after-ms`` (milliseconds) then ``retry-after`` (seconds).
+    Returns ``None`` when neither header is present.
+    """
+    try:
+        headers = e.response.headers if e.response is not None else {}
+    except Exception:
+        return None
+    if ms := headers.get("retry-after-ms"):
+        return float(ms) / 1000
+    if sec := headers.get("retry-after"):
+        return float(sec)
+    return None
+
+
+def _completion_with_retry(
+    model: str,
+    messages: list[dict],
+    tool_kwargs: dict[str, Any],
+    max_retries: int,
+) -> Any:
+    """Call ``litellm.completion``, retrying on rate limit up to *max_retries* times.
+
+    On each ``RateLimitError`` the wait time is read from the ``Retry-After``
+    response header when present, otherwise exponential backoff is used
+    (``2^attempt`` seconds, capped at 60 s).  A message is printed before
+    each retry so the user can see what is happening.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return litellm.completion(model=model, messages=messages, **tool_kwargs)
+        except litellm.RateLimitError as e:
+            if attempt == max_retries:
+                raise
+            wait = _parse_retry_after(e) or min(2**attempt, 60)
+            print(
+                f"Rate limited, retrying in {wait:.0f}s"
+                f" (attempt {attempt + 1}/{max_retries})...",
+                flush=True,
+            )
+            time.sleep(wait)
 
 
 class Agent:
@@ -26,10 +73,11 @@ class Agent:
         reply = agent("List the files in the current directory.")
     """
 
-    def __init__(self, makefile_path: Path, model: str = _DEFAULT_MODEL) -> None:
+    def __init__(self, makefile_path: Path, model: str = _DEFAULT_MODEL, max_retries: int = _DEFAULT_MAX_RETRIES) -> None:
         mf = parse_file(makefile_path)
         self._model = model
         self._makefile_path = makefile_path
+        self._max_retries = max_retries
         self._tools = build_tools(mf)
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
@@ -51,11 +99,12 @@ class Agent:
         _log.debug("[user]\n%s", user_input)
 
         while True:
-            response = litellm.completion(
-                model=self._model,
-                messages=self._messages,
-                **self._tool_kwargs,
-            )
+            response = _completion_with_retry(
+                    self._model,
+                    self._messages,
+                    self._tool_kwargs,
+                    self._max_retries,
+                )
             msg = response.choices[0].message
 
             if msg.tool_calls:
@@ -120,7 +169,7 @@ class MakeAgentShell(cmd.Cmd):
         return True
 
 
-def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] = None, debug: bool = False) -> None:
+def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] = None, debug: bool = False, max_retries: int = _DEFAULT_MAX_RETRIES) -> None:
     """Start the interactive shell.
 
     Reads the system prompt and tool definitions from *makefile_path*, then
@@ -139,7 +188,7 @@ def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] 
         _log.setLevel(logging.DEBUG)
         print(f"Debug logging enabled → {log_file}\n")
 
-    agent = Agent(makefile_path, model)
+    agent = Agent(makefile_path, model, max_retries=max_retries)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")
 
     if prompt:

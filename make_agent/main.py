@@ -36,9 +36,16 @@ def main() -> None:
         default=False,
         help="Log all messages to make-agent.log",
     )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Max retry attempts on rate limit (default: 5)",
+    )
     args = parser.parse_args()
 
-    run(makefile_path=Path(args.file), model=args.model, prompt=args.prompt, debug=args.debug)
+    run(makefile_path=Path(args.file), model=args.model, prompt=args.prompt, debug=args.debug, max_retries=args.max_retries)
 
 
 if __name__ == "__main__":
