@@ -131,21 +131,23 @@ def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] 
     the current working directory.
     """
     if debug:
+        litellm._turn_on_debug()
         log_file = Path("make-agent.log")
         handler = logging.FileHandler(log_file)
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         _log.addHandler(handler)
         _log.setLevel(logging.DEBUG)
         print(f"Debug logging enabled → {log_file}\n")
+
     agent = Agent(makefile_path, model)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")
-    print("Type your message. Press Ctrl-D or Ctrl-C to exit.\n")
 
     if prompt:
         print("Sending initial prompt...\n")
         print(agent(prompt))
         return
 
+    print("Type your message. Press Ctrl-D or Ctrl-C to exit.\n")
     shell = MakeAgentShell(agent)
     try:
         shell.cmdloop()
