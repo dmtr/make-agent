@@ -1,4 +1,6 @@
-from make_agent.parser import Param, Variable, parse
+import pytest
+
+from make_agent.parser import Param, Variable, parse, validate, validate_or_raise
 
 
 def test_empty():
@@ -363,3 +365,88 @@ def test_params_only_on_first_target():
     bar = next(r for r in mf.rules if r.target == "bar")
     assert foo.params == [Param(name="X", type="string", description="A thing")]
     assert bar.params == []
+
+
+# ── validate() / validate_or_raise() ─────────────────────────────────────────
+
+class TestValidate:
+    def _tool(self, param: str, recipe: str) -> str:
+        return (
+            f"# <tool>\n# A tool.\n# @param {param} string A param\n# </tool>\n"
+            f"target:\n\t{recipe}\n"
+        )
+
+    def test_valid_paren_ref(self):
+        mf = parse(self._tool("FILE", "@pip install -r $(FILE)"))
+        assert validate(mf) == []
+
+    def test_valid_brace_ref(self):
+        mf = parse(self._tool("FILE", "@pip install -r ${FILE}"))
+        assert validate(mf) == []
+
+    def test_missing_ref_returns_error(self):
+        mf = parse(self._tool("FILE", "@pip install -r"))
+        errors = validate(mf)
+        assert len(errors) == 1
+        assert "FILE" in errors[0]
+        assert "target" in errors[0]
+
+    def test_error_message_mentions_expected_syntax(self):
+        mf = parse(self._tool("DIR", "@ls"))
+        errors = validate(mf)
+        assert "$(DIR)" in errors[0]
+        assert "${DIR}" in errors[0]
+
+    def test_multiple_params_all_missing(self):
+        text = (
+            "# <tool>\n# Do stuff.\n"
+            "# @param A string First\n"
+            "# @param B string Second\n"
+            "# </tool>\n"
+            "run:\n\t@echo nothing\n"
+        )
+        mf = parse(text)
+        errors = validate(mf)
+        assert len(errors) == 2
+
+    def test_multiple_params_one_missing(self):
+        text = (
+            "# <tool>\n# Do stuff.\n"
+            "# @param A string First\n"
+            "# @param B string Second\n"
+            "# </tool>\n"
+            "run:\n\t@echo $(A)\n"
+        )
+        mf = parse(text)
+        errors = validate(mf)
+        assert len(errors) == 1
+        assert "B" in errors[0]
+
+    def test_no_params_always_valid(self):
+        mf = parse("# <tool>\n# No params.\n# </tool>\ntarget:\n\t@echo hi\n")
+        assert validate(mf) == []
+
+    def test_rule_without_tool_block_ignored(self):
+        mf = parse("build:\n\t@gcc main.c\n")
+        assert validate(mf) == []
+
+    def test_validate_or_raise_passes_on_valid(self):
+        mf = parse(self._tool("X", "@cmd $(X)"))
+        validate_or_raise(mf)  # should not raise
+
+    def test_validate_or_raise_raises_on_invalid(self):
+        mf = parse(self._tool("X", "@cmd"))
+        with pytest.raises(ValueError, match="X"):
+            validate_or_raise(mf)
+
+    def test_validate_or_raise_includes_all_errors(self):
+        text = (
+            "# <tool>\n# T1.\n# @param A string A\n# </tool>\nfoo:\n\t@echo\n"
+            "# <tool>\n# T2.\n# @param B string B\n# </tool>\nbar:\n\t@echo\n"
+        )
+        mf = parse(text)
+        with pytest.raises(ValueError) as exc_info:
+            validate_or_raise(mf)
+        msg = str(exc_info.value)
+        assert "foo" in msg
+        assert "bar" in msg

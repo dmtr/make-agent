@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import string
 import sys
 from pathlib import Path
@@ -81,12 +82,36 @@ def _render_tool(tool: dict) -> str:
     )
 
 
+def _validate_spec_params(spec: dict) -> None:
+    """Raise ``ValueError`` if any tool spec declares a param not used in its recipe.
+
+    Checks for ``$(NAME)`` and ``${NAME}`` references in each tool's recipe lines.
+    """
+    errors: list[str] = []
+    for tool in spec.get("tools", []):
+        name = tool.get("name", "<unnamed>")
+        recipe_text = "\n".join(tool.get("recipe", []))
+        used = set(re.findall(r"\$\(([^)]+)\)|\$\{([^}]+)\}", recipe_text))
+        used_flat = {g for pair in used for g in pair if g}
+        for param in tool.get("params", []):
+            pname = param["name"]
+            if pname not in used_flat:
+                errors.append(
+                    f"Tool '{name}': @param {pname} declared but never referenced in recipe.\n"
+                    f"  Expected $({pname}) or ${{{pname}}} in the recipe body."
+                )
+    if errors:
+        raise ValueError("\n".join(errors))
+
+
 def render(spec: dict) -> str:
     """Return a Makefile string rendered from an agent *spec* dict.
 
     Raises ``KeyError`` if required fields are missing, ``TypeError`` if
-    ``tools`` is not a list.
+    ``tools`` is not a list, ``ValueError`` if any tool declares a param that
+    is not referenced in its recipe.
     """
+    _validate_spec_params(spec)
     system_block = _render_system_block(spec["system_prompt"])
     tools_list: list[dict] = spec["tools"]
     phony = " ".join(t["name"] for t in tools_list)
@@ -138,6 +163,8 @@ def main() -> None:
         makefile = render(spec)
     except (KeyError, TypeError) as e:
         sys.exit(f"make-agent-create: invalid spec: {e}")
+    except ValueError as e:
+        sys.exit(f"make-agent-create: {e}")
 
     if args.output:
         Path(args.output).write_text(makefile)

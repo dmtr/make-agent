@@ -249,3 +249,36 @@ def parse(text: str) -> Makefile:
 def parse_file(path: str | Path) -> Makefile:
     """Parse a Makefile from disk."""
     return parse(Path(path).read_text())
+
+
+# Matches $(NAME) or ${NAME} in recipe text
+_RECIPE_VAR_RE = re.compile(r"\$\(([^)]+)\)|\$\{([^}]+)\}")
+
+
+def validate(makefile: Makefile) -> list[str]:
+    """Check that every ``@param NAME`` is referenced as ``$(NAME)`` or ``${NAME}``
+    in the rule's recipe body.
+
+    Returns a list of human-readable error strings (empty list means valid).
+    """
+    errors: list[str] = []
+    for rule in makefile.rules:
+        if not rule.params:
+            continue
+        recipe_text = "\n".join(rule.recipes)
+        used_vars = {m.group(1) or m.group(2) for m in _RECIPE_VAR_RE.finditer(recipe_text)}
+        for param in rule.params:
+            if param.name not in used_vars:
+                errors.append(
+                    f"Tool '{rule.target}': @param {param.name} declared but never "
+                    f"referenced in recipe.\n"
+                    f"  Expected $({param.name}) or ${{{param.name}}} in the recipe body."
+                )
+    return errors
+
+
+def validate_or_raise(makefile: Makefile) -> None:
+    """Like :func:`validate` but raises :exc:`ValueError` if any errors are found."""
+    errors = validate(makefile)
+    if errors:
+        raise ValueError("\n".join(errors))

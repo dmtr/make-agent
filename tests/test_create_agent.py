@@ -68,7 +68,7 @@ class TestRenderTools:
                         {"name": "NAME", "type": "string", "description": "The name"},
                         {"name": "LOUD", "type": "boolean", "description": "Shout it"},
                     ],
-                    "recipe": ["@echo $(NAME)"],
+                    "recipe": ["@echo $(NAME) loud=$(LOUD)"],
                 }
             ]
         )
@@ -196,3 +196,67 @@ class TestCLI:
     def test_invalid_spec_exits_nonzero(self):
         _, rc = self._run(["--spec", '{"tools": []}'])  # missing system_prompt
         assert rc != 0
+
+
+class TestParamValidation:
+    def _spec_with_broken_recipe(self, param="FILE", recipe="@pip install -r") -> dict:
+        return {
+            "system_prompt": "You are a test agent.",
+            "tools": [
+                {
+                    "name": "install",
+                    "description": "Install deps.",
+                    "params": [{"name": param, "type": "string", "description": "A file"}],
+                    "recipe": [recipe],
+                }
+            ],
+        }
+
+    def test_param_not_in_recipe_raises(self):
+        with pytest.raises(ValueError, match="FILE"):
+            render(self._spec_with_broken_recipe("FILE", "@pip install -r"))
+
+    def test_error_message_names_tool(self):
+        with pytest.raises(ValueError, match="install"):
+            render(self._spec_with_broken_recipe())
+
+    def test_error_message_shows_expected_syntax(self):
+        with pytest.raises(ValueError, match=r"\$\(FILE\)"):
+            render(self._spec_with_broken_recipe())
+
+    def test_param_in_paren_ref_is_valid(self):
+        spec = self._spec_with_broken_recipe("FILE", "@pip install -r $(FILE)")
+        rendered = render(spec)  # should not raise
+        assert "$(FILE)" in rendered
+
+    def test_param_in_brace_ref_is_valid(self):
+        spec = self._spec_with_broken_recipe("FILE", "@pip install -r ${FILE}")
+        rendered = render(spec)
+        assert "${FILE}" in rendered
+
+    def test_multiple_params_all_referenced_is_valid(self):
+        spec = {
+            "system_prompt": "Hi.",
+            "tools": [
+                {
+                    "name": "run",
+                    "description": "Run.",
+                    "params": [
+                        {"name": "A", "type": "string", "description": "a"},
+                        {"name": "B", "type": "string", "description": "b"},
+                    ],
+                    "recipe": ["@cmd $(A) $(B)"],
+                }
+            ],
+        }
+        assert render(spec)  # should not raise
+
+    def test_cli_exits_nonzero_on_broken_recipe(self):
+        import subprocess, sys
+        spec = json.dumps(self._spec_with_broken_recipe())
+        result = subprocess.run(
+            [sys.executable, "-m", "make_agent.create_agent", "--spec", spec],
+            capture_output=True, text=True,
+        )
+        assert result.returncode != 0
+        assert "FILE" in result.stderr

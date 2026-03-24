@@ -141,3 +141,17 @@ def test_run_tool_unknown_target(tmp_path):
     )
     result = run_tool("nonexistent", {}, mf)
     assert result.startswith("Error")
+
+
+def test_run_tool_timeout(tmp_path):
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: slow
+        slow:
+        \t@sleep 10
+    """,
+    )
+    result = run_tool("slow", {}, mf, timeout=1)
+    assert "timeout" in result.lower()
+    assert "slow" in result

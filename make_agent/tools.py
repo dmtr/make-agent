@@ -42,16 +42,22 @@ def run_tool(
     target: str,
     arguments: dict[str, str],
     makefile_path: Path,
+    timeout: int = 600,
 ) -> str:
     """Invoke ``make -f <makefile_path> <target> KEY=val …`` and return output.
 
     On a non-zero exit code an error message combining stdout and stderr is
     returned so the LLM receives all available context without losing partial
     output produced before the failure.
+
+    *timeout* is the maximum number of seconds to wait for the subprocess.
+    If the process exceeds this limit it is killed and an error is returned.
     """
     cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target] + [f"{k}={v}" for k, v in arguments.items()]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return f"Error (timeout): tool '{target}' exceeded {timeout}s limit"
     except OSError as e:
         return f"Error (failed to run make): {e}"
     if result.returncode != 0:

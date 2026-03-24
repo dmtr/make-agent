@@ -29,6 +29,20 @@
 # "type" must be one of: string, number, integer, boolean.
 # Each "recipe" entry becomes one shell line in the Makefile target.
 #
+# CRITICAL: every param listed in "params" MUST be referenced as $(PARAM_NAME)
+# in the recipe. A param declared but absent from the recipe will cause an error.
+#
+# Example of a correct two-param tool:
+#   {
+#     "name": "search-files",
+#     "description": "Search files for a pattern in a directory.",
+#     "params": [
+#       {"name": "PATTERN", "type": "string", "description": "Search pattern (regex)"},
+#       {"name": "DIR",     "type": "string", "description": "Directory to search in"}
+#     ],
+#     "recipe": ["@grep -rn \"$(PATTERN)\" \"$(DIR)\" || echo \"No matches found\""]
+#   }
+#
 # Always delegate work to specialist agents rather than attempting tasks directly.
 # </system>
 
@@ -74,8 +88,8 @@ create-agent:
 	tmpfile=$$(mktemp "/tmp/make-agent-spec-XXXXXX.json"); \
 	printf '%s' "$$SPEC" > "$$tmpfile"; \
 	make-agent-create --file "$$tmpfile" -o "$(AGENTS_DIR)/$(NAME).mk"; \
-	rm -f "$$tmpfile"; \
-	echo "Created $(AGENTS_DIR)/$(NAME).mk"
+	#rm -f "$$tmpfile"
+	echo "Created $(AGENTS_DIR)/$(NAME).mk with spec: $$SPEC"
 
 # <tool>
 # Run a specialist agent with a single task prompt and return its output.

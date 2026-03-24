@@ -128,3 +128,43 @@ class TestCompletionWithRetry:
                 with pytest.raises(litellm.RateLimitError):
                     _completion_with_retry("model", [], {}, max_retries=0)
         mock_sleep.assert_not_called()
+
+
+# ── Load-time validation tests ────────────────────────────────────────────────
+
+class TestAgentValidation:
+    def _write_makefile(self, tmp_path, content: str):
+        mf = tmp_path / "Makefile"
+        mf.write_text(content)
+        return mf
+
+    def test_valid_makefile_loads(self, tmp_path):
+        mf = self._write_makefile(tmp_path, (
+            "# <tool>\n# Greet.\n# @param NAME string A name\n# </tool>\n"
+            "greet:\n\t@echo $(NAME)\n"
+        ))
+        from make_agent.agent import Agent
+        agent = Agent(mf, model="openai/gpt-4o-mini")
+        assert "greet" in agent.tool_names
+
+    def test_broken_recipe_raises_on_load(self, tmp_path):
+        mf = self._write_makefile(tmp_path, (
+            "# <tool>\n# Install.\n# @param FILE string A file\n# </tool>\n"
+            "install:\n\t@pip install -r\n"
+        ))
+        from make_agent.agent import Agent
+        import pytest
+        with pytest.raises(ValueError, match="FILE"):
+            Agent(mf, model="openai/gpt-4o-mini")
+
+    def test_error_message_names_tool_and_param(self, tmp_path):
+        mf = self._write_makefile(tmp_path, (
+            "# <tool>\n# Do X.\n# @param QUERY string Search term\n# </tool>\n"
+            "search:\n\t@grep foo .\n"
+        ))
+        from make_agent.agent import Agent
+        import pytest
+        with pytest.raises(ValueError) as exc_info:
+            Agent(mf, model="openai/gpt-4o-mini")
+        assert "search" in str(exc_info.value)
+        assert "QUERY" in str(exc_info.value)

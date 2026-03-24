@@ -11,11 +11,12 @@ from typing import Any, Optional
 
 import litellm
 
-from make_agent.parser import parse_file
+from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, run_tool
 
 _DEFAULT_MODEL = "anthropic/claude-haiku-4-5-20251001"
 _DEFAULT_MAX_RETRIES = 5
+_DEFAULT_TOOL_TIMEOUT = 600  # seconds
 _log = logging.getLogger(__name__)
 
 
@@ -73,11 +74,13 @@ class Agent:
         reply = agent("List the files in the current directory.")
     """
 
-    def __init__(self, makefile_path: Path, model: str = _DEFAULT_MODEL, max_retries: int = _DEFAULT_MAX_RETRIES) -> None:
+    def __init__(self, makefile_path: Path, model: str = _DEFAULT_MODEL, max_retries: int = _DEFAULT_MAX_RETRIES, tool_timeout: int = _DEFAULT_TOOL_TIMEOUT) -> None:
         mf = parse_file(makefile_path)
+        validate_or_raise(mf)
         self._model = model
         self._makefile_path = makefile_path
         self._max_retries = max_retries
+        self._tool_timeout = tool_timeout
         self._tools = build_tools(mf)
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
@@ -119,7 +122,7 @@ class Agent:
 
                     _log.debug("[tool_call] %s args=%s", target, arguments)
                     try:
-                        output = run_tool(target, arguments, self._makefile_path)
+                        output = run_tool(target, arguments, self._makefile_path, self._tool_timeout)
                     except Exception as e:
                         output = f"Error (unexpected): {e}"
                     _log.debug("[tool_result] %s -> %s", target, output)
@@ -172,7 +175,7 @@ class MakeAgentShell(cmd.Cmd):
         return True
 
 
-def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] = None, debug: bool = False, max_retries: int = _DEFAULT_MAX_RETRIES) -> None:
+def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] = None, debug: bool = False, max_retries: int = _DEFAULT_MAX_RETRIES, tool_timeout: int = _DEFAULT_TOOL_TIMEOUT) -> None:
     """Start the interactive shell.
 
     Reads the system prompt and tool definitions from *makefile_path*, then
@@ -191,7 +194,7 @@ def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] 
         _log.setLevel(logging.DEBUG)
         print(f"Debug logging enabled → {log_file}\n")
 
-    agent = Agent(makefile_path, model, max_retries=max_retries)
+    agent = Agent(makefile_path, model, max_retries=max_retries, tool_timeout=tool_timeout)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")
 
     if prompt:
