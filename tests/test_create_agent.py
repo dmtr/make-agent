@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import yaml
 
 import pytest
 from make_agent.create_agent import render
@@ -164,37 +164,37 @@ class TestCLI:
         return result.stdout, result.returncode
 
     def test_reads_from_stdin(self):
-        spec = json.dumps(_minimal_spec())
+        spec = yaml.dump(_minimal_spec())
         out, rc = self._run([], stdin=spec)
         assert rc == 0
         assert "say-hello" in out
 
     def test_reads_from_spec_arg(self):
-        spec = json.dumps(_minimal_spec())
+        spec = yaml.dump(_minimal_spec())
         out, rc = self._run(["--spec", spec])
         assert rc == 0
         assert "say-hello" in out
 
     def test_reads_from_file(self, tmp_path):
-        spec_file = tmp_path / "spec.json"
-        spec_file.write_text(json.dumps(_minimal_spec()))
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(_minimal_spec()))
         out, rc = self._run(["--file", str(spec_file)])
         assert rc == 0
         assert "say-hello" in out
 
     def test_writes_to_output_file(self, tmp_path):
         out_file = tmp_path / "agent.mk"
-        spec = json.dumps(_minimal_spec())
+        spec = yaml.dump(_minimal_spec())
         _, rc = self._run(["--spec", spec, "-o", str(out_file)])
         assert rc == 0
         assert "say-hello" in out_file.read_text()
 
-    def test_invalid_json_exits_nonzero(self):
-        _, rc = self._run(["--spec", "not json"])
+    def test_invalid_yaml_exits_nonzero(self):
+        _, rc = self._run(["--spec", "key: [unclosed"])
         assert rc != 0
 
     def test_invalid_spec_exits_nonzero(self):
-        _, rc = self._run(["--spec", '{"tools": []}'])  # missing system_prompt
+        _, rc = self._run(["--spec", "tools: []"])  # missing system_prompt
         assert rc != 0
 
 
@@ -253,7 +253,7 @@ class TestParamValidation:
 
     def test_cli_exits_nonzero_on_broken_recipe(self):
         import subprocess, sys
-        spec = json.dumps(self._spec_with_broken_recipe())
+        spec = yaml.dump(self._spec_with_broken_recipe())
         result = subprocess.run(
             [sys.executable, "-m", "make_agent.create_agent", "--spec", spec],
             capture_output=True, text=True,

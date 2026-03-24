@@ -58,8 +58,7 @@ def _completion_with_retry(
                 raise
             wait = _parse_retry_after(e) or min(2**attempt, 60)
             print(
-                f"Rate limited, retrying in {wait:.0f}s"
-                f" (attempt {attempt + 1}/{max_retries})...",
+                f"Rate limited, retrying in {wait:.0f}s" f" (attempt {attempt + 1}/{max_retries})...",
                 flush=True,
             )
             time.sleep(wait)
@@ -74,7 +73,9 @@ class Agent:
         reply = agent("List the files in the current directory.")
     """
 
-    def __init__(self, makefile_path: Path, model: str = _DEFAULT_MODEL, max_retries: int = _DEFAULT_MAX_RETRIES, tool_timeout: int = _DEFAULT_TOOL_TIMEOUT) -> None:
+    def __init__(
+        self, makefile_path: Path, model: str = _DEFAULT_MODEL, max_retries: int = _DEFAULT_MAX_RETRIES, tool_timeout: int = _DEFAULT_TOOL_TIMEOUT
+    ) -> None:
         mf = parse_file(makefile_path)
         validate_or_raise(mf)
         self._model = model
@@ -103,11 +104,11 @@ class Agent:
 
         while True:
             response = _completion_with_retry(
-                    self._model,
-                    self._messages,
-                    self._tool_kwargs,
-                    self._max_retries,
-                )
+                self._model,
+                self._messages,
+                self._tool_kwargs,
+                self._max_retries,
+            )
             msg = response.choices[0].message
 
             if msg.tool_calls:
@@ -175,7 +176,14 @@ class MakeAgentShell(cmd.Cmd):
         return True
 
 
-def run(makefile_path: Path, model: str = _DEFAULT_MODEL, prompt: Optional[str] = None, debug: bool = False, max_retries: int = _DEFAULT_MAX_RETRIES, tool_timeout: int = _DEFAULT_TOOL_TIMEOUT) -> None:
+def run(
+    makefile_path: Path,
+    model: str = _DEFAULT_MODEL,
+    prompt: Optional[str] = None,
+    debug: bool = False,
+    max_retries: int = _DEFAULT_MAX_RETRIES,
+    tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
+) -> None:
     """Start the interactive shell.
 
     Reads the system prompt and tool definitions from *makefile_path*, then

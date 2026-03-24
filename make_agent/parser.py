@@ -138,8 +138,13 @@ def parse(text: str) -> Makefile:
                 current_recipes.append(line[1:])  # strip the leading tab
             continue
 
-        # A non-tab line ends recipe collection
+        # A non-tab line ends recipe collection.
+        # Exception: plain comment lines (not special block tags) are ignored by
+        # GNU Make inside a rule body and should not end recipe collection.
         if state == _State.RECIPE:
+            stripped_peek = line.strip()
+            if stripped_peek.startswith("#") and stripped_peek not in ("# <tool>", "# <system>", "# </tool>", "# </system>"):
+                continue
             state = _State.NORMAL
             current_recipes = None
 
@@ -251,13 +256,13 @@ def parse_file(path: str | Path) -> Makefile:
     return parse(Path(path).read_text())
 
 
-# Matches $(NAME) or ${NAME} in recipe text
-_RECIPE_VAR_RE = re.compile(r"\$\(([^)]+)\)|\$\{([^}]+)\}")
+# Matches $(NAME), ${NAME}, or $$NAME (Make double-$ shell-variable form) in recipe text
+_RECIPE_VAR_RE = re.compile(r"\$\(([^)]+)\)|\$\{([^}]+)\}|\$\$(\w+)")
 
 
 def validate(makefile: Makefile) -> list[str]:
-    """Check that every ``@param NAME`` is referenced as ``$(NAME)`` or ``${NAME}``
-    in the rule's recipe body.
+    """Check that every ``@param NAME`` is referenced as ``$(NAME)``, ``${NAME}``,
+    or ``$$NAME`` in the rule's recipe body.
 
     Returns a list of human-readable error strings (empty list means valid).
     """
@@ -266,13 +271,13 @@ def validate(makefile: Makefile) -> list[str]:
         if not rule.params:
             continue
         recipe_text = "\n".join(rule.recipes)
-        used_vars = {m.group(1) or m.group(2) for m in _RECIPE_VAR_RE.finditer(recipe_text)}
+        used_vars = {m.group(1) or m.group(2) or m.group(3) for m in _RECIPE_VAR_RE.finditer(recipe_text)}
         for param in rule.params:
             if param.name not in used_vars:
                 errors.append(
                     f"Tool '{rule.target}': @param {param.name} declared but never "
                     f"referenced in recipe.\n"
-                    f"  Expected $({param.name}) or ${{{param.name}}} in the recipe body."
+                    f"  Expected $({param.name}), ${{{param.name}}}, or $${param.name} in the recipe body."
                 )
     return errors
 

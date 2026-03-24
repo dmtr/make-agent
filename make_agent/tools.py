@@ -6,11 +6,14 @@ executes them by invoking ``make -f <makefile> <target> KEY=value …``.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from make_agent.parser import Makefile
+
+logger = logging.getLogger(__name__)
 
 
 def build_tools(makefile: Makefile) -> list[dict[str, Any]]:
@@ -53,9 +56,13 @@ def run_tool(
     *timeout* is the maximum number of seconds to wait for the subprocess.
     If the process exceeds this limit it is killed and an error is returned.
     """
-    cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target] + [f"{k}={v}" for k, v in arguments.items()]
+    # Escape $ in argument values so Make does not expand $(VAR) references
+    # inside user-supplied data (e.g. SPEC strings containing Makefile syntax).
+    cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target] + [f"{k}={v.replace('$', '$$')}" for k, v in arguments.items()]
+    logger.debug(f"running tool with command: {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        logger.debug(f"result of '{' '.join(cmd)}': exit {result.returncode}, stdout: {result.stdout!r}, stderr: {result.stderr!r}")
     except subprocess.TimeoutExpired:
         return f"Error (timeout): tool '{target}' exceeded {timeout}s limit"
     except OSError as e:

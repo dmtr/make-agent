@@ -11,20 +11,19 @@
 # 4. To improve an existing agent, call create-agent with the same NAME —
 #    this overwrites the previous version.
 #
-# When creating a new agent, pass a JSON spec with this structure:
-#   {
-#     "system_prompt": "You are a specialist that ...",
-#     "tools": [
-#       {
-#         "name": "tool-name",
-#         "description": "What this tool does.",
-#         "params": [
-#           {"name": "PARAM", "type": "string", "description": "The param purpose"}
-#         ],
-#         "recipe": ["@shell command $(PARAM)"]
-#       }
-#     ]
-#   }
+# When creating a new agent, pass a YAML spec with this structure:
+#
+#   system_prompt: "You are a specialist that ..."
+#   tools:
+#     - name: tool-name
+#       description: What this tool does.
+#       params:
+#         - name: PARAM
+#           type: string
+#           description: The param purpose
+#       recipe:
+#         - "@shell command $(PARAM)"
+#
 # "params" may be omitted for tools that take no arguments.
 # "type" must be one of: string, number, integer, boolean.
 # Each "recipe" entry becomes one shell line in the Makefile target.
@@ -33,20 +32,25 @@
 # in the recipe. A param declared but absent from the recipe will cause an error.
 #
 # Example of a correct two-param tool:
-#   {
-#     "name": "search-files",
-#     "description": "Search files for a pattern in a directory.",
-#     "params": [
-#       {"name": "PATTERN", "type": "string", "description": "Search pattern (regex)"},
-#       {"name": "DIR",     "type": "string", "description": "Directory to search in"}
-#     ],
-#     "recipe": ["@grep -rn \"$(PATTERN)\" \"$(DIR)\" || echo \"No matches found\""]
-#   }
+#
+#   system_prompt: "You are a search specialist."
+#   tools:
+#     - name: search-files
+#       description: Search files for a pattern in a directory.
+#       params:
+#         - name: PATTERN
+#           type: string
+#           description: Search pattern (regex)
+#         - name: DIR
+#           type: string
+#           description: Directory to search in
+#       recipe:
+#         - '@grep -rn "$(PATTERN)" "$(DIR)" || echo "No matches found"'
 #
 # Always delegate work to specialist agents rather than attempting tasks directly.
 # </system>
 
-AGENTS_DIR := ./tmp/make-agent/agents
+AGENTS_DIR := .agents
 
 export SPEC
 
@@ -57,7 +61,7 @@ export SPEC
 # Returns each agent name and the first line of its system prompt.
 # </tool>
 list-agents:
-	@if [ -z "$$(ls -A $(AGENTS_DIR)/*.mk 2>/dev/null)" ]; then \
+	@if [ -z "$$(ls -Al $(AGENTS_DIR)/*.mk 2>/dev/null)" ]; then \
 		echo "No agents found. The agents/ library is empty."; \
 	else \
 		for f in $(AGENTS_DIR)/*.mk; do \
@@ -78,18 +82,19 @@ read-agent:
 
 # <tool>
 # Create or overwrite a specialist agent in the library.
-# Writes the JSON spec to a temp file then generates the Makefile from it.
+# Writes the YAML spec to a temp file then generates the Makefile from it.
 # The agent is immediately available for use with run-agent after creation.
 # @param NAME string The agent name (without .mk extension, e.g. "file-search")
-# @param SPEC string JSON agent spec (see system prompt for schema)
+# @param SPEC string YAML agent spec (see system prompt for schema)
 # </tool>
 create-agent:
-	@mkdir -p $(AGENTS_DIR); \
-	tmpfile=$$(mktemp "/tmp/make-agent-spec-XXXXXX.json"); \
+	@set -e; \
+	tmpfile=$$(mktemp "/tmp/make-agent-spec-$(NAME)-XXXXXX"); \
+	trap 'rm -f "$$tmpfile"' EXIT; \
+	mkdir -p $(AGENTS_DIR); \
 	printf '%s' "$$SPEC" > "$$tmpfile"; \
 	make-agent-create --file "$$tmpfile" -o "$(AGENTS_DIR)/$(NAME).mk"; \
-	#rm -f "$$tmpfile"
-	echo "Created $(AGENTS_DIR)/$(NAME).mk with spec: $$SPEC"
+	echo "Created $(AGENTS_DIR)/$(NAME).mk"
 
 # <tool>
 # Run a specialist agent with a single task prompt and return its output.
@@ -98,5 +103,6 @@ create-agent:
 # @param TASK string The task or question to send to the agent
 # </tool>
 run-agent:
-	@ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --debug --prompt "$(TASK)"
+#	@ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --debug --prompt "$(TASK)"
+	@ANTHROPIC_BASE_URL="http://localhost:8080" ANTHROPIC_API_KEY=dummy uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --debug --prompt "$(TASK)"
 

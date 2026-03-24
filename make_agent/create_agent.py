@@ -1,31 +1,26 @@
-"""Generate a make-agent Makefile from a structured JSON agent spec.
+"""Generate a make-agent Makefile from a structured YAML agent spec.
 
 Usage (stdin)::
 
-    echo '<JSON>' | make-agent-create [-o OUTPUT]
+    echo '<YAML>' | make-agent-create [-o OUTPUT]
 
 Usage (argument)::
 
-    make-agent-create --spec '<JSON>' [-o OUTPUT]
-    make-agent-create --file spec.json  [-o OUTPUT]
+    make-agent-create --spec '<YAML>' [-o OUTPUT]
+    make-agent-create --file spec.yaml  [-o OUTPUT]
 
-JSON spec schema::
+YAML spec schema::
 
-    {
-      "system_prompt": "You are a specialist that ...",
-      "tools": [
-        {
-          "name": "tool-name",
-          "description": "What this tool does.",
-          "params": [
-            {"name": "PARAM", "type": "string", "description": "The param purpose"}
-          ],
-          "recipe": [
-            "@shell command $(PARAM)"
-          ]
-        }
-      ]
-    }
+    system_prompt: "You are a specialist that ..."
+    tools:
+      - name: tool-name
+        description: What this tool does.
+        params:
+          - name: PARAM
+            type: string
+            description: The param purpose
+        recipe:
+          - "@shell command $(PARAM)"
 
 ``params`` may be omitted for tools that take no arguments.
 ``type`` must be a JSON Schema primitive: ``string``, ``number``, ``integer``,
@@ -36,11 +31,15 @@ Each ``recipe`` entry becomes one tab-indented line in the Makefile target.
 from __future__ import annotations
 
 import argparse
-import json
+import logging
 import re
 import string
 import sys
 from pathlib import Path
+
+import yaml
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_BLOCK = string.Template("# <system>\n${body}# </system>\n")
 
@@ -91,17 +90,24 @@ def _validate_spec_params(spec: dict) -> None:
     for tool in spec.get("tools", []):
         name = tool.get("name", "<unnamed>")
         recipe_text = "\n".join(tool.get("recipe", []))
-        used = set(re.findall(r"\$\(([^)]+)\)|\$\{([^}]+)\}", recipe_text))
+        used = set(re.findall(r"\$\(([^)]+)\)|\$\{([^}]+)\}|\$\$(\w+)", recipe_text))
         used_flat = {g for pair in used for g in pair if g}
         for param in tool.get("params", []):
             pname = param["name"]
             if pname not in used_flat:
                 errors.append(
-                    f"Tool '{name}': @param {pname} declared but never referenced in recipe.\n"
-                    f"  Expected $({pname}) or ${{{pname}}} in the recipe body."
+                    f"Tool '{name}': @param {pname} declared but never referenced in recipe.\n" f"  Expected $({pname}), ${{{pname}}}, or $${pname} in the recipe body."
                 )
     if errors:
         raise ValueError("\n".join(errors))
+
+
+def _init_logging(level: int = logging.DEBUG) -> None:
+    log_file = Path("create-agent.log")
+    handler = logging.FileHandler(log_file)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(level)
 
 
 def render(spec: dict) -> str:
@@ -126,18 +132,18 @@ def render(spec: dict) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="make-agent-create",
-        description="Generate a make-agent Makefile from a JSON agent spec.",
+        description="Generate a make-agent Makefile from a YAML agent spec.",
     )
     src = parser.add_mutually_exclusive_group()
     src.add_argument(
         "--spec",
-        metavar="JSON",
-        help="Agent spec as a JSON string",
+        metavar="YAML",
+        help="Agent spec as a YAML string",
     )
     src.add_argument(
         "--file",
         metavar="FILE",
-        help="Path to a JSON file containing the agent spec",
+        help="Path to a YAML file containing the agent spec",
     )
     parser.add_argument(
         "-o",
@@ -145,7 +151,17 @@ def main() -> None:
         metavar="FILE",
         help="Write output to FILE instead of stdout",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level (default: INFO)",
+    )
     args = parser.parse_args()
+
+    _init_logging(getattr(logging, args.log_level))
+
+    logger.info("Starting make-agent-create...")
 
     if args.spec:
         raw = args.spec
@@ -155,15 +171,18 @@ def main() -> None:
         raw = sys.stdin.read()
 
     try:
-        spec = json.loads(raw)
-    except json.JSONDecodeError as e:
-        sys.exit(f"make-agent-create: invalid JSON: {e}")
+        spec = yaml.safe_load(raw)
+    except yaml.YAMLError as e:
+        logger.error("Failed to parse YAML: %s", e)
+        sys.exit(f"make-agent-create: invalid YAML: {e}")
 
     try:
         makefile = render(spec)
     except (KeyError, TypeError) as e:
+        logger.error("Invalid spec: %s", e)
         sys.exit(f"make-agent-create: invalid spec: {e}")
     except ValueError as e:
+        logger.error("Spec validation error: %s", e)
         sys.exit(f"make-agent-create: {e}")
 
     if args.output:

@@ -143,6 +143,31 @@ def test_run_tool_unknown_target(tmp_path):
     assert result.startswith("Error")
 
 
+def test_run_tool_dollar_in_argument_not_expanded(tmp_path):
+    """$ signs in argument values must reach the recipe literally, not be
+    expanded by Make as variable references (e.g. $(Name) must survive)."""
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: echo-spec
+        echo-spec:
+        \t@printf '%s' "$$SPEC"
+    """,
+    )
+    mf.write_text(
+        textwrap.dedent(
+            """\
+            export SPEC
+            .PHONY: echo-spec
+            echo-spec:
+            \t@printf '%s' "$$SPEC"
+            """
+        )
+    )
+    result = run_tool("echo-spec", {"SPEC": "recipe: $(Name)"}, mf)
+    assert "$(Name)" in result
+
+
 def test_run_tool_timeout(tmp_path):
     mf = _write_makefile(
         tmp_path,
