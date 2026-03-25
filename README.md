@@ -57,6 +57,64 @@ Targets without a `# <tool>` block are invisible to the model.
 
 See `Makefile.sample` for a working example.
 
+## Self-improving agents
+
+`examples/self-improving/` shows an orchestrator pattern where one agent builds and manages a library of specialist agents at runtime.
+
+### How it works
+
+The **orchestrator** (`orchestrator.mk`) exposes four tools to the model:
+
+| Tool | What it does |
+|---|---|
+| `list-agents` | Scans `./agents/` and returns each specialist's name and purpose |
+| `read-agent` | Prints the full Makefile of a named specialist |
+| `create-agent` | Writes a YAML spec to a temp file and generates a new `.mk` in `./agents/` |
+| `run-agent` | Runs a specialist via `make-agent -f agents/<name>.mk --prompt "..."` |
+
+For every task the orchestrator follows this loop:
+
+1. Call `list-agents` to discover available specialists.
+2. If a suitable specialist exists, delegate with `run-agent`.
+3. If none fits, design a new specialist, call `create-agent` to save it, then `run-agent` to execute it.
+4. To improve a specialist, call `create-agent` with the same name — it overwrites the previous version.
+
+The `.agents/` directory grows over time into a reusable, self-curated library.
+
+### Running the orchestrator
+
+```bash
+cd examples/self-improving
+
+# Interactive session
+make-agent -f orchestrator.mk
+
+# Single prompt
+make-agent -f orchestrator.mk --prompt "Find all TODO comments in the ../.. directory"
+```
+
+### YAML spec for specialist creation
+
+When the orchestrator designs a new specialist it passes a YAML spec to `create-agent`:
+
+```yaml
+system_prompt: "You are a specialist that searches source code for patterns."
+tools:
+  - name: search-files
+    description: Search files for a text pattern and return matching lines.
+    params:
+      - name: PATTERN
+        type: string
+        description: The text pattern to search for
+      - name: DIR
+        type: string
+        description: The directory to search in
+    recipe:
+      - '@grep -rn "$(PATTERN)" "$(DIR)" || echo "No matches found"'
+```
+
+`make-agent-create` converts this spec into a standard `make-agent` Makefile and saves it to `agents/<name>.mk`.
+
 ## Running tests
 
 ```

@@ -58,9 +58,9 @@ The orchestrator will create files like this automatically when needed.
 ## Directory layout
 
 ```
+.agents/             ← specialist library (created at runtime)
 examples/self-improving/
   orchestrator.mk     ← the orchestrator
-  agents/             ← specialist library (created at runtime)
     *.mk              ← specialist agents (created by the orchestrator)
   README.md           ← this file
 ```
