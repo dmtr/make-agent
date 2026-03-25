@@ -23,8 +23,18 @@ YAML spec schema::
           - "@shell command $(PARAM)"
 
 ``params`` may be omitted for tools that take no arguments.
-``type`` must be a JSON Schema primitive: ``string``, ``number``, ``integer``,
-or ``boolean``.
+``type`` must be one of: ``string``, ``number``, ``integer``, ``boolean``, or
+``content``.  Parameters typed ``content`` carry arbitrary multi-line text; the
+framework writes them to a temp file and injects ``{NAME}_FILE`` into Make, so
+recipes should reference ``$(NAME_FILE)`` rather than ``$(NAME)``::
+
+    params:
+      - name: BODY
+        type: content
+        description: File contents to write
+    recipe:
+      - "@cat \"$(BODY_FILE)\" > \"$(FILE)\""
+
 Each ``recipe`` entry becomes one tab-indented line in the Makefile target.
 """
 
@@ -84,7 +94,8 @@ def _render_tool(tool: dict) -> str:
 def _validate_spec_params(spec: dict) -> None:
     """Raise ``ValueError`` if any tool spec declares a param not used in its recipe.
 
-    Checks for ``$(NAME)`` and ``${NAME}`` references in each tool's recipe lines.
+    For standard params, checks for ``$(NAME)`` / ``${NAME}`` / ``$$NAME``.
+    For ``content``-typed params, ``$(NAME_FILE)`` is also accepted.
     """
     errors: list[str] = []
     for tool in spec.get("tools", []):
@@ -94,9 +105,16 @@ def _validate_spec_params(spec: dict) -> None:
         used_flat = {g for pair in used for g in pair if g}
         for param in tool.get("params", []):
             pname = param["name"]
-            if pname not in used_flat:
+            is_content = param.get("type") == "content"
+            file_var = f"{pname}_FILE"
+            referenced = pname in used_flat or (is_content and file_var in used_flat)
+            if not referenced:
+                hint = f"$({pname}), ${{{pname}}}, or $${pname}"
+                if is_content:
+                    hint += f", or $({file_var}) (recommended for content params)"
                 errors.append(
-                    f"Tool '{name}': @param {pname} declared but never referenced in recipe.\n" f"  Expected $({pname}), ${{{pname}}}, or $${pname} in the recipe body."
+                    f"Tool '{name}': @param {pname} declared but never referenced in recipe.\n"
+                    f"  Expected {hint} in the recipe body."
                 )
     if errors:
         raise ValueError("\n".join(errors))

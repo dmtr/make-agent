@@ -450,3 +450,35 @@ class TestValidate:
         msg = str(exc_info.value)
         assert "foo" in msg
         assert "bar" in msg
+
+    # ── content-typed params ──────────────────────────────────────────────────
+
+    def _content_tool(self, recipe: str) -> str:
+        return (
+            "# <tool>\n# A tool.\n# @param FILE string Destination\n"
+            "# @param CONTENT content Text to write\n# </tool>\n"
+            f"write-file:\n\t{recipe}\n"
+        )
+
+    def test_content_param_file_var_is_valid(self):
+        """$(CONTENT_FILE) satisfies a content-typed param."""
+        mf = parse(self._content_tool('@cat "$(CONTENT_FILE)" > "$(FILE)"'))
+        assert validate(mf) == []
+
+    def test_content_param_direct_ref_also_valid(self):
+        """$(CONTENT) is still accepted for content params (rare but allowed)."""
+        mf = parse(self._content_tool('@echo "$(CONTENT)" > "$(FILE)"'))
+        assert validate(mf) == []
+
+    def test_content_param_missing_both_refs_is_error(self):
+        """Neither $(CONTENT) nor $(CONTENT_FILE) → validation error."""
+        mf = parse(self._content_tool('@touch "$(FILE)"'))
+        errors = validate(mf)
+        assert len(errors) == 1
+        assert "CONTENT" in errors[0]
+
+    def test_content_param_error_mentions_file_var(self):
+        """Error hint should mention $(CONTENT_FILE) as the recommended form."""
+        mf = parse(self._content_tool('@touch "$(FILE)"'))
+        errors = validate(mf)
+        assert "CONTENT_FILE" in errors[0]

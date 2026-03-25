@@ -12,6 +12,20 @@ Inside a ``# <tool>`` block:
   - Lines starting with ``# @param NAME type description`` declare tool
     parameters that are passed to make as ``NAME=value``.
   - All other lines form the human-readable tool description sent to the LLM.
+
+Supported param types
+---------------------
+``string``, ``number``, ``integer``, ``boolean``
+    Standard JSON Schema primitives.  Passed to ``make`` as ``NAME=value``.
+
+``content``
+    Arbitrary multi-line text (file contents, scripts, …).  The framework
+    writes the value to a temporary file and passes ``NAME_FILE=/tmp/…`` to
+    ``make`` instead.  Recipes must therefore reference ``$(NAME_FILE)``::
+
+        # @param BODY content  File text to write
+        write-file:
+            @cat "$(BODY_FILE)" > "$(FILE)"
 """
 
 from __future__ import annotations
@@ -261,8 +275,12 @@ _RECIPE_VAR_RE = re.compile(r"\$\(([^)]+)\)|\$\{([^}]+)\}|\$\$(\w+)")
 
 
 def validate(makefile: Makefile) -> list[str]:
-    """Check that every ``@param NAME`` is referenced as ``$(NAME)``, ``${NAME}``,
-    or ``$$NAME`` in the rule's recipe body.
+    """Check that every ``@param NAME`` is referenced in the rule's recipe body.
+
+    For standard params, any of ``$(NAME)``, ``${NAME}``, or ``$$NAME`` counts.
+    For ``content``-typed params, ``$(NAME_FILE)`` / ``${NAME_FILE}`` /
+    ``$$NAME_FILE`` is also accepted (because the framework injects the temp
+    file path under that variable name instead of the raw value).
 
     Returns a list of human-readable error strings (empty list means valid).
     """
@@ -273,11 +291,17 @@ def validate(makefile: Makefile) -> list[str]:
         recipe_text = "\n".join(rule.recipes)
         used_vars = {m.group(1) or m.group(2) or m.group(3) for m in _RECIPE_VAR_RE.finditer(recipe_text)}
         for param in rule.params:
-            if param.name not in used_vars:
+            file_var = f"{param.name}_FILE"
+            is_content = param.type == "content"
+            referenced = param.name in used_vars or (is_content and file_var in used_vars)
+            if not referenced:
+                hint = f"$({param.name}), ${{{param.name}}}, $${param.name}"
+                if is_content:
+                    hint += f", or $({file_var}) (recommended for content params)"
                 errors.append(
                     f"Tool '{rule.target}': @param {param.name} declared but never "
                     f"referenced in recipe.\n"
-                    f"  Expected $({param.name}), ${{{param.name}}}, or $${param.name} in the recipe body."
+                    f"  Expected {hint} in the recipe body."
                 )
     return errors
 

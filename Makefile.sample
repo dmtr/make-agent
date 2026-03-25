@@ -2,7 +2,7 @@
 # You are a filesystem assistant.
 # </system>
      
-.PHONY: list-files greet
+.PHONY: list-files greet write-file
 
 # <tool>
 # List files in a directory.
@@ -24,4 +24,14 @@ greet:
 # </tool>
 git:
 	@git $(FLAGS)
+
+# <tool>
+# Write text content to a file. Use this for any multi-line content such as
+# scripts, configuration files, or source code.
+# @param FILE string Destination file path
+# @param CONTENT content Text to write to the file
+# </tool>
+write-file:
+	@mkdir -p "$(shell dirname $(FILE))"
+	@cat "$(CONTENT_FILE)" > "$(FILE)"
 

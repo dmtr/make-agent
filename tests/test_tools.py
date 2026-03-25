@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 
 from make_agent.parser import parse
-from make_agent.tools import build_tools, run_tool
+from make_agent.tools import build_tools, get_content_params, run_tool
 
 
 def test_build_tools_no_tool_rules():
@@ -53,6 +53,42 @@ def test_build_tools_type_is_string():
     mf = parse("# <tool>\n# Desc.\n# </tool>\nbuild:")
     assert build_tools(mf)[0]["type"] == "function"
 
+
+def test_build_tools_content_param_schema():
+    """content-typed params appear as JSON Schema string with an extra hint."""
+    text = (
+        "# <tool>\n# Write a file.\n"
+        "# @param FILE string Destination path\n"
+        "# @param CONTENT content Text to write\n"
+        "# </tool>\nwrite-file:"
+    )
+    mf = parse(text)
+    props = build_tools(mf)[0]["function"]["parameters"]["properties"]
+    assert props["FILE"] == {"type": "string", "description": "Destination path"}
+    content_prop = props["CONTENT"]
+    assert content_prop["type"] == "string"
+    assert "CONTENT" in build_tools(mf)[0]["function"]["parameters"]["required"]
+    assert "Pass the full text as-is" in content_prop["description"]
+
+
+def test_get_content_params_returns_mapping():
+    text = (
+        "# <tool>\n# Write a file.\n"
+        "# @param FILE string Destination\n"
+        "# @param CONTENT content Text\n"
+        "# </tool>\nwrite-file:\n"
+        "# <tool>\n# List files.\n"
+        "# @param DIR string Directory\n"
+        "# </tool>\nlist-files:\n"
+    )
+    mf = parse(text)
+    mapping = get_content_params(mf)
+    assert mapping == {"write-file": frozenset({"CONTENT"})}
+
+
+def test_get_content_params_empty_when_none():
+    mf = parse("# <tool>\n# Greet.\n# @param NAME string Name\n# </tool>\ngreet:")
+    assert get_content_params(mf) == {}
 
 def _write_makefile(tmp_path: Path, content: str) -> Path:
     mf = tmp_path / "Makefile"
@@ -180,3 +216,70 @@ def test_run_tool_timeout(tmp_path):
     result = run_tool("slow", {}, mf, timeout=1)
     assert "timeout" in result.lower()
     assert "slow" in result
+
+
+# ── content_params — temp-file injection ──────────────────────────────────────
+
+def test_run_tool_content_param_writes_file(tmp_path):
+    """A content param is written to a temp file; CONTENT_FILE reaches the recipe."""
+    out = tmp_path / "out.txt"
+    mf = _write_makefile(
+        tmp_path,
+        f"""\
+        .PHONY: write-file
+        write-file:
+        \t@cat "$(CONTENT_FILE)" > "{out}"
+    """,
+    )
+    multiline = "line one\nline two\nhas \"quotes\" and $VARS"
+    run_tool("write-file", {"CONTENT": multiline}, mf, content_params=frozenset({"CONTENT"}))
+    assert out.read_text() == multiline
+
+
+def test_run_tool_content_param_temp_file_is_cleaned_up(tmp_path):
+    """Temporary files for content params are removed after the call."""
+    import glob as glob_mod
+
+    before = set(glob_mod.glob("/tmp/make-agent-CONTENT-*"))
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: noop
+        noop:
+        \t@cat "$(CONTENT_FILE)" > /dev/null
+    """,
+    )
+    run_tool("noop", {"CONTENT": "hello"}, mf, content_params=frozenset({"CONTENT"}))
+    after = set(glob_mod.glob("/tmp/make-agent-CONTENT-*"))
+    assert after == before  # no new temp files remain
+
+
+def test_run_tool_content_param_handles_quotes_and_newlines(tmp_path):
+    """Content with unbalanced quotes and newlines reaches the file intact."""
+    out = tmp_path / "script.py"
+    mf = _write_makefile(
+        tmp_path,
+        f"""\
+        .PHONY: write-file
+        write-file:
+        \t@cat "$(CONTENT_FILE)" > "{out}"
+    """,
+    )
+    python_code = '#!/usr/bin/env python3\nprint("hello")\ndata = \'world\'\n'
+    run_tool("write-file", {"CONTENT": python_code}, mf, content_params=frozenset({"CONTENT"}))
+    assert out.read_text() == python_code
+
+
+def test_run_tool_non_content_params_unchanged(tmp_path):
+    """Non-content params are still passed as NAME=value (no temp file)."""
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: greet
+        greet:
+        \t@echo "$(NAME)"
+    """,
+    )
+    result = run_tool("greet", {"NAME": "Alice"}, mf, content_params=frozenset())
+    assert "Alice" in result
+
