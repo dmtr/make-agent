@@ -1,17 +1,20 @@
 [project]
 name = "make-agent"
-version = "0.1.0"
-description = "Simple AI agent"
+version = "0.2.0"
+description = "AI‑assistant‑as‑Makefile: a tool to create and manage AI agents using a simple YAML configuration."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "litellm>=1.82.4",
+    "litellm==1.82.4",
     "pyyaml>=6",
     "pytest>=9.0.2",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8.5",
+]
 
 [project.scripts]
 make_agent = "make_agent.main:main"
@@ -20,3 +23,6 @@ make-agent-create = "make_agent.create_agent:main"
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[project.urls]
+Homepage = "https://github.com/dmtr/make-agent"
