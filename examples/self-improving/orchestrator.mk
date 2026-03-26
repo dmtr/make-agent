@@ -25,7 +25,7 @@
 #         - "@shell command $(PARAM)"
 #
 # "params" may be omitted for tools that take no arguments.
-# "type" must be one of: string, number, integer, boolean.
+# "type" must be one of: string, number, integer, boolean, content.
 # Each "recipe" entry becomes one shell line in the Makefile target.
 #
 # CRITICAL: every param listed in "params" MUST be referenced as $(PARAM_NAME)
@@ -47,12 +47,15 @@
 #       recipe:
 #         - '@grep -rn "$(PATTERN)" "$(DIR)" || echo "No matches found"'
 #
+# Each agent should report errors by echoing a message that starts with "ERROR:" — this is how you rdetect failure. Include this in system prompts and encourage agents to use it for error handling.
+# Each agent should always ask you for help if they are unsure about how to complete a task, rather than making assumptions or taking random actions. Include this in system prompts to encourage it.
+# Always return useful information from the agent, even in case of errors. The orchestrator will relay this back to the user.
 # Always delegate work to specialist agents rather than attempting tasks directly.
+# Always check if a suitable specialist exists before creating a new one.
+# Always create a plan for completing the task and provide it to the user to confirm before executing any steps. The plan should include which agents you intend to use and how.
 # </system>
 
 AGENTS_DIR := .agents
-
-export SPEC
 
 .PHONY: list-agents read-agent create-agent run-agent
 
@@ -78,31 +81,40 @@ list-agents:
 # @param NAME string The agent name (without .mk extension)
 # </tool>
 read-agent:
-	@cat "$(AGENTS_DIR)/$(NAME).mk"
+	@set -e; \
+	name="$(NAME)"; \
+	case "$$name" in \
+		""|*[!A-Za-z0-9._-]*) echo "ERROR: invalid NAME '$$name'" >&2; exit 2 ;; \
+	esac; \
+	cat "$(AGENTS_DIR)/$$name.mk"
 
 # <tool>
 # Create or overwrite a specialist agent in the library.
 # Writes the YAML spec to a temp file then generates the Makefile from it.
 # The agent is immediately available for use with run-agent after creation.
 # @param NAME string The agent name (without .mk extension, e.g. "file-search")
-# @param SPEC string YAML agent spec (see system prompt for schema)
+# @param SPEC content YAML agent spec (see system prompt for schema)
 # </tool>
 create-agent:
 	@set -e; \
-	tmpfile=$$(mktemp "/tmp/make-agent-spec-$(NAME)-XXXXXX"); \
-	trap 'rm -f "$$tmpfile"' EXIT; \
-	mkdir -p $(AGENTS_DIR); \
-	printf '%s' "$$SPEC" > "$$tmpfile"; \
-	make-agent-create --file "$$tmpfile" -o "$(AGENTS_DIR)/$(NAME).mk"; \
-	echo "Created $(AGENTS_DIR)/$(NAME).mk"
+	name="$(NAME)"; \
+	case "$$name" in \
+		""|*[!A-Za-z0-9._-]*) echo "ERROR: invalid NAME '$$name'" >&2; exit 2 ;; \
+	esac; \
+	mkdir -p "$(AGENTS_DIR)"; \
+	make-agent-create --file "$(SPEC_FILE)" -o "$(AGENTS_DIR)/$$name.mk"; \
+	echo "Created $(AGENTS_DIR)/$$name.mk"
 
 # <tool>
 # Run a specialist agent with a single task prompt and return its output.
 # The agent will use its own tools to complete the task and return a result.
 # @param NAME string The agent name (without .mk extension)
-# @param TASK string The task or question to send to the agent
+# @param TASK content The task or question to send to the agent
 # </tool>
 run-agent:
-#	@ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --debug --prompt "$(TASK)"
-	@ANTHROPIC_BASE_URL="http://localhost:8080" ANTHROPIC_API_KEY=dummy uv run make_agent -f "$(AGENTS_DIR)/$(NAME).mk" --debug --prompt "$(TASK)"
-
+	@set -e; \
+	name="$(NAME)"; \
+	case "$$name" in \
+		""|*[!A-Za-z0-9._-]*) echo "ERROR: invalid NAME '$$name'" >&2; exit 2 ;; \
+	esac; \
+	ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "$(AGENTS_DIR)/$$name.mk" --debug --prompt-file "$(TASK_FILE)"

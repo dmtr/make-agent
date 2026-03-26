@@ -283,3 +283,37 @@ def test_run_tool_non_content_params_unchanged(tmp_path):
     result = run_tool("greet", {"NAME": "Alice"}, mf, content_params=frozenset())
     assert "Alice" in result
 
+
+def test_run_tool_rejects_invalid_argument_name(tmp_path):
+    """Argument names must be make-variable-safe to block option injection."""
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: greet
+        greet:
+        \t@echo ok
+    """,
+    )
+    result = run_tool("greet", {"--file": "x"}, mf)
+    assert result.startswith("Error (invalid argument name)")
+
+
+def test_run_tool_escapes_shell_sensitive_value_chars(tmp_path):
+    """Backticks and $(...) payloads must stay literal, not execute."""
+    marker_one = tmp_path / "pwned-backtick"
+    marker_two = tmp_path / "pwned-subst"
+    mf = _write_makefile(
+        tmp_path,
+        f"""\
+        .PHONY: show
+        show:
+        \t@printf '%s\\n' "$(TASK)"
+        \t@test ! -e "{marker_one}"
+        \t@test ! -e "{marker_two}"
+    """,
+    )
+    payload = f'hello `touch "{marker_one}"` $(touch "{marker_two}") world'
+    result = run_tool("show", {"TASK": payload}, mf)
+    assert marker_one.exists() is False
+    assert marker_two.exists() is False
+    assert payload in result

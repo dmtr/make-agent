@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import yaml
 
 import pytest
-from make_agent.create_agent import render
+from unittest.mock import patch
+from make_agent.create_agent import render, main
 from make_agent.parser import parse
 
 
@@ -152,7 +155,6 @@ class TestCLI:
     def _run(self, args: list[str], stdin: str | None = None) -> tuple[str, int]:
         """Run the CLI via subprocess and return (stdout, returncode)."""
         import subprocess
-        import sys
 
         cmd = [sys.executable, "-m", "make_agent.create_agent"] + args
         result = subprocess.run(
@@ -195,6 +197,14 @@ class TestCLI:
 
     def test_invalid_spec_exits_nonzero(self):
         _, rc = self._run(["--spec", "tools: []"])  # missing system_prompt
+        assert rc != 0
+
+    def test_symlink_output_exits_nonzero(self, tmp_path):
+        real_target = tmp_path / "real.mk"
+        out_file = tmp_path / "agent.mk"
+        out_file.symlink_to(real_target)
+        spec = yaml.dump(_minimal_spec())
+        _, rc = self._run(["--spec", spec, "-o", str(out_file)])
         assert rc != 0
 
 
@@ -251,8 +261,83 @@ class TestParamValidation:
         }
         assert render(spec)  # should not raise
 
+    def test_content_param_via_file_var_is_valid(self):
+        spec = {
+            "system_prompt": "Hi.",
+            "tools": [
+                {
+                    "name": "write",
+                    "description": "Write file.",
+                    "params": [{"name": "BODY", "type": "content", "description": "Content"}],
+                    "recipe": ['@cat "$(BODY_FILE)" > out.txt'],
+                }
+            ],
+        }
+        rendered = render(spec)  # should not raise
+        assert "BODY_FILE" in rendered
+
+    def test_content_param_via_direct_ref_is_valid(self):
+        """A content param referenced by $(NAME) directly should also pass."""
+        spec = {
+            "system_prompt": "Hi.",
+            "tools": [
+                {
+                    "name": "write",
+                    "description": "Write file.",
+                    "params": [{"name": "BODY", "type": "content", "description": "Content"}],
+                    "recipe": ['@echo "$(BODY)"'],
+                }
+            ],
+        }
+        assert render(spec)  # should not raise
+
+    def test_content_param_not_referenced_raises(self):
+        spec = {
+            "system_prompt": "Hi.",
+            "tools": [
+                {
+                    "name": "write",
+                    "description": "Write file.",
+                    "params": [{"name": "BODY", "type": "content", "description": "Content"}],
+                    "recipe": ["@echo nothing"],
+                }
+            ],
+        }
+        with pytest.raises(ValueError, match="BODY"):
+            render(spec)
+
+    def test_content_param_error_hints_file_var(self):
+        """Error message for an unreferenced content param must mention $(BODY_FILE)."""
+        spec = {
+            "system_prompt": "Hi.",
+            "tools": [
+                {
+                    "name": "write",
+                    "description": "Write file.",
+                    "params": [{"name": "BODY", "type": "content", "description": "Content"}],
+                    "recipe": ["@echo nothing"],
+                }
+            ],
+        }
+        with pytest.raises(ValueError, match=r"\$\(BODY_FILE\)"):
+            render(spec)
+
+    def test_content_param_error_recommends_file_var(self):
+        spec = {
+            "system_prompt": "Hi.",
+            "tools": [
+                {
+                    "name": "write",
+                    "description": "Write file.",
+                    "params": [{"name": "BODY", "type": "content", "description": "Content"}],
+                    "recipe": ["@echo nothing"],
+                }
+            ],
+        }
+        with pytest.raises(ValueError, match="recommended for content params"):
+            render(spec)
+
     def test_cli_exits_nonzero_on_broken_recipe(self):
-        import subprocess, sys
         spec = yaml.dump(self._spec_with_broken_recipe())
         result = subprocess.run(
             [sys.executable, "-m", "make_agent.create_agent", "--spec", spec],
@@ -260,3 +345,14 @@ class TestParamValidation:
         )
         assert result.returncode != 0
         assert "FILE" in result.stderr
+
+
+class TestOutputSafety:
+    def test_refuses_to_overwrite_symlink_output(self, tmp_path):
+        out_file = tmp_path / "agent.mk"
+        target = tmp_path / "target.mk"
+        out_file.symlink_to(target)
+        spec_yaml = yaml.dump(_minimal_spec())
+        with patch("sys.argv", ["make-agent-create", "--spec", spec_yaml, "-o", str(out_file)]):
+            with pytest.raises(SystemExit, match="refusing to overwrite symlink"):
+                main()

@@ -1,0 +1,79 @@
+import cmd
+from pathlib import Path
+from typing import Optional
+
+from make_agent.agent import _DEFAULT_MAX_RETRIES, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
+
+
+class MakeAgentShell(cmd.Cmd):
+    """Interactive shell that delegates all LLM interaction to an :class:`Agent`."""
+
+    prompt = "make-agent> "
+    intro = ""
+
+    def __init__(self, agent: Agent) -> None:
+        super().__init__()
+        self._agent = agent
+
+    def default(self, line: str) -> None:
+        """Send *line* to the agent and print the reply."""
+        try:
+            print(self._agent(line))
+        except Exception as e:
+            print(f"Error: {e}")
+
+    def emptyline(self) -> None:
+        """Do nothing on an empty line (overrides cmd.Cmd's repeat-last-command)."""
+
+    def do_EOF(self, line: str) -> bool:
+        """Exit on Ctrl-D."""
+        print()
+        return True
+
+    def do_exit(self, line: str) -> bool:
+        """Exit the shell."""
+        return True
+
+    def do_quit(self, line: str) -> bool:
+        """Exit the shell."""
+        return True
+
+
+def run(
+    makefile_path: Path,
+    model: str = _DEFAULT_MODEL,
+    prompt: Optional[str] = None,
+    debug: bool = False,
+    max_retries: int = _DEFAULT_MAX_RETRIES,
+    tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
+) -> None:
+    """Start the interactive shell.
+
+    Reads the system prompt and tool definitions from *makefile_path*, then
+    enters a :class:`MakeAgentShell` loop.  Press Ctrl-D, Ctrl-C, or type
+    ``exit`` / ``quit`` to leave.
+
+    When *debug* is ``True`` all messages are logged to ``make-agent.log`` in
+    the current working directory.
+    """
+
+    agent_config = AgentConfig(
+        makefile_path=makefile_path,
+        model=model,
+        max_retries=max_retries,
+        tool_timeout=tool_timeout,
+    )
+    agent = Agent(agent_config)
+    print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")
+
+    if prompt:
+        print("Sending initial prompt...\n")
+        print(agent(prompt))
+        return
+
+    print("Type your message. Press Ctrl-D or Ctrl-C to exit.\n")
+    shell = MakeAgentShell(agent)
+    try:
+        shell.cmdloop()
+    except KeyboardInterrupt:
+        print()

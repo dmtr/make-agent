@@ -128,6 +128,14 @@ def _init_logging(level: int = logging.DEBUG) -> None:
     logger.setLevel(level)
 
 
+def _write_output_no_symlink(output_path: Path, content: str) -> None:
+    """Write *content* to *output_path* while refusing symlink destinations."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.is_symlink():
+        raise ValueError(f"refusing to overwrite symlink: {output_path}")
+    output_path.write_text(content)
+
+
 def render(spec: dict) -> str:
     """Return a Makefile string rendered from an agent *spec* dict.
 
@@ -204,9 +212,18 @@ def main() -> None:
         sys.exit(f"make-agent-create: {e}")
 
     if args.output:
-        Path(args.output).write_text(makefile)
+        try:
+            _write_output_no_symlink(Path(args.output), makefile)
+        except OSError as e:
+            logger.error("Failed to write output file: %s", e)
+            sys.exit(f"make-agent-create: failed to write output file: {e}")
+        except ValueError as e:
+            logger.error("Unsafe output path: %s", e)
+            sys.exit(f"make-agent-create: {e}")
     else:
         sys.stdout.write(makefile)
+
+    logger.info("make-agent-create completed successfully.")
 
 
 if __name__ == "__main__":

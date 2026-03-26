@@ -19,6 +19,7 @@ on the command line.  Recipes must therefore reference ``$(NAME_FILE)``::
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -30,6 +31,21 @@ logger = logging.getLogger(__name__)
 
 
 _CONTENT_TYPE = "content"
+_VALID_MAKE_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _is_valid_make_var_name(name: str) -> bool:
+    return bool(_VALID_MAKE_VAR_NAME_RE.fullmatch(name))
+
+
+def _escape_make_assignment_value(value: Any) -> str:
+    s = str(value)
+    # Keep values literal when they are later interpolated by make and shell:
+    # - \  => \\   (preserve backslashes)
+    # - "  => \"   (avoid closing shell double-quoted strings)
+    # - `  => \`   (avoid backtick command substitution)
+    # - $  => \$$  (avoid make/shell expansion such as $(...) and $VAR)
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`").replace("$", "\\$$")
 
 
 def _param_schema(p: Param) -> dict[str, str]:
@@ -108,6 +124,8 @@ def run_tool(
     try:
         make_vars: list[str] = []
         for k, v in arguments.items():
+            if not _is_valid_make_var_name(k):
+                return f"Error (invalid argument name): {k!r} is not a valid make variable name"
             if k in content_params:
                 with tempfile.NamedTemporaryFile(
                     mode="w",
@@ -120,9 +138,7 @@ def run_tool(
                 tmp_files.append(tmp_path)
                 make_vars.append(f"{k}_FILE={tmp_path}")
             else:
-                # Escape $ so Make does not expand $(VAR) references inside
-                # user-supplied data (e.g. SPEC strings containing Make syntax).
-                make_vars.append(f"{k}={v.replace('$', '$$')}")
+                make_vars.append(f"{k}={_escape_make_assignment_value(v)}")
 
         cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target] + make_vars
         logger.debug(f"running tool with command: {' '.join(cmd)}")

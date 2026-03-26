@@ -11,7 +11,7 @@ The **orchestrator** (`orchestrator.mk`) has four tools:
 | `list-agents` | Scans `./agents/` and returns each agent's name + purpose |
 | `read-agent` | Prints the full Makefile of a named agent |
 | `create-agent` | Writes a new `.mk` file to `./agents/<name>.mk` |
-| `run-agent` | Runs a specialist via `make-agent -f agents/<name>.mk --prompt "..."` |
+| `run-agent` | Runs a specialist via `make-agent -f agents/<name>.mk --prompt-file <task-file>` |
 
 When given a task the orchestrator will:
 1. Discover existing specialists via `list-agents`
@@ -30,7 +30,8 @@ cd examples/self-improving
 make-agent -f orchestrator.mk
 
 # Single prompt
-make-agent -f orchestrator.mk --prompt "Find all TODO comments in the ../.. directory"
+printf '%s' "Find all TODO comments in the ../.. directory" > /tmp/task.txt
+make-agent -f orchestrator.mk --prompt-file /tmp/task.txt
 ```
 
 ## Writing specialist agents

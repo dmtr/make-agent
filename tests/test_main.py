@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
+
+import make_agent.main as main_module
 
 
 def _run(*args: str, **kwargs) -> subprocess.CompletedProcess:
@@ -78,3 +81,47 @@ class TestValidateSubcommand:
         _write(tmp_path, "Makefile", "build:\n\t@gcc main.c\n")
         result = _run("validate", cwd=str(tmp_path))
         assert result.returncode == 0
+
+
+class TestRunPromptInput:
+    def test_prompt_file_content_is_passed_to_run(self, tmp_path):
+        mf = _write(tmp_path, "Makefile", "noop:\n\t@echo ok\n")
+        prompt_file = _write(tmp_path, "prompt.txt", "hello from file")
+        args = argparse.Namespace(
+            file=str(mf),
+            model="model-x",
+            prompt=None,
+            prompt_file=str(prompt_file),
+            debug=False,
+            max_retries=5,
+            tool_timeout=600,
+        )
+        captured: dict = {}
+
+        def _fake_run(**kwargs):
+            captured.update(kwargs)
+
+        original = main_module.run
+        main_module.run = _fake_run
+        try:
+            main_module._cmd_run(args)
+        finally:
+            main_module.run = original
+
+        assert captured["prompt"] == "hello from file"
+        assert str(captured["makefile_path"]).endswith("Makefile")
+
+    def test_prompt_and_prompt_file_are_mutually_exclusive(self, tmp_path):
+        mf = _write(tmp_path, "Makefile", "noop:\n\t@echo ok\n")
+        prompt_file = _write(tmp_path, "prompt.txt", "hello")
+        result = _run(
+            "run",
+            "-f",
+            str(mf),
+            "--prompt",
+            "inline",
+            "--prompt-file",
+            str(prompt_file),
+        )
+        assert result.returncode != 0
+        assert "not allowed with argument" in result.stderr

@@ -15,12 +15,13 @@ Requires Python 3.10+ and a working `make` binary. Uses [litellm](https://github
 ## Usage
 
 ```
-ANTHROPIC_API_KEY=<key> uv run make_agent [-f FILE] [--model MODEL] [--prompt PROMPT]
+ANTHROPIC_API_KEY=<key> uv run make_agent [-f FILE] [--model MODEL] [--prompt PROMPT | --prompt-file FILE]
 ```
 
 - `-f FILE` — Makefile to load (default: `./Makefile`)
 - `--model MODEL` — litellm model string (default: `anthropic/claude-haiku-4-5-20251001`)
 - `--prompt PROMPT` — send a single prompt and exit instead of entering the interactive shell
+- `--prompt-file FILE` — send a single prompt read from `FILE` and exit
 
 Without `--prompt`, the agent starts an interactive REPL. Type `exit`, `quit`, or press Ctrl-D to leave.
 
@@ -70,7 +71,7 @@ The **orchestrator** (`orchestrator.mk`) exposes four tools to the model:
 | `list-agents` | Scans `./agents/` and returns each specialist's name and purpose |
 | `read-agent` | Prints the full Makefile of a named specialist |
 | `create-agent` | Writes a YAML spec to a temp file and generates a new `.mk` in `./agents/` |
-| `run-agent` | Runs a specialist via `make-agent -f agents/<name>.mk --prompt "..."` |
+| `run-agent` | Runs a specialist via `make-agent -f agents/<name>.mk --prompt-file <task-file>` |
 
 For every task the orchestrator follows this loop:
 
@@ -90,7 +91,8 @@ cd examples/self-improving
 make-agent -f orchestrator.mk
 
 # Single prompt
-make-agent -f orchestrator.mk --prompt "Find all TODO comments in the ../.. directory"
+printf '%s' "Find all TODO comments in the ../.. directory" > /tmp/task.txt
+make-agent -f orchestrator.mk --prompt-file /tmp/task.txt
 ```
 
 ### YAML spec for specialist creation
