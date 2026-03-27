@@ -38,8 +38,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
     )
 
 
-def _cmd_validate(args: argparse.Namespace) -> None:
-    """Load *args.file* and report any @param/recipe mismatches."""
     try:
         mf = parse_file(args.file)
     except OSError as e:

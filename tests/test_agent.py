@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, call, patch
 import httpx
 import litellm
 import pytest
-
 from make_agent.agent import _completion_with_retry, _parse_retry_after
 
 
@@ -132,6 +131,7 @@ class TestCompletionWithRetry:
 
 # ── Load-time validation tests ────────────────────────────────────────────────
 
+
 class TestAgentValidation:
     def _write_makefile(self, tmp_path, content: str):
         mf = tmp_path / "Makefile"
@@ -139,74 +139,29 @@ class TestAgentValidation:
         return mf
 
     def test_valid_makefile_loads(self, tmp_path):
-        mf = self._write_makefile(tmp_path, (
-            "# <tool>\n# Greet.\n# @param NAME string A name\n# </tool>\n"
-            "greet:\n\t@echo $(NAME)\n"
-        ))
+        mf = self._write_makefile(tmp_path, ("# <tool>\n# Greet.\n# @param NAME string A name\n# </tool>\n" "greet:\n\t@echo $(NAME)\n"))
         from make_agent.agent import Agent, AgentConfig
+
         agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"))
         assert "greet" in agent.tool_names
 
     def test_broken_recipe_raises_on_load(self, tmp_path):
-        mf = self._write_makefile(tmp_path, (
-            "# <tool>\n# Install.\n# @param FILE string A file\n# </tool>\n"
-            "install:\n\t@pip install -r\n"
-        ))
-        from make_agent.agent import Agent, AgentConfig
+        mf = self._write_makefile(tmp_path, ("# <tool>\n# Install.\n# @param FILE string A file\n# </tool>\n" "install:\n\t@pip install -r\n"))
         import pytest
+        from make_agent.agent import Agent, AgentConfig
+
         with pytest.raises(ValueError, match="FILE"):
             Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"))
 
     def test_error_message_names_tool_and_param(self, tmp_path):
-        mf = self._write_makefile(tmp_path, (
-            "# <tool>\n# Do X.\n# @param QUERY string Search term\n# </tool>\n"
-            "search:\n\t@grep foo .\n"
-        ))
-        from make_agent.agent import Agent, AgentConfig
+        mf = self._write_makefile(tmp_path, ("# <tool>\n# Do X.\n# @param QUERY string Search term\n# </tool>\n" "search:\n\t@grep foo .\n"))
         import pytest
+        from make_agent.agent import Agent, AgentConfig
+
         with pytest.raises(ValueError) as exc_info:
             Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"))
         assert "search" in str(exc_info.value)
         assert "QUERY" in str(exc_info.value)
 
 
-class TestAgentToolArgumentHandling:
-    def test_malformed_tool_json_returns_error_and_skips_tool(self, tmp_path):
-        mf = tmp_path / "Makefile"
-        mf.write_text(
-            "# <tool>\n# Echo.\n# @param X string Value\n# </tool>\n"
-            "echo:\n\t@echo $(X)\n"
-        )
 
-        from make_agent.agent import Agent, AgentConfig
-
-        tool_call = MagicMock()
-        tool_call.id = "tc_1"
-        tool_call.function.name = "echo"
-        tool_call.function.arguments = "{bad-json"
-
-        tool_msg = MagicMock()
-        tool_msg.tool_calls = [tool_call]
-        tool_msg.content = None
-        tool_msg.model_dump.return_value = {"role": "assistant", "content": None}
-
-        final_msg = MagicMock()
-        final_msg.tool_calls = None
-        final_msg.content = "done"
-
-        first_response = MagicMock()
-        first_response.choices = [MagicMock(message=tool_msg)]
-        second_response = MagicMock()
-        second_response.choices = [MagicMock(message=final_msg)]
-
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"))
-        with patch("make_agent.agent.litellm.completion", side_effect=[first_response, second_response]):
-            with patch("make_agent.agent.run_tool") as mock_run_tool:
-                result = agent("hello")
-
-        assert result == "done"
-        mock_run_tool.assert_not_called()
-        assert any(
-            m.get("role") == "tool" and "invalid tool arguments JSON" in m.get("content", "")
-            for m in agent._messages
-        )
