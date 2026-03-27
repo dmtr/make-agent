@@ -14,11 +14,6 @@ logger = logging.getLogger(__name__)
 def _init_logging(debug: bool) -> None:
     logging.basicConfig(filename="make-agent.log", level=logging.DEBUG if debug else logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    if debug:
-        import litellm
-
-        litellm._turn_on_debug()
-
 
 def _cmd_run(args: argparse.Namespace) -> None:
     prompt = args.prompt
@@ -38,6 +33,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_validate(args: argparse.Namespace) -> None:
     try:
         mf = parse_file(args.file)
     except OSError as e:
@@ -63,7 +59,7 @@ def main() -> None:
     # ── run (default) ────────────────────────────────────────────────────────
     run_p = subparsers.add_parser("run", help="Start the interactive agent (default)")
     run_p.add_argument("-f", "--file", default="Makefile", metavar="FILE", help="Makefile to load (default: ./Makefile)")
-    run_p.add_argument("--model", default="anthropic/claude-haiku-4-5-20251001", metavar="MODEL", help="litellm model string")
+    run_p.add_argument("--model", default="anthropic/claude-haiku-4-5-20251001", metavar="MODEL", help="any-llm model string (e.g. 'anthropic/claude-haiku-4-5-20251001')")
     run_prompt_g = run_p.add_mutually_exclusive_group()
     run_prompt_g.add_argument("--prompt", default=None, metavar="PROMPT", help="Skip interactive mode and send this prompt to the model")
     run_prompt_g.add_argument("--prompt-file", default=None, metavar="FILE", help="Skip interactive mode and read the prompt from FILE")

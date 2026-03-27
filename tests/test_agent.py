@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, call, patch
 
-import httpx
-import litellm
+import any_llm
 import pytest
 from make_agent.agent import _completion_with_retry, _parse_retry_after
 
@@ -13,22 +12,20 @@ from make_agent.agent import _completion_with_retry, _parse_retry_after
 def _make_rate_limit_error(
     retry_after: float | None = None,
     retry_after_ms: float | None = None,
-) -> litellm.RateLimitError:
+) -> any_llm.RateLimitError:
     headers: dict[str, str] = {}
     if retry_after is not None:
         headers["retry-after"] = str(retry_after)
     if retry_after_ms is not None:
         headers["retry-after-ms"] = str(retry_after_ms)
-    response = httpx.Response(
-        status_code=429,
-        headers=headers,
-        request=httpx.Request("POST", "https://api.anthropic.com"),
-    )
-    return litellm.RateLimitError(
+    fake_response = MagicMock()
+    fake_response.headers = headers
+    fake_orig = MagicMock()
+    fake_orig.response = fake_response
+    return any_llm.RateLimitError(
         message="rate limit exceeded",
-        llm_provider="anthropic",
-        model="claude-haiku",
-        response=response,
+        original_exception=fake_orig,
+        provider_name="anthropic",
     )
 
 
@@ -57,11 +54,10 @@ class TestParseRetryAfter:
         assert _parse_retry_after(err) is None
 
     def test_none_response(self):
-        err = litellm.RateLimitError(
+        err = any_llm.RateLimitError(
             message="rate limit exceeded",
-            llm_provider="anthropic",
-            model="claude-haiku",
-            response=None,
+            original_exception=None,
+            provider_name="anthropic",
         )
         assert _parse_retry_after(err) is None
 
@@ -69,7 +65,7 @@ class TestParseRetryAfter:
 class TestCompletionWithRetry:
     def test_succeeds_on_first_attempt(self):
         success = _make_success_response()
-        with patch("make_agent.agent.litellm.completion", return_value=success) as mock_c:
+        with patch("make_agent.agent.any_llm.completion", return_value=success) as mock_c:
             result = _completion_with_retry("model", [], {}, max_retries=3)
         assert result is success
         mock_c.assert_called_once()
@@ -77,7 +73,7 @@ class TestCompletionWithRetry:
     def test_retries_on_rate_limit_then_succeeds(self):
         err = _make_rate_limit_error(retry_after=10)
         success = _make_success_response()
-        with patch("make_agent.agent.litellm.completion", side_effect=[err, err, success]):
+        with patch("make_agent.agent.any_llm.completion", side_effect=[err, err, success]):
             with patch("make_agent.agent.time.sleep") as mock_sleep:
                 result = _completion_with_retry("model", [], {}, max_retries=3)
         assert result is success
@@ -87,7 +83,7 @@ class TestCompletionWithRetry:
     def test_exponential_backoff_without_header(self):
         err = _make_rate_limit_error()  # no retry-after header
         success = _make_success_response()
-        with patch("make_agent.agent.litellm.completion", side_effect=[err, err, success]):
+        with patch("make_agent.agent.any_llm.completion", side_effect=[err, err, success]):
             with patch("make_agent.agent.time.sleep") as mock_sleep:
                 _completion_with_retry("model", [], {}, max_retries=3)
         # attempt 0 → 2^0 = 1s, attempt 1 → 2^1 = 2s
@@ -98,7 +94,7 @@ class TestCompletionWithRetry:
         success = _make_success_response()
         # need 7 failures to reach 2^6=64 > 60; cap kicks in at attempt 6
         side_effects = [err] * 7 + [success]
-        with patch("make_agent.agent.litellm.completion", side_effect=side_effects):
+        with patch("make_agent.agent.any_llm.completion", side_effect=side_effects):
             with patch("make_agent.agent.time.sleep") as mock_sleep:
                 _completion_with_retry("model", [], {}, max_retries=10)
         waits = [c.args[0] for c in mock_sleep.call_args_list]
@@ -107,24 +103,24 @@ class TestCompletionWithRetry:
 
     def test_raises_after_max_retries_exhausted(self):
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent.litellm.completion", side_effect=err):
+        with patch("make_agent.agent.any_llm.completion", side_effect=err):
             with patch("make_agent.agent.time.sleep"):
-                with pytest.raises(litellm.RateLimitError):
+                with pytest.raises(any_llm.RateLimitError):
                     _completion_with_retry("model", [], {}, max_retries=2)
 
     def test_total_calls_equals_max_retries_plus_one(self):
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent.litellm.completion", side_effect=err) as mock_c:
+        with patch("make_agent.agent.any_llm.completion", side_effect=err) as mock_c:
             with patch("make_agent.agent.time.sleep"):
-                with pytest.raises(litellm.RateLimitError):
+                with pytest.raises(any_llm.RateLimitError):
                     _completion_with_retry("model", [], {}, max_retries=3)
         assert mock_c.call_count == 4  # 1 initial + 3 retries
 
     def test_zero_max_retries_raises_immediately(self):
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent.litellm.completion", side_effect=err):
+        with patch("make_agent.agent.any_llm.completion", side_effect=err):
             with patch("make_agent.agent.time.sleep") as mock_sleep:
-                with pytest.raises(litellm.RateLimitError):
+                with pytest.raises(any_llm.RateLimitError):
                     _completion_with_retry("model", [], {}, max_retries=0)
         mock_sleep.assert_not_called()
 
