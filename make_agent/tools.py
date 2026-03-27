@@ -155,7 +155,7 @@ def run_tool(
 
         logger.debug(f"running tool with command: {' '.join(cmd)}")
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            result = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout)
             logger.debug(f"result of '{' '.join(cmd)}': exit {result.returncode}, stdout: {result.stdout!r}, stderr: {result.stderr!r}")
         except subprocess.TimeoutExpired:
             return f"Error (timeout): tool '{target}' exceeded {timeout}s limit"
