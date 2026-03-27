@@ -38,6 +38,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_validate(args: argparse.Namespace) -> None:
     try:
         mf = parse_file(args.file)
     except OSError as e:

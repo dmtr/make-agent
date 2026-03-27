@@ -1,31 +1,30 @@
 """Makefile parser.
 
 Parses a subset of GNU Make syntax into structured data:
-  - Variables  (=, :=, ?=, +=)
+  - Variables  (=, :=, ?=, +=, and ``define``/``endef`` blocks)
   - Rules      (target: prerequisites + tab-indented recipes)
   - .PHONY declarations
   - Special comment blocks:
-      # <system> … # </system>  — system prompt for the agent
+      # <system> … # </system>  — system prompt for the agent (legacy)
       # <tool>   … # </tool>    — tool description + @param declarations
+  - ``define SYSTEM_PROMPT … endef`` — system prompt (preferred; takes
+    precedence over ``# <system>`` blocks)
 
 Inside a ``# <tool>`` block:
   - Lines starting with ``# @param NAME type description`` declare tool
-    parameters that are passed to make as ``NAME=value``.
+    parameters.
   - All other lines form the human-readable tool description sent to the LLM.
 
-Supported param types
----------------------
+Param types
+-----------
 ``string``, ``number``, ``integer``, ``boolean``
-    Standard JSON Schema primitives.  Passed to ``make`` as ``NAME=value``.
+    Standard JSON Schema primitives.  Values are injected via a temporary
+    ``params.mk`` file using ``define``/``endef`` blocks, so the LLM can pass
+    any text — including ``$``, quotes, and newlines — without escaping.
 
-``content``
-    Arbitrary multi-line text (file contents, scripts, …).  The framework
-    writes the value to a temporary file and passes ``NAME_FILE=/tmp/…`` to
-    ``make`` instead.  Recipes must therefore reference ``$(NAME_FILE)``::
-
-        # @param BODY content  File text to write
-        write-file:
-            @cat "$(BODY_FILE)" > "$(FILE)"
+Recipes reference parameters as ``$(PARAM)`` (Make-expanded) or
+``$(value PARAM)`` (raw literal, preserves ``$`` signs and special
+characters).
 """
 
 from __future__ import annotations
@@ -114,11 +113,15 @@ def _strip_comment(s: str) -> str:
     return s.rstrip()
 
 
+_DEFINE_RE = re.compile(r"^define\s+([A-Za-z_][A-Za-z0-9_]*)\s*$")
+
+
 class _State(Enum):
     NORMAL = auto()
     RECIPE = auto()
     SYSTEM_BLOCK = auto()
     TOOL_BLOCK = auto()
+    DEFINE = auto()
 
 
 def parse(text: str) -> Makefile:
@@ -132,12 +135,28 @@ def parse(text: str) -> Makefile:
     tool_lines: list[str] = []
     tool_params: list[Param] = []
     phony_targets: set[str] = set()
+    define_name: str = ""
+    define_lines: list[str] = []
 
-    # Join line continuations (backslash-newline → space)
+    # Join line continuations (backslash-newline → space), but only outside
+    # define blocks (define block content is literal).
+    raw_lines = text.splitlines()
     logical_lines: list[str] = []
     buf = ""
-    for raw in text.splitlines():
-        if raw.endswith("\\"):
+    in_define = False
+    for raw in raw_lines:
+        stripped_raw = raw.strip()
+        if not in_define and _DEFINE_RE.match(stripped_raw):
+            if buf:
+                logical_lines.append(buf)
+                buf = ""
+            logical_lines.append(raw)
+            in_define = True
+        elif in_define:
+            logical_lines.append(raw)
+            if stripped_raw == "endef":
+                in_define = False
+        elif raw.endswith("\\"):
             buf += raw[:-1] + " "
         else:
             logical_lines.append(buf + raw)
@@ -146,6 +165,18 @@ def parse(text: str) -> Makefile:
         logical_lines.append(buf)
 
     for line in logical_lines:
+        # ── Inside a define block ────────────────────────────────────────────
+        if state == _State.DEFINE:
+            if line.strip() == "endef":
+                value = "\n".join(define_lines)
+                result.variables[define_name] = Variable(name=define_name, value=value, flavor="define")
+                if define_name == "SYSTEM_PROMPT":
+                    result.system_prompt = value.strip() or None
+                state = _State.NORMAL
+            else:
+                define_lines.append(line)
+            continue
+
         # Recipe lines must start with a tab
         if line.startswith("\t"):
             if state == _State.RECIPE and current_recipes is not None:
@@ -167,7 +198,9 @@ def parse(text: str) -> Makefile:
         # ── Inside a special comment block ──────────────────────────────────
         if state == _State.SYSTEM_BLOCK:
             if stripped == "# </system>":
-                result.system_prompt = "\n".join(system_lines).strip() or None
+                # Only set system_prompt from # <system> if not already set by define
+                if result.system_prompt is None:
+                    result.system_prompt = "\n".join(system_lines).strip() or None
                 state = _State.NORMAL
             elif stripped.startswith("# "):
                 system_lines.append(stripped[2:])
@@ -211,6 +244,14 @@ def parse(text: str) -> Makefile:
 
         # ── Skip regular comments and blank lines ────────────────────────────
         if not stripped or stripped.startswith("#"):
+            continue
+
+        # ── define/endef block ───────────────────────────────────────────────
+        define_m = _DEFINE_RE.match(stripped)
+        if define_m:
+            define_name = define_m.group(1)
+            define_lines = []
+            state = _State.DEFINE
             continue
 
         # ── .PHONY declaration ───────────────────────────────────────────────
@@ -277,10 +318,10 @@ _RECIPE_VAR_RE = re.compile(r"\$\(([^)]+)\)|\$\{([^}]+)\}|\$\$(\w+)")
 def validate(makefile: Makefile) -> list[str]:
     """Check that every ``@param NAME`` is referenced in the rule's recipe body.
 
-    For standard params, any of ``$(NAME)``, ``${NAME}``, or ``$$NAME`` counts.
-    For ``content``-typed params, ``$(NAME_FILE)`` / ``${NAME_FILE}`` /
-    ``$$NAME_FILE`` is also accepted (because the framework injects the temp
-    file path under that variable name instead of the raw value).
+    Accepts ``$(NAME)``, ``${NAME}``, ``$$NAME``, or ``$(NAME_FILE)`` /
+    ``${NAME_FILE}`` / ``$$NAME_FILE`` as valid references.  The ``_FILE``
+    form is always available at runtime (a temp file is written for every
+    parameter) so either convention is valid in a recipe.
 
     Returns a list of human-readable error strings (empty list means valid).
     """
@@ -292,16 +333,12 @@ def validate(makefile: Makefile) -> list[str]:
         used_vars = {m.group(1) or m.group(2) or m.group(3) for m in _RECIPE_VAR_RE.finditer(recipe_text)}
         for param in rule.params:
             file_var = f"{param.name}_FILE"
-            is_content = param.type == "content"
-            referenced = param.name in used_vars or (is_content and file_var in used_vars)
-            if not referenced:
-                hint = f"$({param.name}), ${{{param.name}}}, $${param.name}"
-                if is_content:
-                    hint += f", or $({file_var}) (recommended for content params)"
+            if param.name not in used_vars and file_var not in used_vars:
                 errors.append(
                     f"Tool '{rule.target}': @param {param.name} declared but never "
                     f"referenced in recipe.\n"
-                    f"  Expected {hint} in the recipe body."
+                    f"  Expected $({param.name}), ${{{param.name}}}, $${param.name}, "
+                    f"or $({file_var}) in the recipe body."
                 )
     return errors
 

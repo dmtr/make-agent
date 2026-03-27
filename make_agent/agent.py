@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 import litellm
 
 from make_agent.parser import parse_file, validate_or_raise
-from make_agent.tools import build_tools, get_content_params, run_tool
+from make_agent.tools import build_tools, run_tool
 
 _DEFAULT_MODEL = "anthropic/claude-haiku-4-5-20251001"
 _DEFAULT_MAX_RETRIES = 5
@@ -88,7 +88,6 @@ class Agent:
         self._max_retries = config.max_retries
         self._tool_timeout = config.tool_timeout
         self._tools = build_tools(mf)
-        self._content_params = get_content_params(mf)
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
         if mf.system_prompt:
@@ -134,7 +133,6 @@ class Agent:
                             arguments,
                             self._makefile_path,
                             self._tool_timeout,
-                            content_params=self._content_params.get(target, frozenset()),
                         )
                     except Exception as e:
                         output = f"Error (unexpected): {e}"

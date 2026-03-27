@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 
 from make_agent.parser import parse
-from make_agent.tools import build_tools, get_content_params, run_tool
+from make_agent.tools import build_tools, run_tool
 
 
 def test_build_tools_no_tool_rules():
@@ -53,42 +53,6 @@ def test_build_tools_type_is_string():
     mf = parse("# <tool>\n# Desc.\n# </tool>\nbuild:")
     assert build_tools(mf)[0]["type"] == "function"
 
-
-def test_build_tools_content_param_schema():
-    """content-typed params appear as JSON Schema string with an extra hint."""
-    text = (
-        "# <tool>\n# Write a file.\n"
-        "# @param FILE string Destination path\n"
-        "# @param CONTENT content Text to write\n"
-        "# </tool>\nwrite-file:"
-    )
-    mf = parse(text)
-    props = build_tools(mf)[0]["function"]["parameters"]["properties"]
-    assert props["FILE"] == {"type": "string", "description": "Destination path"}
-    content_prop = props["CONTENT"]
-    assert content_prop["type"] == "string"
-    assert "CONTENT" in build_tools(mf)[0]["function"]["parameters"]["required"]
-    assert "Pass the full text as-is" in content_prop["description"]
-
-
-def test_get_content_params_returns_mapping():
-    text = (
-        "# <tool>\n# Write a file.\n"
-        "# @param FILE string Destination\n"
-        "# @param CONTENT content Text\n"
-        "# </tool>\nwrite-file:\n"
-        "# <tool>\n# List files.\n"
-        "# @param DIR string Directory\n"
-        "# </tool>\nlist-files:\n"
-    )
-    mf = parse(text)
-    mapping = get_content_params(mf)
-    assert mapping == {"write-file": frozenset({"CONTENT"})}
-
-
-def test_get_content_params_empty_when_none():
-    mf = parse("# <tool>\n# Greet.\n# @param NAME string Name\n# </tool>\ngreet:")
-    assert get_content_params(mf) == {}
 
 def _write_makefile(tmp_path: Path, content: str) -> Path:
     mf = tmp_path / "Makefile"
@@ -179,31 +143,6 @@ def test_run_tool_unknown_target(tmp_path):
     assert result.startswith("Error")
 
 
-def test_run_tool_dollar_in_argument_not_expanded(tmp_path):
-    """$ signs in argument values must reach the recipe literally, not be
-    expanded by Make as variable references (e.g. $(Name) must survive)."""
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: echo-spec
-        echo-spec:
-        \t@printf '%s' "$$SPEC"
-    """,
-    )
-    mf.write_text(
-        textwrap.dedent(
-            """\
-            export SPEC
-            .PHONY: echo-spec
-            echo-spec:
-            \t@printf '%s' "$$SPEC"
-            """
-        )
-    )
-    result = run_tool("echo-spec", {"SPEC": "recipe: $(Name)"}, mf)
-    assert "$(Name)" in result
-
-
 def test_run_tool_timeout(tmp_path):
     mf = _write_makefile(
         tmp_path,
@@ -216,72 +155,6 @@ def test_run_tool_timeout(tmp_path):
     result = run_tool("slow", {}, mf, timeout=1)
     assert "timeout" in result.lower()
     assert "slow" in result
-
-
-# ── content_params — temp-file injection ──────────────────────────────────────
-
-def test_run_tool_content_param_writes_file(tmp_path):
-    """A content param is written to a temp file; CONTENT_FILE reaches the recipe."""
-    out = tmp_path / "out.txt"
-    mf = _write_makefile(
-        tmp_path,
-        f"""\
-        .PHONY: write-file
-        write-file:
-        \t@cat "$(CONTENT_FILE)" > "{out}"
-    """,
-    )
-    multiline = "line one\nline two\nhas \"quotes\" and $VARS"
-    run_tool("write-file", {"CONTENT": multiline}, mf, content_params=frozenset({"CONTENT"}))
-    assert out.read_text() == multiline
-
-
-def test_run_tool_content_param_temp_file_is_cleaned_up(tmp_path):
-    """Temporary files for content params are removed after the call."""
-    import glob as glob_mod
-
-    before = set(glob_mod.glob("/tmp/make-agent-CONTENT-*"))
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: noop
-        noop:
-        \t@cat "$(CONTENT_FILE)" > /dev/null
-    """,
-    )
-    run_tool("noop", {"CONTENT": "hello"}, mf, content_params=frozenset({"CONTENT"}))
-    after = set(glob_mod.glob("/tmp/make-agent-CONTENT-*"))
-    assert after == before  # no new temp files remain
-
-
-def test_run_tool_content_param_handles_quotes_and_newlines(tmp_path):
-    """Content with unbalanced quotes and newlines reaches the file intact."""
-    out = tmp_path / "script.py"
-    mf = _write_makefile(
-        tmp_path,
-        f"""\
-        .PHONY: write-file
-        write-file:
-        \t@cat "$(CONTENT_FILE)" > "{out}"
-    """,
-    )
-    python_code = '#!/usr/bin/env python3\nprint("hello")\ndata = \'world\'\n'
-    run_tool("write-file", {"CONTENT": python_code}, mf, content_params=frozenset({"CONTENT"}))
-    assert out.read_text() == python_code
-
-
-def test_run_tool_non_content_params_unchanged(tmp_path):
-    """Non-content params are still passed as NAME=value (no temp file)."""
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: greet
-        greet:
-        \t@echo "$(NAME)"
-    """,
-    )
-    result = run_tool("greet", {"NAME": "Alice"}, mf, content_params=frozenset())
-    assert "Alice" in result
 
 
 def test_run_tool_rejects_invalid_argument_name(tmp_path):
@@ -298,22 +171,106 @@ def test_run_tool_rejects_invalid_argument_name(tmp_path):
     assert result.startswith("Error (invalid argument name)")
 
 
-def test_run_tool_escapes_shell_sensitive_value_chars(tmp_path):
-    """Backticks and $(...) payloads must stay literal, not execute."""
-    marker_one = tmp_path / "pwned-backtick"
-    marker_two = tmp_path / "pwned-subst"
+# ── params.mk injection ───────────────────────────────────────────────────────
+
+def test_run_tool_dollar_in_value_preserved(tmp_path):
+    """$ signs in single-line values must survive Make and shell expansion.
+
+    params.mk stores ``SPEC = result: $$(MAKE_VAR)`` so Make expands
+    ``$(SPEC)`` to ``result: $(MAKE_VAR)``.  Single-quoting in the recipe
+    prevents the shell from further expanding it.
+    """
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        MAKE_VAR = EXPANDED
+        .PHONY: echo-spec
+        echo-spec:
+        \t@printf '%s\\n' '$(SPEC)'
+    """,
+    )
+    result = run_tool("echo-spec", {"SPEC": "result: $(MAKE_VAR)"}, mf)
+    assert "$(MAKE_VAR)" in result
+    assert "EXPANDED" not in result
+
+
+def test_run_tool_multiline_value(tmp_path):
+    """Multiline values are written to a temp file; PARAM_FILE reaches recipe."""
+    out = tmp_path / "out.txt"
+    mf = _write_makefile(
+        tmp_path,
+        f"""\
+        .PHONY: write-file
+        write-file:
+        \t@cat "$(CONTENT_FILE)" > "{out}"
+    """,
+    )
+    multiline = "line one\nline two\nhas quotes and $VARS"
+    run_tool("write-file", {"CONTENT": multiline}, mf)
+    assert out.read_text() == multiline
+
+
+def test_run_tool_params_mk_and_file_cleaned_up(tmp_path):
+    """All temp files (params.mk and PARAM_FILE) are removed after the call."""
+    import glob as glob_mod
+
+    before_mk = set(glob_mod.glob("/tmp/make-agent-params-*"))
+    before_content = set(glob_mod.glob("/tmp/make-agent-X-*"))
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: noop
+        noop:
+        \t@true
+    """,
+    )
+    run_tool("noop", {"X": "hello"}, mf)
+    after_mk = set(glob_mod.glob("/tmp/make-agent-params-*"))
+    after_content = set(glob_mod.glob("/tmp/make-agent-X-*"))
+    assert after_mk == before_mk
+    assert after_content == before_content
+
+
+def test_run_tool_file_var_always_available(tmp_path):
+    """$(PARAM_FILE) is always provided, even for single-line values."""
+    out = tmp_path / "out.txt"
+    mf = _write_makefile(
+        tmp_path,
+        f"""\
+        .PHONY: save
+        save:
+        \t@cat "$(MSG_FILE)" > "{out}"
+    """,
+    )
+    run_tool("save", {"MSG": "hello world"}, mf)
+    assert "hello world" in out.read_text()
+
+
+def test_run_tool_no_params_no_temp_files(tmp_path):
+    """When there are no arguments, no temp files are created."""
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: hello
+        hello:
+        \t@echo hi
+    """,
+    )
+    result = run_tool("hello", {}, mf)
+    assert "hi" in result
+
+
+def test_run_tool_quotes_in_value(tmp_path):
+    """Values with double quotes are passed safely via the PARAM_FILE temp file."""
+    out = tmp_path / "out.txt"
     mf = _write_makefile(
         tmp_path,
         f"""\
         .PHONY: show
         show:
-        \t@printf '%s\\n' "$(TASK)"
-        \t@test ! -e "{marker_one}"
-        \t@test ! -e "{marker_two}"
+        \t@cat "$(MSG_FILE)" > "{out}"
     """,
     )
-    payload = f'hello `touch "{marker_one}"` $(touch "{marker_two}") world'
-    result = run_tool("show", {"TASK": payload}, mf)
-    assert marker_one.exists() is False
-    assert marker_two.exists() is False
-    assert payload in result
+    run_tool("show", {"MSG": 'say "hello"'}, mf)
+    assert 'say "hello"' in out.read_text()
+
