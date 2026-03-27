@@ -2,7 +2,7 @@
 
 An AI agent whose system prompt and tools are defined in a Makefile.
 
-Each Makefile target annotated with a `# <tool>` comment block becomes a callable tool. The agent invokes targets via `make`, passing parameters as `KEY=value` arguments. A `# <system>` block sets the agent's system prompt.
+Each Makefile target annotated with a `# <tool>` comment block becomes a callable tool. The agent invokes targets via `make`, passing parameters as `KEY=value` arguments. A `define SYSTEM_PROMPT` block sets the agent's system prompt.
 
 ## Installation
 
@@ -28,9 +28,9 @@ Without `--prompt`, the agent starts an interactive REPL. Type `exit`, `quit`, o
 ## Makefile format
 
 ```makefile
-# <system>
-# You are a filesystem assistant.
-# </system>
+define SYSTEM_PROMPT
+You are a filesystem assistant.
+endef
 
 .PHONY: list-files greet
 
@@ -51,8 +51,25 @@ greet:
 
 ### Special comment blocks
 
-- `# <system> ... # </system>` sets the system prompt passed to the model.
+- `define SYSTEM_PROMPT ... endef` sets the system prompt passed to the model. The content is raw text — no `#` prefix needed. `endef` must be on its own line with no indentation.
 - `# <tool> ... # </tool>` marks the following target as an LLM-callable tool. Lines starting with `# @param NAME type description` declare parameters (JSON Schema primitives: `string`, `number`, `integer`, `boolean`). All other lines form the tool description.
+
+### Parameters and `$(PARAM_FILE)`
+
+Every declared parameter automatically gets two Make variables injected at call time:
+
+- `$(PARAM)` — the value as a Make variable with shell-escaped value. Convenient for single-line values.
+- `$(PARAM_FILE)` — path to a temp file containing the full, unescaped value. Use this for multiline content or when the value might contain shell metacharacters.
+
+```makefile
+# <tool>
+# Write content to a file.
+# @param FILE_PATH string Destination file path
+# @param CONTENT string Content to write (may be multiline)
+# </tool>
+write-file:
+	@cat "$(CONTENT_FILE)" > "$(FILE_PATH)"
+```
 
 Targets without a `# <tool>` block are invisible to the model.
 

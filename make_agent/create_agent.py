@@ -11,7 +11,8 @@ Usage (argument)::
 
 YAML spec schema::
 
-    system_prompt: "You are a specialist that ..."
+    system_prompt: |
+      You are a specialist that ...
     tools:
       - name: tool-name
         description: What this tool does.
@@ -20,21 +21,19 @@ YAML spec schema::
             type: string
             description: The param purpose
         recipe:
-          - "@shell command $(PARAM)"
+          - "@shell command $(value PARAM)"
 
 ``params`` may be omitted for tools that take no arguments.
-``type`` must be one of: ``string``, ``number``, ``integer``, ``boolean``, or
-``content``.  Parameters typed ``content`` carry arbitrary multi-line text; the
-framework writes them to a temp file and injects ``{NAME}_FILE`` into Make, so
-recipes should reference ``$(NAME_FILE)`` rather than ``$(NAME)``::
+``type`` must be one of: ``string``, ``number``, ``integer``, or ``boolean``.
 
-    params:
-      - name: BODY
-        type: content
-        description: File contents to write
-    recipe:
-      - "@cat \"$(BODY_FILE)\" > \"$(FILE)\""
+The ``system_prompt`` is written as a ``define SYSTEM_PROMPT``/``endef`` block
+so it can contain any text including ``$`` signs without escaping.
 
+``recipe`` can be a list of shell command strings or a single multi-line
+string.  Each recipe line is tab-indented in the generated Makefile.
+
+In recipes, reference parameters as ``$(PARAM)`` (Make-expanded) or
+``$(value PARAM)`` (raw literal, preserves ``$`` and special characters).
 Each ``recipe`` entry becomes one tab-indented line in the Makefile target.
 """
 
@@ -51,13 +50,11 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_BLOCK = string.Template("# <system>\n${body}# </system>\n")
-
 _PARAM_LINE = string.Template("# @param ${name} ${type} ${description}\n")
 
 _TOOL_BLOCK = string.Template("# <tool>\n${description}${params}# </tool>\n${name}:\n${recipe}\n")
 
-_MAKEFILE = string.Template("${system_block}\n.PHONY: ${phony}\n\n${tools}")
+_MAKEFILE = string.Template("define SYSTEM_PROMPT\n${system_prompt}\nendef\n\n.PHONY: ${phony}\n\n${tools}")
 
 
 def _comment_lines(text: str) -> str:
@@ -82,7 +79,12 @@ def _render_tool(tool: dict) -> str:
         )
         for p in tool.get("params", [])
     )
-    recipe = "".join(f"\t{line}\n" for line in tool["recipe"])
+    raw_recipe = tool["recipe"]
+    if isinstance(raw_recipe, str):
+        lines = raw_recipe.splitlines()
+    else:
+        lines = list(raw_recipe)
+    recipe = "".join(f"\t{line}\n" for line in lines)
     return _TOOL_BLOCK.substitute(
         name=tool["name"],
         description=description,
@@ -94,27 +96,26 @@ def _render_tool(tool: dict) -> str:
 def _validate_spec_params(spec: dict) -> None:
     """Raise ``ValueError`` if any tool spec declares a param not used in its recipe.
 
-    For standard params, checks for ``$(NAME)`` / ``${NAME}`` / ``$$NAME``.
-    For ``content``-typed params, ``$(NAME_FILE)`` is also accepted.
+    Accepts ``$(NAME)``, ``${NAME}``, ``$$NAME``, or the ``$(NAME_FILE)`` form
+    (which is always available at runtime for every parameter).
     """
     errors: list[str] = []
     for tool in spec.get("tools", []):
         name = tool.get("name", "<unnamed>")
-        recipe_text = "\n".join(tool.get("recipe", []))
+        raw_recipe = tool.get("recipe", [])
+        if isinstance(raw_recipe, str):
+            recipe_text = raw_recipe
+        else:
+            recipe_text = "\n".join(raw_recipe)
         used = set(re.findall(r"\$\(([^)]+)\)|\$\{([^}]+)\}|\$\$(\w+)", recipe_text))
         used_flat = {g for pair in used for g in pair if g}
         for param in tool.get("params", []):
             pname = param["name"]
-            is_content = param.get("type") == "content"
             file_var = f"{pname}_FILE"
-            referenced = pname in used_flat or (is_content and file_var in used_flat)
-            if not referenced:
-                hint = f"$({pname}), ${{{pname}}}, or $${pname}"
-                if is_content:
-                    hint += f", or $({file_var}) (recommended for content params)"
+            if pname not in used_flat and file_var not in used_flat:
                 errors.append(
                     f"Tool '{name}': @param {pname} declared but never referenced in recipe.\n"
-                    f"  Expected {hint} in the recipe body."
+                    f"  Expected $({pname}), ${{{pname}}}, $${pname}, or $({file_var}) in the recipe body."
                 )
     if errors:
         raise ValueError("\n".join(errors))
@@ -144,12 +145,12 @@ def render(spec: dict) -> str:
     is not referenced in its recipe.
     """
     _validate_spec_params(spec)
-    system_block = _render_system_block(spec["system_prompt"])
+    system_prompt: str = spec["system_prompt"]
     tools_list: list[dict] = spec["tools"]
     phony = " ".join(t["name"] for t in tools_list)
     tools = "\n".join(_render_tool(t) for t in tools_list)
     return _MAKEFILE.substitute(
-        system_block=system_block,
+        system_prompt=system_prompt,
         phony=phony,
         tools=tools,
     )

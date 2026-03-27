@@ -396,6 +396,16 @@ class TestValidate:
         errors = validate(mf)
         assert "$(DIR)" in errors[0]
         assert "${DIR}" in errors[0]
+        assert "$(DIR_FILE)" in errors[0]
+
+    def test_file_var_ref_is_valid(self):
+        """$(PARAM_FILE) satisfies any param (multiline-safe temp file form)."""
+        mf = parse(self._tool("CONTENT", '@cat "$(CONTENT_FILE)"'))
+        assert validate(mf) == []
+
+    def test_file_var_brace_ref_is_valid(self):
+        mf = parse(self._tool("CONTENT", '@cat "${CONTENT_FILE}"'))
+        assert validate(mf) == []
 
     def test_multiple_params_all_missing(self):
         text = (
@@ -451,34 +461,38 @@ class TestValidate:
         assert "foo" in msg
         assert "bar" in msg
 
-    # ── content-typed params ──────────────────────────────────────────────────
+    # ── define SYSTEM_PROMPT ──────────────────────────────────────────────────
 
-    def _content_tool(self, recipe: str) -> str:
-        return (
-            "# <tool>\n# A tool.\n# @param FILE string Destination\n"
-            "# @param CONTENT content Text to write\n# </tool>\n"
-            f"write-file:\n\t{recipe}\n"
+    def test_define_system_prompt_single_line(self):
+        mf = parse("define SYSTEM_PROMPT\nYou are a bot.\nendef")
+        assert mf.system_prompt == "You are a bot."
+
+    def test_define_system_prompt_multiline(self):
+        mf = parse("define SYSTEM_PROMPT\nLine one.\nLine two.\nendef")
+        assert mf.system_prompt == "Line one.\nLine two."
+
+    def test_define_system_prompt_blank_line_preserved(self):
+        mf = parse("define SYSTEM_PROMPT\nFirst.\n\nSecond.\nendef")
+        assert mf.system_prompt == "First.\n\nSecond."
+
+    def test_define_system_prompt_takes_precedence_over_comment_block(self):
+        """define SYSTEM_PROMPT wins over the legacy # <system> block."""
+        text = (
+            "# <system>\n# Legacy prompt.\n# </system>\n"
+            "define SYSTEM_PROMPT\nNew prompt.\nendef"
         )
+        mf = parse(text)
+        assert mf.system_prompt == "New prompt."
 
-    def test_content_param_file_var_is_valid(self):
-        """$(CONTENT_FILE) satisfies a content-typed param."""
-        mf = parse(self._content_tool('@cat "$(CONTENT_FILE)" > "$(FILE)"'))
-        assert validate(mf) == []
+    def test_define_system_prompt_with_dollar_signs(self):
+        mf = parse("define SYSTEM_PROMPT\nYou cost $5 today.\nendef")
+        assert mf.system_prompt == "You cost $5 today."
 
-    def test_content_param_direct_ref_also_valid(self):
-        """$(CONTENT) is still accepted for content params (rare but allowed)."""
-        mf = parse(self._content_tool('@echo "$(CONTENT)" > "$(FILE)"'))
-        assert validate(mf) == []
+    def test_define_non_system_stored_as_variable(self):
+        mf = parse("define FRAG\nhello world\nendef")
+        assert mf.variables["FRAG"].value == "hello world"
+        assert mf.variables["FRAG"].flavor == "define"
 
-    def test_content_param_missing_both_refs_is_error(self):
-        """Neither $(CONTENT) nor $(CONTENT_FILE) → validation error."""
-        mf = parse(self._content_tool('@touch "$(FILE)"'))
-        errors = validate(mf)
-        assert len(errors) == 1
-        assert "CONTENT" in errors[0]
-
-    def test_content_param_error_mentions_file_var(self):
-        """Error hint should mention $(CONTENT_FILE) as the recommended form."""
-        mf = parse(self._content_tool('@touch "$(FILE)"'))
-        errors = validate(mf)
-        assert "CONTENT_FILE" in errors[0]
+    def test_define_does_not_create_rule(self):
+        mf = parse("define SYSTEM_PROMPT\nHi.\nendef\nbuild:")
+        assert len(mf.rules) == 1

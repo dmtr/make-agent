@@ -39,9 +39,9 @@ make-agent -f orchestrator.mk --prompt-file /tmp/task.txt
 Specialists are standard `make-agent` Makefiles. Example:
 
 ```makefile
-# <system>
-# You are a specialist that searches source code for patterns.
-# </system>
+define SYSTEM_PROMPT
+You are a specialist that searches source code for patterns.
+endef
 
 .PHONY: search-files
 

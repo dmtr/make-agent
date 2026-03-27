@@ -47,6 +47,13 @@ class TestRenderSystemPrompt:
         mf = _roundtrip(_minimal_spec(system_prompt=prompt))
         assert "\n\n" in mf.system_prompt
 
+    def test_define_block_emitted(self):
+        """render() must use define/endef, not # <system>."""
+        rendered = render(_minimal_spec(system_prompt="Hello."))
+        assert "define SYSTEM_PROMPT" in rendered
+        assert "endef" in rendered
+        assert "# <system>" not in rendered
+
 
 class TestRenderTools:
     def test_phony_targets_declared(self):
@@ -261,81 +268,41 @@ class TestParamValidation:
         }
         assert render(spec)  # should not raise
 
-    def test_content_param_via_file_var_is_valid(self):
+    def test_recipe_as_string(self):
+        """recipe can be a multi-line string instead of a list."""
+        spec = _minimal_spec(
+            tools=[
+                {
+                    "name": "run",
+                    "description": "Run.",
+                    "params": [{"name": "CMD", "type": "string", "description": "Command"}],
+                    "recipe": "@echo $(CMD)\n@true",
+                }
+            ]
+        )
+        rendered = render(spec)
+        assert "\t@echo $(CMD)" in rendered
+        assert "\t@true" in rendered
+
+    def test_file_var_ref_is_valid(self):
+        """$(PARAM_FILE) is always available and satisfies param validation."""
         spec = {
             "system_prompt": "Hi.",
             "tools": [
                 {
                     "name": "write",
                     "description": "Write file.",
-                    "params": [{"name": "BODY", "type": "content", "description": "Content"}],
+                    "params": [{"name": "BODY", "type": "string", "description": "Content"}],
                     "recipe": ['@cat "$(BODY_FILE)" > out.txt'],
                 }
             ],
         }
         rendered = render(spec)  # should not raise
-        assert "BODY_FILE" in rendered
+        assert "$(BODY_FILE)" in rendered
 
-    def test_content_param_via_direct_ref_is_valid(self):
-        """A content param referenced by $(NAME) directly should also pass."""
-        spec = {
-            "system_prompt": "Hi.",
-            "tools": [
-                {
-                    "name": "write",
-                    "description": "Write file.",
-                    "params": [{"name": "BODY", "type": "content", "description": "Content"}],
-                    "recipe": ['@echo "$(BODY)"'],
-                }
-            ],
-        }
-        assert render(spec)  # should not raise
-
-    def test_content_param_not_referenced_raises(self):
-        spec = {
-            "system_prompt": "Hi.",
-            "tools": [
-                {
-                    "name": "write",
-                    "description": "Write file.",
-                    "params": [{"name": "BODY", "type": "content", "description": "Content"}],
-                    "recipe": ["@echo nothing"],
-                }
-            ],
-        }
-        with pytest.raises(ValueError, match="BODY"):
-            render(spec)
-
-    def test_content_param_error_hints_file_var(self):
-        """Error message for an unreferenced content param must mention $(BODY_FILE)."""
-        spec = {
-            "system_prompt": "Hi.",
-            "tools": [
-                {
-                    "name": "write",
-                    "description": "Write file.",
-                    "params": [{"name": "BODY", "type": "content", "description": "Content"}],
-                    "recipe": ["@echo nothing"],
-                }
-            ],
-        }
-        with pytest.raises(ValueError, match=r"\$\(BODY_FILE\)"):
-            render(spec)
-
-    def test_content_param_error_recommends_file_var(self):
-        spec = {
-            "system_prompt": "Hi.",
-            "tools": [
-                {
-                    "name": "write",
-                    "description": "Write file.",
-                    "params": [{"name": "BODY", "type": "content", "description": "Content"}],
-                    "recipe": ["@echo nothing"],
-                }
-            ],
-        }
-        with pytest.raises(ValueError, match="recommended for content params"):
-            render(spec)
+    def test_error_message_shows_file_var_hint(self):
+        with pytest.raises(ValueError, match=r"\$\(FILE_FILE\)"):
+            render(self._spec_with_broken_recipe())
 
     def test_cli_exits_nonzero_on_broken_recipe(self):
         spec = yaml.dump(self._spec_with_broken_recipe())
