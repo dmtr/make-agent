@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, NamedTuple
 
-import litellm
+import any_llm
 
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, get_content_params, run_tool
@@ -27,14 +27,15 @@ class AgentConfig(NamedTuple):
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT
 
 
-def _parse_retry_after(e: litellm.RateLimitError) -> float | None:
+def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
     """Return the wait time in seconds from a RateLimitError's response headers.
 
     Checks ``retry-after-ms`` (milliseconds) then ``retry-after`` (seconds).
     Returns ``None`` when neither header is present.
     """
     try:
-        headers = e.response.headers if e.response is not None else {}
+        orig = e.original_exception
+        headers = orig.response.headers if orig is not None and hasattr(orig, "response") and orig.response is not None else {}
     except Exception:
         return None
     if ms := headers.get("retry-after-ms"):
@@ -50,7 +51,7 @@ def _completion_with_retry(
     tool_kwargs: dict[str, Any],
     max_retries: int,
 ) -> Any:
-    """Call ``litellm.completion``, retrying on rate limit up to *max_retries* times.
+    """Call ``any_llm.completion``, retrying on rate limit up to *max_retries* times.
 
     On each ``RateLimitError`` the wait time is read from the ``Retry-After``
     response header when present, otherwise exponential backoff is used
@@ -59,8 +60,8 @@ def _completion_with_retry(
     """
     for attempt in range(max_retries + 1):
         try:
-            return litellm.completion(model=model, messages=messages, **tool_kwargs)
-        except litellm.RateLimitError as e:
+            return any_llm.completion(model=model, messages=messages, **tool_kwargs)
+        except any_llm.RateLimitError as e:
             if attempt == max_retries:
                 raise
             wait = _parse_retry_after(e) or min(2**attempt, 60)
