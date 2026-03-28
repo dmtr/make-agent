@@ -2,7 +2,7 @@ import cmd
 from pathlib import Path
 from typing import Optional
 
-from make_agent.agent import _DEFAULT_AGENTS_DIR, _DEFAULT_MAX_RETRIES, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
+from make_agent.agent import _DEFAULT_MAX_RETRIES, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
 
 
 class MakeAgentShell(cmd.Cmd):
@@ -47,7 +47,7 @@ def run(
     max_retries: int = _DEFAULT_MAX_RETRIES,
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT,
-    agents_dir: str = _DEFAULT_AGENTS_DIR,
+    agents_dir: str | None = None,
 ) -> None:
     """Start the interactive shell.
 
@@ -55,8 +55,8 @@ def run(
     enters a :class:`MakeAgentShell` loop.  Press Ctrl-D, Ctrl-C, or type
     ``exit`` / ``quit`` to leave.
 
-    When *debug* is ``True`` all messages are logged to ``make-agent.log`` in
-    the current working directory.
+    When *debug* is ``True`` all messages are logged to
+    ``~/.make-agent/<project>/logs/make-agent.log``.
     """
 
     agent_config = AgentConfig(

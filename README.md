@@ -15,15 +15,54 @@ Requires Python 3.10+ and a working `make` binary. Uses [litellm](https://github
 ## Usage
 
 ```
-ANTHROPIC_API_KEY=<key> uv run make_agent [-f FILE] [--model MODEL] [--prompt PROMPT | --prompt-file FILE]
+ANTHROPIC_API_KEY=<key> uv run make_agent [run] [-f FILE] [--model MODEL] [--prompt PROMPT | --prompt-file FILE]
 ```
 
-- `-f FILE` — Makefile to load (default: `./Makefile`)
-- `--model MODEL` — litellm model string (default: `anthropic/claude-haiku-4-5-20251001`)
+- `-f FILE` — Makefile to load. Searched in the current directory first, then `~/.make-agent/<project>/agents/`. Defaults to the value in `settings.yaml`, or `./Makefile` if not set.
+- `--model MODEL` — any-llm model string. Defaults to the value in `settings.yaml`, or `anthropic/claude-haiku-4-5-20251001`.
 - `--prompt PROMPT` — send a single prompt and exit instead of entering the interactive shell
 - `--prompt-file FILE` — send a single prompt read from `FILE` and exit
+- `--agents-dir DIR` — directory for specialist `.mk` files (default: `~/.make-agent/<project>/agents/`)
 
 Without `--prompt`, the agent starts an interactive REPL. Type `exit`, `quit`, or press Ctrl-D to leave.
+
+### First run — setup wizard
+
+If no `settings.yaml` exists for the project and no Makefile is found automatically, the agent prompts you to create one:
+
+```
+No settings.yaml found for this project.
+Let's create one. Press Enter to accept the default shown in brackets.
+
+  Makefile path [Makefile]: ./my-agent.mk
+  Model [anthropic/claude-haiku-4-5-20251001]:
+
+Saved settings to ~/.make-agent/Users_alice_proj_myapp/settings.yaml
+```
+
+## Project settings
+
+All per-project data is stored under `~/.make-agent/`:
+
+```
+~/.make-agent/
+└── <project-slug>/          # e.g. Users_alice_proj_myapp
+    ├── settings.yaml        # default model and Makefile
+    ├── agents/              # specialist agent .mk files
+    └── logs/
+        └── make-agent.log   # debug log (written when --debug is set)
+```
+
+The **project slug** is the absolute path of the working directory with the leading `/` stripped and remaining `/` replaced by `_`.
+
+### settings.yaml
+
+```yaml
+model: anthropic/claude-haiku-4-5-20251001
+makefile: ./my-agent.mk
+```
+
+Both fields are optional. CLI flags always take precedence over `settings.yaml` values.
 
 ## Makefile format
 
@@ -84,7 +123,7 @@ Every agent automatically receives four built-in tools alongside its Makefile-de
 | `create_agent` | Generate a new `.mk` file from a YAML spec and save it to the agents directory |
 | `run_agent` | Delegate a task to a specialist agent and return its output |
 
-The agents directory defaults to `.agents/` and can be changed with `--agents-dir`.
+The agents directory defaults to `~/.make-agent/<project>/agents/` and can be changed with `--agents-dir`.
 
 ### Orchestrator pattern
 

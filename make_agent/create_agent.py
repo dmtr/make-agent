@@ -48,6 +48,8 @@ from pathlib import Path
 
 import yaml
 
+from make_agent.app_dirs import log_file
+
 logger = logging.getLogger(__name__)
 
 _PARAM_LINE = string.Template("# @param ${name} ${type} ${description}\n")
@@ -122,8 +124,7 @@ def _validate_spec_params(spec: dict) -> None:
 
 
 def _init_logging(level: int = logging.DEBUG) -> None:
-    log_file = Path("create-agent.log")
-    handler = logging.FileHandler(log_file)
+    handler = logging.FileHandler(log_file())
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(level)
