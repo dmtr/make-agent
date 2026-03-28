@@ -10,12 +10,14 @@ from typing import Any, NamedTuple
 
 import any_llm
 
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, run_tool
 
 _DEFAULT_MODEL = "anthropic/claude-haiku-4-5-20251001"
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
+_DEFAULT_AGENTS_DIR = ".agents"
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,7 @@ class AgentConfig(NamedTuple):
     model: str = _DEFAULT_MODEL
     max_retries: int = _DEFAULT_MAX_RETRIES
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT
+    agents_dir: str = _DEFAULT_AGENTS_DIR
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -88,7 +91,9 @@ class Agent:
         self._makefile_path = config.makefile_path
         self._max_retries = config.max_retries
         self._tool_timeout = config.tool_timeout
-        self._tools = build_tools(mf)
+        self._builtins = get_builtin_tools(config.agents_dir, config.model)
+        makefile_tools = build_tools(mf)
+        self._tools = BUILTIN_SCHEMAS + makefile_tools
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
         if mf.system_prompt:
@@ -129,12 +134,15 @@ class Agent:
 
                     logger.debug("[tool_call] %s args=%s", target, arguments)
                     try:
-                        output = run_tool(
-                            target,
-                            arguments,
-                            self._makefile_path,
-                            self._tool_timeout,
-                        )
+                        if target in self._builtins:
+                            output = self._builtins[target](**arguments)
+                        else:
+                            output = run_tool(
+                                target,
+                                arguments,
+                                self._makefile_path,
+                                self._tool_timeout,
+                            )
                     except Exception as e:
                         output = f"Error (unexpected): {e}"
                     logger.debug("[tool_result] %s -> %s", target, output)

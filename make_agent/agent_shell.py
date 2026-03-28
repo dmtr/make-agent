@@ -2,7 +2,7 @@ import cmd
 from pathlib import Path
 from typing import Optional
 
-from make_agent.agent import _DEFAULT_MAX_RETRIES, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
+from make_agent.agent import _DEFAULT_AGENTS_DIR, _DEFAULT_MAX_RETRIES, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
 
 
 class MakeAgentShell(cmd.Cmd):
@@ -46,6 +46,7 @@ def run(
     debug: bool = False,
     max_retries: int = _DEFAULT_MAX_RETRIES,
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
+    agents_dir: str = _DEFAULT_AGENTS_DIR,
 ) -> None:
     """Start the interactive shell.
 
@@ -62,6 +63,7 @@ def run(
         model=model,
         max_retries=max_retries,
         tool_timeout=tool_timeout,
+        agents_dir=agents_dir,
     )
     agent = Agent(agent_config)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")

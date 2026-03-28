@@ -5,6 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
+from make_agent.agent import _DEFAULT_AGENTS_DIR
 from make_agent.agent_shell import run
 from make_agent.parser import parse_file, validate
 
@@ -30,6 +31,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
         debug=args.debug,
         max_retries=args.max_retries,
         tool_timeout=args.tool_timeout,
+        agents_dir=args.agents_dir,
     )
 
 
@@ -66,6 +68,7 @@ def main() -> None:
     run_p.add_argument("--debug", action="store_true", default=False, help="Log all messages to make-agent.log")
     run_p.add_argument("--max-retries", type=int, default=5, metavar="N", help="Max retry attempts on rate limit (default: 5)")
     run_p.add_argument("--tool-timeout", type=int, default=600, metavar="SECONDS", help="Timeout in seconds for each tool call (default: 600)")
+    run_p.add_argument("--agents-dir", default=_DEFAULT_AGENTS_DIR, metavar="DIR", help=f"Directory for specialist agent .mk files (default: {_DEFAULT_AGENTS_DIR})")
 
     # ── validate ─────────────────────────────────────────────────────────────
     val_p = subparsers.add_parser(
@@ -83,6 +86,7 @@ def main() -> None:
     parser.add_argument("--debug", action="store_true", default=False, help=argparse.SUPPRESS)
     parser.add_argument("--max-retries", type=int, default=5, metavar="N", help=argparse.SUPPRESS)
     parser.add_argument("--tool-timeout", type=int, default=600, metavar="SECONDS", help=argparse.SUPPRESS)
+    parser.add_argument("--agents-dir", default=_DEFAULT_AGENTS_DIR, metavar="DIR", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
     _init_logging(args.debug)

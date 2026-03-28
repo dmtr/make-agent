@@ -95,6 +95,7 @@ class TestRunPromptInput:
             debug=False,
             max_retries=5,
             tool_timeout=600,
+            agents_dir=".agents",
         )
         captured: dict = {}
 
