@@ -122,3 +122,30 @@ run-agent:
 		""|*[!A-Za-z0-9._-]*) echo "ERROR: invalid NAME '$$name'" >&2; exit 2 ;; \
 	esac; \
 	ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "$(AGENTS_DIR)/$$name.mk" --debug --prompt-file "$(TASK_FILE)"
+
+
+#<tool>
+# Current directory
+# </tool>
+current-dir:
+	@pwd
+
+#<tool>
+# Current date and time
+# </tool>
+current-datetime:
+	@date
+
+# <tool>
+# Echo a message (for testing and debugging)
+# @param MESSAGE string The message to Echo
+# </tool>
+echo:
+	@echo "$(MESSAGE)"
+
+
+# <tool>
+# Os info. 
+# </tool>
+os-info:
+	@uname -a

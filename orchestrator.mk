@@ -121,5 +121,4 @@ run-agent:
 	case "$$name" in \
 		""|*[!A-Za-z0-9._-]*) echo "ERROR: invalid NAME '$$name'" >&2; exit 2 ;; \
 	esac; \
-	#ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} uv run make_agent -f "$(AGENTS_DIR)/$$name.mk" --debug --prompt-file "$(TASK_FILE)"
-	ANTHROPIC_BASE_URL="http://localhost:8080" ANTHROPIC_API_KEY=dummy uv run make_agent -f orchestrator.mk --model anthropic/claude-sonnet-4-5
+	ANTHROPIC_BASE_URL="http://localhost:8080" ANTHROPIC_API_KEY=dummy uv run make_agent -f "$(AGENTS_DIR)/$$name.mk" --prompt-file "$(TASK_FILE)" --model anthropic/claude-sonnet-4-5 --debug
