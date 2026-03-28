@@ -30,7 +30,13 @@ _MEMORY_SEARCH_PARAMS = {
     "properties": {
         "query": {
             "type": "string",
-            "description": "FTS5 match expression (e.g. 'file search', 'make OR agent').",
+            "description": (
+                "FTS5 keyword query. Use individual keywords rather than full sentences — "
+                "FTS5 matches on exact tokens, not phrases or semantics. "
+                "For example, to find 'the goal of this project', use 'goal project' or 'goal'. "
+                "Combine keywords with OR for broader recall: 'goal OR objective OR purpose'. "
+                "Avoid stop words (the, of, is, a) as they are not indexed."
+            ),
         },
         "limit": {
             "type": "integer",
@@ -312,8 +318,10 @@ def get_memory_schemas() -> list[dict[str, Any]]:
             "function": {
                 "name": "search_user_memory",
                 "description": (
-                    "Search past user messages stored in memory using full-text search (FTS5). "
-                    "Returns matching messages with timestamps, ordered by relevance."
+                    "Search past user messages using keyword-based full-text search (FTS5). "
+                    "Use this proactively to recall context from earlier in the conversation or past sessions. "
+                    "Query with short keywords — FTS5 does not match full sentences. "
+                    "If the first query returns no results, retry with broader or alternative keywords."
                 ),
                 "parameters": _MEMORY_SEARCH_PARAMS,
             },
@@ -323,8 +331,10 @@ def get_memory_schemas() -> list[dict[str, Any]]:
             "function": {
                 "name": "search_agent_memory",
                 "description": (
-                    "Search past agent replies stored in memory using full-text search (FTS5). "
-                    "Returns matching messages with timestamps, ordered by relevance."
+                    "Search past agent replies using keyword-based full-text search (FTS5). "
+                    "Use this to recall what you previously told the user or decisions you made. "
+                    "Query with short keywords — FTS5 does not match full sentences. "
+                    "If the first query returns no results, retry with broader or alternative keywords."
                 ),
                 "parameters": _MEMORY_SEARCH_PARAMS,
             },
