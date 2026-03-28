@@ -80,7 +80,7 @@ def create_agent(name: str, spec: str, agents_dir: str) -> str:
     return f"Created {output_path}"
 
 
-def run_agent(name: str, prompt: str, agents_dir: str, model: str) -> str:
+def run_agent(name: str, prompt: str, agents_dir: str, model: str, debug: bool = False) -> str:
     """Run a specialist agent as a subprocess and return its output."""
     if not _valid_agent_name(name):
         return f"Error: invalid agent name {name!r}."
@@ -96,6 +96,8 @@ def run_agent(name: str, prompt: str, agents_dir: str, model: str) -> str:
         "--model", model,
         "--agents-dir", agents_dir,
     ]
+    if debug:
+        cmd.append("--debug")
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -197,7 +199,7 @@ BUILTIN_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
-def get_builtin_tools(agents_dir: str, model: str) -> dict[str, Any]:
+def get_builtin_tools(agents_dir: str, model: str, debug: bool = False) -> dict[str, Any]:
     """Return a name → callable mapping for all built-in tools.
 
     Each callable accepts only the LLM-provided arguments; ``agents_dir``
@@ -206,5 +208,5 @@ def get_builtin_tools(agents_dir: str, model: str) -> dict[str, Any]:
     return {
         "list_agent": lambda **_kw: list_agent(agents_dir),
         "create_agent": lambda name, spec, **_kw: create_agent(name, spec, agents_dir),
-        "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir, model),
+        "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir, model, debug),
     }

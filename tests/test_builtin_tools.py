@@ -161,6 +161,18 @@ def test_run_agent_success(tmp_path):
     assert "--model" in cmd
     assert "anthropic/test" in cmd
     assert "--agents-dir" in cmd
+    assert "--debug" not in cmd
+
+
+def test_run_agent_passes_debug_flag(tmp_path):
+    (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nWorker.\nendef\n")
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "done"
+    mock_result.stderr = ""
+    with patch("make_agent.builtin_tools.subprocess.run", return_value=mock_result) as mock_run:
+        run_agent("worker", "task", str(tmp_path), "model", debug=True)
+    assert "--debug" in mock_run.call_args[0][0]
 
 
 def test_run_agent_nonzero_exit(tmp_path):

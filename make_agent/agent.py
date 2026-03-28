@@ -28,6 +28,7 @@ class AgentConfig(NamedTuple):
     max_retries: int = _DEFAULT_MAX_RETRIES
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT
     agents_dir: str = _DEFAULT_AGENTS_DIR
+    debug: bool = False
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -91,7 +92,7 @@ class Agent:
         self._makefile_path = config.makefile_path
         self._max_retries = config.max_retries
         self._tool_timeout = config.tool_timeout
-        self._builtins = get_builtin_tools(config.agents_dir, config.model)
+        self._builtins = get_builtin_tools(config.agents_dir, config.model, config.debug)
         makefile_tools = build_tools(mf)
         self._tools = BUILTIN_SCHEMAS + makefile_tools
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}

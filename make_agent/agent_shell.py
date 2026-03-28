@@ -64,6 +64,7 @@ def run(
         max_retries=max_retries,
         tool_timeout=tool_timeout,
         agents_dir=agents_dir,
+        debug=debug,
     )
     agent = Agent(agent_config)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")
