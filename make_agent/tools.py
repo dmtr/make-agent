@@ -28,6 +28,7 @@ text; the bare form is a convenience for the common single-line case.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import subprocess
@@ -54,6 +55,27 @@ def _escape_make_value(value: str) -> str:
     backslashes, spaces) is safe in a Make variable value.
     """
     return value.replace("$", "$$")
+
+
+def format_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> str:
+    """Serialise tool output as a JSON string for the LLM.
+
+    *max_output* limits how many characters of *stdout* are kept.  When the
+    output is longer, the excess is dropped and an ``omitted_chars`` key is
+    added so the LLM knows it received a partial result.  ``0`` means no limit.
+    """
+    if max_output > 0 and len(stdout) > max_output:
+        omitted = len(stdout) - max_output
+        stdout = stdout[:max_output]
+        result: dict[str, Any] = {
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": exit_code,
+            "omitted_chars": omitted,
+        }
+    else:
+        result = {"stdout": stdout, "stderr": stderr, "exit_code": exit_code}
+    return json.dumps(result)
 
 
 def _param_schema(p: Param) -> dict[str, str]:
@@ -92,8 +114,14 @@ def run_tool(
     arguments: dict[str, str],
     makefile_path: Path,
     timeout: int = 600,
+    max_output: int = 0,
 ) -> str:
-    """Invoke ``make`` with safely injected parameters and return output.
+    """Invoke ``make`` with safely injected parameters and return output as JSON.
+
+    Returns a JSON string with keys ``stdout``, ``stderr``, and ``exit_code``
+    (``null`` for framework-level errors such as timeout or OS failure).  When
+    *max_output* is non-zero and the stdout exceeds that limit, the output is
+    truncated and an ``omitted_chars`` key is added.
 
     Every argument value is written to a temporary file; Make receives
     ``PARAM_FILE=/tmp/...`` for each parameter.  For single-line values
@@ -102,19 +130,12 @@ def run_tool(
     directly without any quoting ceremony.
 
     All temporary files are always removed after the subprocess exits.
-
-    On a non-zero exit code an error message combining stdout and stderr is
-    returned so the LLM receives all available context without losing partial
-    output produced before the failure.
-
-    *timeout* is the maximum number of seconds to wait for the subprocess.
-    If the process exceeds this limit it is killed and an error is returned.
     """
     tmp_files: list[Path] = []
     try:
         for k in arguments:
             if not _is_valid_make_var_name(k):
-                return f"Error (invalid argument name): {k!r} is not a valid make variable name"
+                return format_tool_result("", f"{k!r} is not a valid make variable name", None)
 
         params_mk_lines: list[str] = []
         make_vars: list[str] = []
@@ -158,14 +179,10 @@ def run_tool(
             result = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout)
             logger.debug(f"result of '{' '.join(cmd)}': exit {result.returncode}, stdout: {result.stdout!r}, stderr: {result.stderr!r}")
         except subprocess.TimeoutExpired:
-            return f"Error (timeout): tool '{target}' exceeded {timeout}s limit"
+            return format_tool_result("", f"tool '{target}' exceeded {timeout}s limit", None)
         except OSError as e:
-            return f"Error (failed to run make): {e}"
-        if result.returncode != 0:
-            parts = [p for p in [result.stdout.strip(), result.stderr.strip()] if p]
-            body = "\n".join(parts)
-            return f"Error (exit {result.returncode}):\n{body}" if body else f"Error (exit {result.returncode})"
-        return result.stdout
+            return format_tool_result("", f"failed to run make: {e}", None)
+        return format_tool_result(result.stdout, result.stderr, result.returncode, max_output)
     finally:
         for tmp in tmp_files:
             try:

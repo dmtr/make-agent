@@ -12,11 +12,12 @@ import any_llm
 
 from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools
 from make_agent.parser import parse_file, validate_or_raise
-from make_agent.tools import build_tools, run_tool
+from make_agent.tools import build_tools, format_tool_result, run_tool
 
 _DEFAULT_MODEL = "anthropic/claude-haiku-4-5-20251001"
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
+_DEFAULT_MAX_TOOL_OUTPUT = 20000  # characters; 0 = unlimited
 _DEFAULT_AGENTS_DIR = ".agents"
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class AgentConfig(NamedTuple):
     model: str = _DEFAULT_MODEL
     max_retries: int = _DEFAULT_MAX_RETRIES
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT
+    max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT
     agents_dir: str = _DEFAULT_AGENTS_DIR
     debug: bool = False
 
@@ -92,6 +94,7 @@ class Agent:
         self._makefile_path = config.makefile_path
         self._max_retries = config.max_retries
         self._tool_timeout = config.tool_timeout
+        self._max_tool_output = config.max_tool_output
         self._builtins = get_builtin_tools(config.agents_dir, config.model, config.debug)
         makefile_tools = build_tools(mf)
         self._tools = BUILTIN_SCHEMAS + makefile_tools
@@ -136,16 +139,18 @@ class Agent:
                     logger.debug("[tool_call] %s args=%s", target, arguments)
                     try:
                         if target in self._builtins:
-                            output = self._builtins[target](**arguments)
+                            raw = self._builtins[target](**arguments)
+                            output = format_tool_result(raw, "", 0, self._max_tool_output)
                         else:
                             output = run_tool(
                                 target,
                                 arguments,
                                 self._makefile_path,
                                 self._tool_timeout,
+                                self._max_tool_output,
                             )
                     except Exception as e:
-                        output = f"Error (unexpected): {e}"
+                        output = format_tool_result("", f"unexpected error: {e}", None)
                     logger.debug("[tool_result] %s -> %s", target, output)
 
                     self._messages.append(
