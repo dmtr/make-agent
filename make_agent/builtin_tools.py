@@ -19,6 +19,7 @@ from typing import Any
 import yaml
 
 from make_agent.create_agent import _write_output_no_symlink, render
+from make_agent.parser import parse_file
 
 _VALID_AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -27,31 +28,46 @@ def _valid_agent_name(name: str) -> bool:
     return bool(_VALID_AGENT_NAME_RE.fullmatch(name))
 
 
-def _extract_system_prompt_preview(mk_path: Path) -> str:
-    """Return the first non-empty line of the SYSTEM_PROMPT define block."""
-    in_block = False
-    for line in mk_path.read_text().splitlines():
-        stripped = line.strip()
-        if stripped == "define SYSTEM_PROMPT":
-            in_block = True
-            continue
-        if in_block:
-            if stripped == "endef":
+def _agent_summary(mk_path: Path) -> str:
+    """Return a multi-line summary of an agent: system prompt + tool list."""
+    try:
+        mf = parse_file(mk_path)
+    except Exception:
+        return "  (could not parse)"
+
+    lines: list[str] = []
+
+    if mf.system_prompt:
+        # First non-empty line of the system prompt as the headline.
+        for line in mf.system_prompt.splitlines():
+            if line.strip():
+                lines.append(f"  {line.strip()}")
                 break
-            if stripped:
-                return stripped
-    return "(no description)"
+    else:
+        lines.append("  (no description)")
+
+    tools = [r for r in mf.rules if r.description is not None]
+    if tools:
+        lines.append("  tools:")
+        for rule in tools:
+            desc = rule.description.splitlines()[0].strip() if rule.description else ""
+            params = ", ".join(p.name for p in rule.params)
+            param_str = f"({params})" if params else "()"
+            lines.append(f"    - {rule.target}{param_str}: {desc}")
+
+    return "\n".join(lines)
 
 
 def list_agent(agents_dir: str) -> str:
-    """List all available specialist agents, one per line as ``name: description``."""
+    """List all available specialist agents with their system prompt and tools."""
     path = Path(agents_dir)
     if not path.exists():
         return "No agents found (directory does not exist)"
     mk_files = sorted(path.glob("*.mk"))
     if not mk_files:
         return "No agents found"
-    return "\n".join(f"{mk.stem}: {_extract_system_prompt_preview(mk)}" for mk in mk_files)
+    entries = [f"{mk.stem}:\n{_agent_summary(mk)}" for mk in mk_files]
+    return "\n\n".join(entries)
 
 
 def create_agent(name: str, spec: str, agents_dir: str) -> str:

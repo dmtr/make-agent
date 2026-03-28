@@ -8,7 +8,7 @@ import pytest
 
 from make_agent.builtin_tools import (
     BUILTIN_SCHEMAS,
-    _extract_system_prompt_preview,
+    _agent_summary,
     _valid_agent_name,
     create_agent,
     get_builtin_tools,
@@ -29,24 +29,77 @@ def test_valid_agent_name_rejects_invalid(name):
     assert _valid_agent_name(name) is False
 
 
-# ── _extract_system_prompt_preview ────────────────────────────────────────────
+# ── _agent_summary ────────────────────────────────────────────────────────────
 
-def test_extract_system_prompt_preview(tmp_path):
+_AGENT_MK = """\
+define SYSTEM_PROMPT
+You are a file specialist.
+endef
+
+.PHONY: read-file write-file
+
+# <tool>
+# Read the contents of a file.
+# @param PATH string The file path
+# </tool>
+read-file:
+\t@cat "$(PATH)"
+
+# <tool>
+# Write content to a file.
+# @param PATH string The destination path
+# @param CONTENT string The content to write
+# </tool>
+write-file:
+\t@cat "$(CONTENT_FILE)" > "$(PATH)"
+"""
+
+
+def test_agent_summary_includes_system_prompt(tmp_path):
     mk = tmp_path / "agent.mk"
-    mk.write_text("define SYSTEM_PROMPT\nYou are a file specialist.\nendef\n")
-    assert _extract_system_prompt_preview(mk) == "You are a file specialist."
+    mk.write_text(_AGENT_MK)
+    summary = _agent_summary(mk)
+    assert "You are a file specialist." in summary
 
 
-def test_extract_system_prompt_preview_skips_blank_lines(tmp_path):
+def test_agent_summary_includes_tool_names(tmp_path):
     mk = tmp_path / "agent.mk"
-    mk.write_text("define SYSTEM_PROMPT\n\n  \nActual description.\nendef\n")
-    assert _extract_system_prompt_preview(mk) == "Actual description."
+    mk.write_text(_AGENT_MK)
+    summary = _agent_summary(mk)
+    assert "read-file" in summary
+    assert "write-file" in summary
 
 
-def test_extract_system_prompt_preview_missing_block(tmp_path):
+def test_agent_summary_includes_tool_descriptions(tmp_path):
     mk = tmp_path / "agent.mk"
-    mk.write_text("# no system prompt here\n")
-    assert _extract_system_prompt_preview(mk) == "(no description)"
+    mk.write_text(_AGENT_MK)
+    summary = _agent_summary(mk)
+    assert "Read the contents of a file." in summary
+    assert "Write content to a file." in summary
+
+
+def test_agent_summary_includes_param_names(tmp_path):
+    mk = tmp_path / "agent.mk"
+    mk.write_text(_AGENT_MK)
+    summary = _agent_summary(mk)
+    assert "PATH" in summary
+    assert "CONTENT" in summary
+
+
+def test_agent_summary_no_tools(tmp_path):
+    mk = tmp_path / "agent.mk"
+    mk.write_text("define SYSTEM_PROMPT\nJust a prompt.\nendef\n")
+    summary = _agent_summary(mk)
+    assert "Just a prompt." in summary
+    assert "tools:" not in summary
+
+
+def test_agent_summary_parse_error(tmp_path):
+    mk = tmp_path / "bad.mk"
+    mk.write_text("")
+    result = _agent_summary(mk)
+    # Should not raise; returns a fallback string
+    assert isinstance(result, str)
 
 
 # ── list_agent ────────────────────────────────────────────────────────────────
@@ -65,16 +118,17 @@ def test_list_agent_returns_agents(tmp_path):
     (tmp_path / "search.mk").write_text("define SYSTEM_PROMPT\nYou are a search specialist.\nendef\n")
     (tmp_path / "writer.mk").write_text("define SYSTEM_PROMPT\nYou are a writer.\nendef\n")
     result = list_agent(str(tmp_path))
-    assert "search: You are a search specialist." in result
-    assert "writer: You are a writer." in result
+    assert "search:" in result
+    assert "You are a search specialist." in result
+    assert "writer:" in result
+    assert "You are a writer." in result
 
 
 def test_list_agent_sorted(tmp_path):
     (tmp_path / "zzz.mk").write_text("define SYSTEM_PROMPT\nZ agent.\nendef\n")
     (tmp_path / "aaa.mk").write_text("define SYSTEM_PROMPT\nA agent.\nendef\n")
-    lines = list_agent(str(tmp_path)).splitlines()
-    assert lines[0].startswith("aaa")
-    assert lines[1].startswith("zzz")
+    result = list_agent(str(tmp_path))
+    assert result.index("aaa:") < result.index("zzz:")
 
 
 # ── create_agent ──────────────────────────────────────────────────────────────
