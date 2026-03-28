@@ -39,14 +39,14 @@ endef
 # @param DIR string The directory path to list
 # </tool>
 list-files:
-@ls -la $(DIR)
+	@ls -la $(DIR)
 
 # <tool>
 # Greet someone.
 # @param NAME string The name to greet
 # </tool>
 greet:
-@echo "Hello, $(NAME)!"
+	@echo "Hello, $(NAME)!"
 ```
 
 ### Special comment blocks
@@ -73,48 +73,38 @@ write-file:
 
 Targets without a `# <tool>` block are invisible to the model.
 
-See `Makefile.sample` for a working example.
+## Built-in tools
 
-## Self-improving agents
-
-`examples/self-improving/` shows an orchestrator pattern where one agent builds and manages a library of specialist agents at runtime.
-
-### How it works
-
-The **orchestrator** (`orchestrator.mk`) exposes four tools to the model:
+Every agent automatically receives four built-in tools alongside its Makefile-defined tools — no Makefile declaration needed:
 
 | Tool | What it does |
 |---|---|
-| `list-agents` | Scans `./agents/` and returns each specialist's name and purpose |
-| `read-agent` | Prints the full Makefile of a named specialist |
-| `create-agent` | Writes a YAML spec to a temp file and generates a new `.mk` in `./agents/` |
-| `run-agent` | Runs a specialist via `make-agent -f agents/<name>.mk --prompt-file <task-file>` |
+| `list_agent` | Scan the agents directory and return each specialist's name and description |
+| `validate_agent` | Parse and validate a named specialist's Makefile, reporting any errors |
+| `create_agent` | Generate a new `.mk` file from a YAML spec and save it to the agents directory |
+| `run_agent` | Delegate a task to a specialist agent and return its output |
 
-For every task the orchestrator follows this loop:
+The agents directory defaults to `.agents/` and can be changed with `--agents-dir`.
 
-1. Call `list-agents` to discover available specialists.
-2. If a suitable specialist exists, delegate with `run-agent`.
-3. If none fits, design a new specialist, call `create-agent` to save it, then `run-agent` to execute it.
-4. To improve a specialist, call `create-agent` with the same name — it overwrites the previous version.
+### Orchestrator pattern
 
-The `.agents/` directory grows over time into a reusable, self-curated library.
-
-### Running the orchestrator
+`orchestrator.mk` shows how to use the built-in tools to build a self-managing agent that creates and improves specialist agents at runtime:
 
 ```bash
-cd examples/self-improving
-
 # Interactive session
-make-agent -f orchestrator.mk
+make_agent -f orchestrator.mk
 
 # Single prompt
-printf '%s' "Find all TODO comments in the ../.. directory" > /tmp/task.txt
-make-agent -f orchestrator.mk --prompt-file /tmp/task.txt
+make_agent -f orchestrator.mk --prompt "Summarise the git log for the last week"
 ```
 
-### YAML spec for specialist creation
+For every task the orchestrator:
 
-When the orchestrator designs a new specialist it passes a YAML spec to `create-agent`:
+1. Calls `list_agent` to discover available specialists.
+2. Delegates to an existing specialist with `run_agent`, or designs and saves a new one with `create_agent` first.
+3. Improves any specialist by calling `create_agent` with the same name — it overwrites the previous version.
+
+### YAML spec for `create_agent`
 
 ```yaml
 system_prompt: "You are a specialist that searches source code for patterns."
@@ -132,7 +122,21 @@ tools:
       - '@grep -rn "$(PATTERN)" "$(DIR)" || echo "No matches found"'
 ```
 
-`make-agent-create` converts this spec into a standard `make-agent` Makefile and saves it to `agents/<name>.mk`.
+`make-agent-create` converts this spec into a standard `make-agent` Makefile.
+
+## Example
+
+`examples/orchestra.mk` is a minimal system-information agent with three no-parameter tools:
+
+```bash
+make_agent -f examples/orchestra.mk
+```
+
+| Tool | Recipe |
+|---|---|
+| `current-dir` | `pwd` |
+| `os-info` | `uname -a` |
+| `current-date` | `date` |
 
 ## Running tests
 

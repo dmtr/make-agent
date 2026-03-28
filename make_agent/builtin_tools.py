@@ -16,6 +16,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from make_agent.create_agent import render, _write_output_no_symlink, _validate_spec_params
 from make_agent.parser import parse_file, validate
 
 _VALID_AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -87,6 +90,37 @@ def validate_agent(name: str, agents_dir: str) -> str:
 
     tool_count = sum(1 for r in mf.rules if r.params or r.description)
     return f"OK — {mk_path} ({tool_count} tool(s) valid)"
+
+
+def create_agent(name: str, spec: str, agents_dir: str) -> str:
+    """Create a new specialist agent Makefile from a YAML spec string."""
+    if not _valid_agent_name(name):
+        return f"Error: invalid agent name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
+
+    try:
+        parsed_spec = yaml.safe_load(spec)
+    except yaml.YAMLError as e:
+        return f"Error: invalid YAML spec: {e}"
+
+    try:
+        makefile_content = render(parsed_spec)
+    except KeyError as e:
+        return f"Error: missing required field in spec: {e}"
+    except TypeError as e:
+        return f"Error: invalid spec structure: {e}"
+    except ValueError as e:
+        return f"Error: {e}"
+
+    mk_path = Path(agents_dir) / f"{name}.mk"
+    try:
+        _write_output_no_symlink(mk_path, makefile_content)
+    except OSError as e:
+        return f"Error: could not write agent file: {e}"
+    except ValueError as e:
+        return f"Error: {e}"
+
+    tool_count = sum(1 for t in parsed_spec.get("tools", []))
+    return f"Created agent '{name}' at {mk_path} ({tool_count} tool(s))"
 
 
 def run_agent(name: str, prompt: str, agents_dir: str, model: str, debug: bool = False) -> str:
@@ -166,6 +200,40 @@ BUILTIN_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "create_agent",
+            "description": (
+                "Create a new specialist agent by writing a Makefile to the agents library. "
+                "Accepts a YAML spec with a system_prompt and a list of tools (each with a "
+                "name, description, optional params, and recipe). "
+                "Returns 'Created agent ...' on success or an error message."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "The agent name (without .mk extension, e.g. 'file-search'). "
+                            "Use letters, numbers, hyphens, underscores, and dots only."
+                        ),
+                    },
+                    "spec": {
+                        "type": "string",
+                        "description": (
+                            "YAML string defining the agent. Required fields: "
+                            "'system_prompt' (string) and 'tools' (list). "
+                            "Each tool needs 'name', 'description', 'recipe' (list of shell commands), "
+                            "and optional 'params' (list of {name, type, description})."
+                        ),
+                    },
+                },
+                "required": ["name", "spec"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_agent",
             "description": (
                 "Run a specialist agent with a single task prompt and return its output. "
@@ -199,5 +267,6 @@ def get_builtin_tools(agents_dir: str, model: str, debug: bool = False) -> dict[
     return {
         "list_agent": lambda **_kw: list_agent(agents_dir),
         "validate_agent": lambda name, **_kw: validate_agent(name, agents_dir),
+        "create_agent": lambda name, spec, **_kw: create_agent(name, spec, agents_dir),
         "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir, model, debug),
     }

@@ -237,13 +237,13 @@ def test_run_agent_os_error(tmp_path):
 
 # ── BUILTIN_SCHEMAS ───────────────────────────────────────────────────────────
 
-def test_builtin_schemas_has_three_entries():
-    assert len(BUILTIN_SCHEMAS) == 3
+def test_builtin_schemas_has_four_entries():
+    assert len(BUILTIN_SCHEMAS) == 4
 
 
 def test_builtin_schemas_names():
     names = {s["function"]["name"] for s in BUILTIN_SCHEMAS}
-    assert names == {"list_agent", "validate_agent", "run_agent"}
+    assert names == {"list_agent", "validate_agent", "create_agent", "run_agent"}
 
 
 def test_builtin_schemas_are_function_type():
@@ -260,9 +260,9 @@ def test_builtin_schemas_required_params():
 
 # ── get_builtin_tools ─────────────────────────────────────────────────────────
 
-def test_get_builtin_tools_returns_all_three():
+def test_get_builtin_tools_returns_all_four():
     tools = get_builtin_tools(".agents", "test-model")
-    assert set(tools.keys()) == {"list_agent", "validate_agent", "run_agent"}
+    assert set(tools.keys()) == {"list_agent", "validate_agent", "create_agent", "run_agent"}
 
 
 def test_get_builtin_tools_list_agent_callable(tmp_path):
