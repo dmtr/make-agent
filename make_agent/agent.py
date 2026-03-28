@@ -11,7 +11,8 @@ from typing import Any, NamedTuple
 import any_llm
 
 from make_agent.app_dirs import default_agents_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools, get_memory_schemas
+from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, format_tool_result, run_tool
 
@@ -31,6 +32,7 @@ class AgentConfig(NamedTuple):
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT
     agents_dir: str | None = None
     debug: bool = False
+    memory: Memory | None = None
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -95,10 +97,12 @@ class Agent:
         self._max_retries = config.max_retries
         self._tool_timeout = config.tool_timeout
         self._max_tool_output = config.max_tool_output
+        self._memory = config.memory
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
-        self._builtins = get_builtin_tools(agents_dir, config.model, config.debug)
+        self._builtins = get_builtin_tools(agents_dir, config.model, config.debug, config.memory)
         makefile_tools = build_tools(mf)
-        self._tools = BUILTIN_SCHEMAS + makefile_tools
+        memory_schemas = get_memory_schemas() if config.memory is not None else []
+        self._tools = BUILTIN_SCHEMAS + memory_schemas + makefile_tools
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
         if mf.system_prompt:
@@ -117,6 +121,8 @@ class Agent:
         """
         self._messages.append({"role": "user", "content": user_input})
         logger.debug("[user]\n%s", user_input)
+        if self._memory is not None:
+            self._memory.store("user", user_input)
 
         while True:
             response = _completion_with_retry(
@@ -165,4 +171,6 @@ class Agent:
                 content = msg.content or ""
                 self._messages.append({"role": "assistant", "content": content})
                 logger.debug("[assistant]\n%s", content)
+                if self._memory is not None:
+                    self._memory.store("agent", content)
                 return content

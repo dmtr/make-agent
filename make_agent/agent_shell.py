@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 
 from make_agent.agent import _DEFAULT_MAX_RETRIES, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
+from make_agent.memory import Memory
 
 
 class MakeAgentShell(cmd.Cmd):
@@ -48,6 +49,7 @@ def run(
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT,
     agents_dir: str | None = None,
+    memory: Memory | None = None,
 ) -> None:
     """Start the interactive shell.
 
@@ -67,6 +69,7 @@ def run(
         max_tool_output=max_tool_output,
         agents_dir=agents_dir,
         debug=debug,
+        memory=memory,
     )
     agent = Agent(agent_config)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")

@@ -3,9 +3,11 @@
 These three tools are injected into every agent's tool schema alongside any
 Makefile-defined tools, without requiring a Makefile declaration.
 
-- ``list_agent``     — discover available specialist agents
-- ``validate_agent`` — validate a specialist agent's Makefile
-- ``run_agent``      — delegate a task to a specialist agent via subprocess
+- ``list_agent``          — discover available specialist agents
+- ``validate_agent``      — validate a specialist agent's Makefile
+- ``run_agent``           — delegate a task to a specialist agent via subprocess
+- ``search_user_memory``  — FTS5 search over past user messages (when memory enabled)
+- ``search_agent_memory`` — FTS5 search over past agent replies (when memory enabled)
 """
 
 from __future__ import annotations
@@ -22,6 +24,29 @@ from make_agent.create_agent import render, _write_output_no_symlink, _validate_
 from make_agent.parser import parse_file, validate
 
 _VALID_AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+_MEMORY_SEARCH_PARAMS = {
+    "type": "object",
+    "properties": {
+        "query": {
+            "type": "string",
+            "description": "FTS5 match expression (e.g. 'file search', 'make OR agent').",
+        },
+        "limit": {
+            "type": "integer",
+            "description": "Maximum number of results to return (default: 10).",
+        },
+        "from_date": {
+            "type": "string",
+            "description": "ISO 8601 date string to filter results on or after (e.g. '2026-03-01').",
+        },
+        "to_date": {
+            "type": "string",
+            "description": "ISO 8601 date string to filter results on or before (e.g. '2026-03-31').",
+        },
+    },
+    "required": ["query"],
+}
 
 
 def _valid_agent_name(name: str) -> bool:
@@ -258,15 +283,50 @@ BUILTIN_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
-def get_builtin_tools(agents_dir: str, model: str, debug: bool = False) -> dict[str, Any]:
+def get_builtin_tools(agents_dir: str, model: str, debug: bool = False, memory: Any = None) -> dict[str, Any]:
     """Return a name → callable mapping for all built-in tools.
 
-    Each callable accepts only the LLM-provided arguments; ``agents_dir``
-    and ``model`` are pre-bound via closure.
+    Each callable accepts only the LLM-provided arguments; ``agents_dir``,
+    ``model``, and ``memory`` are pre-bound via closure.
     """
-    return {
+    tools: dict[str, Any] = {
         "list_agent": lambda **_kw: list_agent(agents_dir),
         "validate_agent": lambda name, **_kw: validate_agent(name, agents_dir),
         "create_agent": lambda name, spec, **_kw: create_agent(name, spec, agents_dir),
         "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir, model, debug),
     }
+    if memory is not None:
+        tools["search_user_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_user(query, limit, from_date, to_date)
+        tools["search_agent_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_agent(query, limit, from_date, to_date)
+    return tools
+
+
+def get_memory_schemas() -> list[dict[str, Any]]:
+    """Return the tool schemas for memory search tools.
+
+    These are only injected when memory is enabled.
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_user_memory",
+                "description": (
+                    "Search past user messages stored in memory using full-text search (FTS5). "
+                    "Returns matching messages with timestamps, ordered by relevance."
+                ),
+                "parameters": _MEMORY_SEARCH_PARAMS,
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_agent_memory",
+                "description": (
+                    "Search past agent replies stored in memory using full-text search (FTS5). "
+                    "Returns matching messages with timestamps, ordered by relevance."
+                ),
+                "parameters": _MEMORY_SEARCH_PARAMS,
+            },
+        },
+    ]

@@ -7,7 +7,8 @@ from pathlib import Path
 
 from make_agent.agent import _DEFAULT_MAX_TOOL_OUTPUT
 from make_agent.agent_shell import run
-from make_agent.app_dirs import default_agents_dir, log_file
+from make_agent.app_dirs import default_agents_dir, log_file, project_dir
+from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate
 from make_agent.settings import load_settings, run_setup_wizard
 
@@ -74,6 +75,10 @@ def _resolve_run_args(args: argparse.Namespace) -> argparse.Namespace:
     if not model_explicit:
         args.model = settings.get("model", _DEFAULT_MODEL)
 
+    # Memory: CLI flag takes precedence, then settings.yaml
+    if not getattr(args, "with_memory", False):
+        args.with_memory = bool(settings.get("memory", False))
+
     return args
 
 
@@ -87,6 +92,11 @@ def _cmd_run(args: argparse.Namespace) -> None:
         except OSError as e:
             sys.exit(f"make-agent run: {e}")
 
+    memory: Memory | None = None
+    if args.with_memory:
+        db_path = project_dir() / "memory.db"
+        memory = Memory(db_path)
+
     run(
         makefile_path=Path(args.file),
         model=args.model,
@@ -96,6 +106,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
         tool_timeout=args.tool_timeout,
         max_tool_output=args.max_tool_output,
         agents_dir=args.agents_dir,
+        memory=memory,
     )
 
 
@@ -134,6 +145,7 @@ def main() -> None:
     run_p.add_argument("--tool-timeout", type=int, default=600, metavar="SECONDS", help="Timeout in seconds for each tool call (default: 600)")
     run_p.add_argument("--agents-dir", default=None, metavar="DIR", help="Directory for specialist agent .mk files (default: ~/.make-agent/<project>/agents/)")
     run_p.add_argument("--max-tool-output", type=int, default=_DEFAULT_MAX_TOOL_OUTPUT, metavar="CHARS", help=f"Max characters of stdout kept from each tool call; 0 = unlimited (default: {_DEFAULT_MAX_TOOL_OUTPUT})")
+    run_p.add_argument("--with-memory", action="store_true", default=False, help="Enable persistent conversation memory (stored in ~/.make-agent/<project>/memory.db)")
 
     # ── validate ─────────────────────────────────────────────────────────────
     val_p = subparsers.add_parser(
@@ -153,6 +165,7 @@ def main() -> None:
     parser.add_argument("--tool-timeout", type=int, default=600, metavar="SECONDS", help=argparse.SUPPRESS)
     parser.add_argument("--agents-dir", default=None, metavar="DIR", help=argparse.SUPPRESS)
     parser.add_argument("--max-tool-output", type=int, default=_DEFAULT_MAX_TOOL_OUTPUT, metavar="CHARS", help=argparse.SUPPRESS)
+    parser.add_argument("--with-memory", action="store_true", default=False, help=argparse.SUPPRESS)
 
     args = parser.parse_args()
     _init_logging(args.debug)
