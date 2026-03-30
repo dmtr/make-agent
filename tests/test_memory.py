@@ -311,6 +311,57 @@ class TestMemoryRecent:
         lines = [l for l in result.splitlines() if l.strip()]
         assert len(lines) == 10
 
+    def test_from_date_filter(self, mem):
+        conn = mem._get_conn()
+        for date, msg in [
+            ("2026-01-01T00:00:00Z", "january message"),
+            ("2026-03-01T00:00:00Z", "march message"),
+        ]:
+            conn.execute(
+                "INSERT INTO messages (created_at, sender, message) VALUES (?, ?, ?)",
+                (date, "user", msg),
+            )
+        conn.commit()
+        result = mem.recent(10, from_date="2026-02-01")
+        assert "march message" in result
+        assert "january message" not in result
+
+    def test_to_date_filter(self, mem):
+        conn = mem._get_conn()
+        for date, msg in [
+            ("2026-01-01T00:00:00Z", "january message"),
+            ("2026-03-01T00:00:00Z", "march message"),
+        ]:
+            conn.execute(
+                "INSERT INTO messages (created_at, sender, message) VALUES (?, ?, ?)",
+                (date, "user", msg),
+            )
+        conn.commit()
+        result = mem.recent(10, to_date="2026-02-01")
+        assert "january message" in result
+        assert "march message" not in result
+
+    def test_date_range_and_limit_combined(self, mem):
+        conn = mem._get_conn()
+        for i, date in enumerate([
+            "2026-02-01T00:00:00Z",
+            "2026-02-02T00:00:00Z",
+            "2026-02-03T00:00:00Z",
+            "2026-02-04T00:00:00Z",
+        ]):
+            conn.execute(
+                "INSERT INTO messages (created_at, sender, message) VALUES (?, ?, ?)",
+                (date, "user", f"feb msg {i}"),
+            )
+        conn.commit()
+        result = mem.recent(2, from_date="2026-02-01", to_date="2026-02-28")
+        lines = [l for l in result.splitlines() if l.strip()]
+        assert len(lines) == 2
+        # Should be the 2 most recent within range
+        assert "feb msg 3" in result
+        assert "feb msg 2" in result
+        assert "feb msg 0" not in result
+
 
 # ── Built-in tools integration ────────────────────────────────────────────────
 
@@ -370,6 +421,14 @@ class TestMemoryBuiltinTools:
         result = tools["get_recent_messages"](limit=5)
         assert "first message" in result
         assert "first reply" in result
+
+    def test_get_recent_messages_schema_has_date_params(self):
+        schemas = get_memory_schemas()
+        schema = next(s for s in schemas if s["function"]["name"] == "get_recent_messages")
+        props = schema["function"]["parameters"]["properties"]
+        assert "limit" in props
+        assert "from_date" in props
+        assert "to_date" in props
 
 
 # ── Agent auto-storage ────────────────────────────────────────────────────────

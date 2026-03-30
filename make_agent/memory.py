@@ -138,16 +138,28 @@ class Memory:
         """Search past agent replies using FTS5 via the ``agent_memory`` view."""
         return self._search("agent_memory", query, limit, from_date, to_date)
 
-    def recent(self, limit: int = 10) -> str:
-        """Return the *limit* most recent messages across both senders."""
+    def recent(
+        self,
+        limit: int = 10,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> str:
+        """Return the *limit* most recent messages, optionally filtered by date range."""
         conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT created_at, sender, message FROM messages ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        sql = "SELECT created_at, sender, message FROM messages WHERE 1=1"
+        params: list = []
+        if from_date:
+            sql += " AND created_at >= ?"
+            params.append(from_date)
+        if to_date:
+            sql += " AND created_at <= ?"
+            params.append(to_date)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+
+        rows = conn.execute(sql, params).fetchall()
         if not rows:
             return "No messages found."
-        # Return in chronological order (oldest first)
         rows = list(reversed(rows))
         return "\n".join(f"[{row['created_at']}] {row['sender']}: {row['message']}" for row in rows)
 

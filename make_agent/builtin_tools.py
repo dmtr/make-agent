@@ -304,7 +304,7 @@ def get_builtin_tools(agents_dir: str, model: str, debug: bool = False, memory: 
     if memory is not None:
         tools["search_user_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_user(query, limit, from_date, to_date)
         tools["search_agent_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_agent(query, limit, from_date, to_date)
-        tools["get_recent_messages"] = lambda limit=10, **_kw: memory.recent(limit)
+        tools["get_recent_messages"] = lambda limit=10, from_date=None, to_date=None, **_kw: memory.recent(limit, from_date, to_date)
     return tools
 
 
@@ -355,6 +355,14 @@ def get_memory_schemas() -> list[dict[str, Any]]:
                         "limit": {
                             "type": "integer",
                             "description": "Number of recent messages to return (default: 10).",
+                        },
+                        "from_date": {
+                            "type": "string",
+                            "description": "ISO 8601 date string to filter results on or after (e.g. '2026-03-01').",
+                        },
+                        "to_date": {
+                            "type": "string",
+                            "description": "ISO 8601 date string to filter results on or before (e.g. '2026-03-31').",
                         },
                     },
                     "required": [],
