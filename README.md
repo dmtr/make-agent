@@ -19,7 +19,7 @@ ANTHROPIC_API_KEY=<key> uv run make_agent [run] [-f FILE] [--model MODEL] [--pro
 ```
 
 - `-f FILE` — Makefile to load. Searched in the current directory first, then `~/.make-agent/<project>/agents/`. Defaults to the value in `settings.yaml`, or `./Makefile` if not set.
-- `--model MODEL` — any-llm model string. Defaults to the value in `settings.yaml`, or `anthropic/claude-haiku-4-5-20251001`.
+- `--model MODEL` — any-llm model string. Defaults to the value in `settings.yaml`.
 - `--prompt PROMPT` — send a single prompt and exit instead of entering the interactive shell
 - `--prompt-file FILE` — send a single prompt read from `FILE` and exit
 - `--agents-dir DIR` — directory for specialist `.mk` files (default: `~/.make-agent/<project>/agents/`)
