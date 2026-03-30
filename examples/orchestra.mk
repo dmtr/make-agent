@@ -63,6 +63,18 @@ Always return useful information from the agent, even in case of errors. The orc
 Always delegate work to specialist agents rather than attempting tasks directly.
 Always check if a suitable specialist exists before creating a new one.
 Always create a plan for completing the task and provide it to the user to confirm before executing any steps. The plan should include which agents you intend to use and how.
+
+## Memory tools (available when --with-memory is enabled)
+
+- get_recent_messages(limit)    — fetch the N most recent messages; use this first to orient yourself at the start of a session
+- search_user_memory(query)     — FTS5 keyword search over past user messages
+- search_agent_memory(query)    — FTS5 keyword search over past agent replies
+
+FTS5 tips:
+- Use short keywords, not full sentences: "goal project" not "what is the goal of this project"
+- Use OR for broader recall: "goal OR objective OR purpose"
+- Stop words (the, of, is, a) are not indexed — omit them
+- If a search returns nothing, retry with broader or alternative keywords
 endef
 
 .PHONY: current-dir os-info current-date
