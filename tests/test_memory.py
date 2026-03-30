@@ -505,6 +505,7 @@ class TestWithMemoryFlag:
             max_retries=5,
             tool_timeout=600,
             max_tool_output=20000,
+            max_tokens=4096,
             agents_dir=None,
             with_memory=True,
         )
@@ -541,6 +542,7 @@ class TestWithMemoryFlag:
             max_retries=5,
             tool_timeout=600,
             max_tool_output=20000,
+            max_tokens=4096,
             agents_dir=None,
             with_memory=False,
         )
@@ -574,6 +576,7 @@ class TestWithMemoryFlag:
             max_retries=5,
             tool_timeout=600,
             max_tool_output=20000,
+            max_tokens=4096,
             agents_dir=None,
             with_memory=False,  # not set via CLI
         )

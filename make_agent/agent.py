@@ -20,6 +20,7 @@ _DEFAULT_MODEL = "anthropic/claude-haiku-4-5-20251001"
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
 _DEFAULT_MAX_TOOL_OUTPUT = 20000  # characters; 0 = unlimited
+_DEFAULT_MAX_TOKENS = 4096
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class AgentConfig(NamedTuple):
     max_retries: int = _DEFAULT_MAX_RETRIES
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT
+    max_tokens: int = _DEFAULT_MAX_TOKENS
     agents_dir: str | None = None
     debug: bool = False
     memory: Memory | None = None
@@ -58,6 +60,7 @@ def _completion_with_retry(
     messages: list[dict],
     tool_kwargs: dict[str, Any],
     max_retries: int,
+    max_tokens: int = _DEFAULT_MAX_TOKENS,
 ) -> Any:
     """Call ``any_llm.completion``, retrying on rate limit up to *max_retries* times.
 
@@ -68,7 +71,7 @@ def _completion_with_retry(
     """
     for attempt in range(max_retries + 1):
         try:
-            return any_llm.completion(model=model, messages=messages, **tool_kwargs)
+            return any_llm.completion(model=model, messages=messages, max_tokens=max_tokens, **tool_kwargs)
         except any_llm.RateLimitError as e:
             if attempt == max_retries:
                 raise
@@ -95,6 +98,7 @@ class Agent:
         self._model = config.model
         self._makefile_path = config.makefile_path
         self._max_retries = config.max_retries
+        self._max_tokens = config.max_tokens
         self._tool_timeout = config.tool_timeout
         self._max_tool_output = config.max_tool_output
         self._memory = config.memory
@@ -130,6 +134,7 @@ class Agent:
                 self._messages,
                 self._tool_kwargs,
                 self._max_retries,
+                self._max_tokens,
             )
             msg = response.choices[0].message
 

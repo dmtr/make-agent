@@ -5,7 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
-from make_agent.agent import _DEFAULT_MAX_TOOL_OUTPUT
+from make_agent.agent import _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT
 from make_agent.agent_shell import run
 from make_agent.app_dirs import default_agents_dir, log_file, project_dir
 from make_agent.memory import Memory
@@ -106,6 +106,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
         max_retries=args.max_retries,
         tool_timeout=args.tool_timeout,
         max_tool_output=args.max_tool_output,
+        max_tokens=args.max_tokens,
         agents_dir=args.agents_dir,
         memory=memory,
     )
@@ -135,6 +136,13 @@ def main() -> None:
         default=_DEFAULT_MAX_TOOL_OUTPUT,
         metavar="CHARS",
         help=f"Max characters of stdout kept from each tool call; 0 = unlimited (default: {_DEFAULT_MAX_TOOL_OUTPUT})",
+    )
+    run_p.add_argument(
+        "--max-tokens",
+        type=int,
+        default=_DEFAULT_MAX_TOKENS,
+        metavar="N",
+        help=f"Max tokens in model response (default: {_DEFAULT_MAX_TOKENS})",
     )
     run_p.add_argument(
         "--with-memory", action="store_true", default=False, help="Enable persistent conversation memory (stored in ~/.make-agent/<project>/memory.db)"

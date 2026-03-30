@@ -2,7 +2,7 @@ import cmd
 from pathlib import Path
 from typing import Optional
 
-from make_agent.agent import _DEFAULT_MAX_RETRIES, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
+from make_agent.agent import _DEFAULT_MAX_RETRIES, _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
 from make_agent.memory import Memory
 
 
@@ -48,6 +48,7 @@ def run(
     max_retries: int = _DEFAULT_MAX_RETRIES,
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT,
+    max_tokens: int = _DEFAULT_MAX_TOKENS,
     agents_dir: str | None = None,
     memory: Memory | None = None,
 ) -> None:
@@ -67,6 +68,7 @@ def run(
         max_retries=max_retries,
         tool_timeout=tool_timeout,
         max_tool_output=max_tool_output,
+        max_tokens=max_tokens,
         agents_dir=agents_dir,
         debug=debug,
         memory=memory,
