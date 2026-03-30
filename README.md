@@ -10,7 +10,7 @@ Each Makefile target annotated with a `# <tool>` comment block becomes a callabl
 uv pip install .
 ```
 
-Requires Python 3.10+ and a working `make` binary. Uses [litellm](https://github.com/BerriAI/litellm) for model access, so any API keys (e.g. `ANTHROPIC_API_KEY`) must be set in the environment.
+Requires Python 3.11+ and a working `make` binary. Uses [any-llm-sdk](https://pypi.org/project/any-llm-sdk/) for model access, so any API keys (e.g. `ANTHROPIC_API_KEY`) must be set in the environment.
 
 ## Usage
 
@@ -23,7 +23,14 @@ ANTHROPIC_API_KEY=<key> uv run make_agent [run] [-f FILE] [--model MODEL] [--pro
 - `--prompt PROMPT` — send a single prompt and exit instead of entering the interactive shell
 - `--prompt-file FILE` — send a single prompt read from `FILE` and exit
 - `--agents-dir DIR` — directory for specialist `.mk` files (default: `~/.make-agent/<project>/agents/`)
+- `--agent-model MODEL` — model used when running specialist agents via `run_agent` (default: same as `--model`)
 - `--with-memory` — enable persistent conversation memory (see [Memory](#memory))
+- `--disable-builtin-tools TOOLS` — comma-separated built-in tool names to disable, or `all`
+- `--max-tool-output CHARS` — truncate tool stdout to this many characters; `0` = unlimited (default: 20000)
+- `--max-tokens N` — max tokens in the model response (default: 4096)
+- `--max-retries N` — max retry attempts on rate limit errors (default: 5)
+- `--tool-timeout SECONDS` — timeout for each tool subprocess (default: 600)
+- `--debug` — write all messages to `~/.make-agent/<project>/logs/make-agent.log`
 
 Without `--prompt`, the agent starts an interactive REPL. Type `exit`, `quit`, or press Ctrl-D to leave.
 
@@ -62,7 +69,8 @@ The **project slug** is the absolute path of the working directory with the lead
 ```yaml
 model: anthropic/claude-haiku-4-5-20251001
 makefile: ./my-agent.mk
-memory: true   # optional — enable persistent memory
+memory: true          # optional — enable persistent memory
+agent_model: anthropic/claude-opus-4-5  # optional — model for run_agent calls
 ```
 
 All fields are optional. CLI flags always take precedence over `settings.yaml` values.
@@ -175,14 +183,14 @@ When memory is enabled, three additional built-in tools are injected:
 
 ### Orchestrator pattern
 
-`orchestrator.mk` shows how to use the built-in tools to build a self-managing agent that creates and improves specialist agents at runtime:
+`examples/orchestra.mk` shows how to use the built-in tools to build a self-managing agent that creates and improves specialist agents at runtime:
 
 ```bash
 # Interactive session
-make_agent -f orchestrator.mk
+make_agent -f examples/orchestra.mk
 
 # Single prompt
-make_agent -f orchestrator.mk --prompt "Summarise the git log for the last week"
+make_agent -f examples/orchestra.mk --prompt "Summarise the git log for the last week"
 ```
 
 For every task the orchestrator:
@@ -213,7 +221,7 @@ tools:
 
 ## Example
 
-`examples/orchestra.mk` is a minimal system-information agent with three no-parameter tools:
+`examples/orchestra.mk` is the orchestrator agent — it manages specialist agents using the built-in tools and also exposes three simple no-parameter tools for system information:
 
 ```bash
 make_agent -f examples/orchestra.mk
