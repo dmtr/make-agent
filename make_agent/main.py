@@ -9,12 +9,10 @@ from make_agent.agent import _DEFAULT_MAX_TOOL_OUTPUT
 from make_agent.agent_shell import run
 from make_agent.app_dirs import default_agents_dir, log_file, project_dir
 from make_agent.memory import Memory
-from make_agent.parser import parse_file, validate
 from make_agent.settings import load_settings, run_setup_wizard
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "anthropic/claude-haiku-4-5-20251001"
 _DEFAULT_MAKEFILE = "Makefile"
 
 
@@ -73,7 +71,7 @@ def _resolve_run_args(args: argparse.Namespace) -> argparse.Namespace:
         settings = {}
 
     if not model_explicit:
-        args.model = settings.get("model", _DEFAULT_MODEL)
+        args.model = settings.get("model")
 
     # Memory: CLI flag takes precedence, then settings.yaml
     if not getattr(args, "with_memory", False):
@@ -84,6 +82,9 @@ def _resolve_run_args(args: argparse.Namespace) -> argparse.Namespace:
 
 def _cmd_run(args: argparse.Namespace) -> None:
     args = _resolve_run_args(args)
+
+    if args.model is None:
+        sys.exit("make-agent: model is required — pass --model or set 'model' in settings.yaml")
 
     prompt = args.prompt
     if args.prompt_file is not None:
@@ -110,22 +111,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
     )
 
 
-def _cmd_validate(args: argparse.Namespace) -> None:
-    try:
-        mf = parse_file(args.file)
-    except OSError as e:
-        sys.exit(f"make-agent validate: {e}")
-
-    errors = validate(mf)
-    if errors:
-        for err in errors:
-            print(err, file=sys.stderr)
-        sys.exit(1)
-
-    tool_count = sum(1 for r in mf.rules if r.params or r.description)
-    print(f"OK — {args.file} ({tool_count} tool(s) validated)")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="make-agent",
@@ -136,7 +121,7 @@ def main() -> None:
     # ── run (default) ────────────────────────────────────────────────────────
     run_p = subparsers.add_parser("run", help="Start the interactive agent (default)")
     run_p.add_argument("-f", "--file", default=None, metavar="FILE", help="Makefile to load (default: ./Makefile or value from settings.yaml)")
-    run_p.add_argument("--model", default=None, metavar="MODEL", help="any-llm model string (default: value from settings.yaml or anthropic/claude-haiku-4-5-20251001)")
+    run_p.add_argument("--model", default=None, metavar="MODEL", help="any-llm model string (required if not set in settings.yaml)")
     run_prompt_g = run_p.add_mutually_exclusive_group()
     run_prompt_g.add_argument("--prompt", default=None, metavar="PROMPT", help="Skip interactive mode and send this prompt to the model")
     run_prompt_g.add_argument("--prompt-file", default=None, metavar="FILE", help="Skip interactive mode and read the prompt from FILE")
@@ -144,37 +129,20 @@ def main() -> None:
     run_p.add_argument("--max-retries", type=int, default=5, metavar="N", help="Max retry attempts on rate limit (default: 5)")
     run_p.add_argument("--tool-timeout", type=int, default=600, metavar="SECONDS", help="Timeout in seconds for each tool call (default: 600)")
     run_p.add_argument("--agents-dir", default=None, metavar="DIR", help="Directory for specialist agent .mk files (default: ~/.make-agent/<project>/agents/)")
-    run_p.add_argument("--max-tool-output", type=int, default=_DEFAULT_MAX_TOOL_OUTPUT, metavar="CHARS", help=f"Max characters of stdout kept from each tool call; 0 = unlimited (default: {_DEFAULT_MAX_TOOL_OUTPUT})")
-    run_p.add_argument("--with-memory", action="store_true", default=False, help="Enable persistent conversation memory (stored in ~/.make-agent/<project>/memory.db)")
-
-    # ── validate ─────────────────────────────────────────────────────────────
-    val_p = subparsers.add_parser(
-        "validate",
-        help="Check that every @param variable is referenced in its recipe",
+    run_p.add_argument(
+        "--max-tool-output",
+        type=int,
+        default=_DEFAULT_MAX_TOOL_OUTPUT,
+        metavar="CHARS",
+        help=f"Max characters of stdout kept from each tool call; 0 = unlimited (default: {_DEFAULT_MAX_TOOL_OUTPUT})",
     )
-    val_p.add_argument("-f", "--file", default="Makefile", metavar="FILE", help="Makefile to validate (default: ./Makefile)")
-
-    # ── legacy: no subcommand → behave as "run" ──────────────────────────────
-    parser.add_argument("-f", "--file", default=None, metavar="FILE", help=argparse.SUPPRESS)
-    parser.add_argument("--model", default=None, metavar="MODEL", help=argparse.SUPPRESS)
-    legacy_prompt_g = parser.add_mutually_exclusive_group()
-    legacy_prompt_g.add_argument("--prompt", default=None, metavar="PROMPT", help=argparse.SUPPRESS)
-    legacy_prompt_g.add_argument("--prompt-file", default=None, metavar="FILE", help=argparse.SUPPRESS)
-    parser.add_argument("--debug", action="store_true", default=False, help=argparse.SUPPRESS)
-    parser.add_argument("--max-retries", type=int, default=5, metavar="N", help=argparse.SUPPRESS)
-    parser.add_argument("--tool-timeout", type=int, default=600, metavar="SECONDS", help=argparse.SUPPRESS)
-    parser.add_argument("--agents-dir", default=None, metavar="DIR", help=argparse.SUPPRESS)
-    parser.add_argument("--max-tool-output", type=int, default=_DEFAULT_MAX_TOOL_OUTPUT, metavar="CHARS", help=argparse.SUPPRESS)
-    parser.add_argument("--with-memory", action="store_true", default=False, help=argparse.SUPPRESS)
+    run_p.add_argument(
+        "--with-memory", action="store_true", default=False, help="Enable persistent conversation memory (stored in ~/.make-agent/<project>/memory.db)"
+    )
 
     args = parser.parse_args()
     _init_logging(args.debug)
-
-    if args.command == "validate":
-        _cmd_validate(args)
-    else:
-        # "run" subcommand or legacy invocation (no subcommand)
-        _cmd_run(args)
+    _cmd_run(args)
 
 
 if __name__ == "__main__":

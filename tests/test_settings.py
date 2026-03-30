@@ -136,11 +136,11 @@ class TestResolveRunArgs:
             result = main_module._resolve_run_args(args)
         assert result.file == "missing.mk"
 
-    def test_code_default_model_when_no_settings_and_no_cli(self):
+    def test_model_is_none_when_no_settings_and_no_cli(self):
         with patch("make_agent.main.load_settings", return_value={}):
             args = _make_args(file="f.mk", model=None)
             result = main_module._resolve_run_args(args)
-        assert result.model == main_module._DEFAULT_MODEL
+        assert result.model is None
 
     def test_code_default_makefile_when_no_settings_and_no_cli(self):
         with patch("make_agent.main.load_settings", return_value={}), \
