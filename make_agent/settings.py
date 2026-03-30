@@ -11,7 +11,6 @@ Missing fields are simply ignored — settings are always partial.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import yaml

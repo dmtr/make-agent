@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 import yaml
 
 import make_agent.settings as settings_module

@@ -20,7 +20,7 @@ from typing import Any
 
 import yaml
 
-from make_agent.create_agent import render, _write_output_no_symlink, _validate_spec_params
+from make_agent.create_agent import render, _write_output_no_symlink
 from make_agent.parser import parse_file, validate
 
 _VALID_AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

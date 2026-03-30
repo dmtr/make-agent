@@ -67,10 +67,6 @@ def _comment_lines(text: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_system_block(system_prompt: str) -> str:
-    return _SYSTEM_BLOCK.substitute(body=_comment_lines(system_prompt))
-
-
 def _render_tool(tool: dict) -> str:
     description = _comment_lines(tool["description"])
     params = "".join(
