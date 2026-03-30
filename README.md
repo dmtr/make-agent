@@ -15,7 +15,7 @@ Requires Python 3.10+ and a working `make` binary. Uses [litellm](https://github
 ## Usage
 
 ```
-ANTHROPIC_API_KEY=<key> uv run make_agent [run] [-f FILE] [--model MODEL] [--prompt PROMPT | --prompt-file FILE]
+ANTHROPIC_API_KEY=<key> uv run make_agent [run] [-f FILE] [--model MODEL] [--prompt PROMPT | --prompt-file FILE] [--with-memory]
 ```
 
 - `-f FILE` — Makefile to load. Searched in the current directory first, then `~/.make-agent/<project>/agents/`. Defaults to the value in `settings.yaml`, or `./Makefile` if not set.
@@ -23,6 +23,7 @@ ANTHROPIC_API_KEY=<key> uv run make_agent [run] [-f FILE] [--model MODEL] [--pro
 - `--prompt PROMPT` — send a single prompt and exit instead of entering the interactive shell
 - `--prompt-file FILE` — send a single prompt read from `FILE` and exit
 - `--agents-dir DIR` — directory for specialist `.mk` files (default: `~/.make-agent/<project>/agents/`)
+- `--with-memory` — enable persistent conversation memory (see [Memory](#memory))
 
 Without `--prompt`, the agent starts an interactive REPL. Type `exit`, `quit`, or press Ctrl-D to leave.
 
@@ -48,6 +49,7 @@ All per-project data is stored under `~/.make-agent/`:
 ~/.make-agent/
 └── <project-slug>/          # e.g. Users_alice_proj_myapp
     ├── settings.yaml        # default model and Makefile
+    ├── memory.db            # conversation history (when memory is enabled)
     ├── agents/              # specialist agent .mk files
     └── logs/
         └── make-agent.log   # debug log (written when --debug is set)
@@ -60,9 +62,10 @@ The **project slug** is the absolute path of the working directory with the lead
 ```yaml
 model: anthropic/claude-haiku-4-5-20251001
 makefile: ./my-agent.mk
+memory: true   # optional — enable persistent memory
 ```
 
-Both fields are optional. CLI flags always take precedence over `settings.yaml` values.
+All fields are optional. CLI flags always take precedence over `settings.yaml` values.
 
 ## Makefile format
 
@@ -124,6 +127,51 @@ Every agent automatically receives four built-in tools alongside its Makefile-de
 | `run_agent` | Delegate a task to a specialist agent and return its output |
 
 The agents directory defaults to `~/.make-agent/<project>/agents/` and can be changed with `--agents-dir`.
+
+## Memory
+
+Agents can persist every conversation turn to a local SQLite database and search it in future sessions.
+
+### Enabling memory
+
+```bash
+# One-time flag
+make_agent --with-memory -f my-agent.mk
+
+# Always on for this project (settings.yaml)
+memory: true
+```
+
+The database is stored at `~/.make-agent/<project-slug>/memory.db`. Every user message and final agent reply is written automatically.
+
+The project directory layout becomes:
+
+```
+~/.make-agent/
+└── <project-slug>/
+    ├── settings.yaml
+    ├── memory.db        # conversation history (created on first use)
+    ├── agents/
+    └── logs/
+```
+
+### Memory tools
+
+When memory is enabled, three additional built-in tools are injected:
+
+| Tool | What it does |
+|---|---|
+| `get_recent_messages(limit)` | Return the N most recent messages in chronological order |
+| `search_user_memory(query, limit, from_date, to_date)` | FTS5 keyword search over past user messages |
+| `search_agent_memory(query, limit, from_date, to_date)` | FTS5 keyword search over past agent replies |
+
+**FTS5 search tips** — the search is keyword-based, not semantic:
+
+- Use short keywords, not sentences: `"goal project"` not `"what is the goal of this project"`
+- Use `OR` for broader recall: `"goal OR objective OR purpose"`
+- Stop words (`the`, `of`, `is`, `a`) are not indexed — omit them
+- If a search returns nothing, retry with broader or alternative keywords
+- Use `get_recent_messages` when you need recent context and don't know which keywords to search for
 
 ### Orchestrator pattern
 
