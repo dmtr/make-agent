@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 import any_llm
 
 from make_agent.app_dirs import default_agents_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, BUILTIN_TOOL_NAMES, get_builtin_tools, get_memory_schemas
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools, get_memory_schemas
 from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, format_tool_result, run_tool

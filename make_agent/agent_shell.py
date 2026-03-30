@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Optional
 
 from make_agent.agent import _DEFAULT_MAX_RETRIES, _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
-from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
 from make_agent.memory import Memory
 
 
