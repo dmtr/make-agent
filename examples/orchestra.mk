@@ -66,10 +66,11 @@ Always create a plan for completing the task and provide it to the user to confi
 
 ## Memory tools (available when --with-memory is enabled)
 
-- get_recent_messages(limit)    — fetch the N most recent messages; use this first to orient yourself at the start of a session
-- search_user_memory(query)     — FTS5 keyword search over past user messages
-- search_agent_memory(query)    — FTS5 keyword search over past agent replies
+- get_recent_messages(limit, from_date, to_date) — fetch the N most recent messages; use this first to orient yourself at the start of a session
+- search_user_memory(query, limit, from_date, to_date) — FTS5 keyword search over past user messages
+- search_agent_memory(query, limit, from_date, to_date) — FTS5 keyword search over past agent replies
 
+All date parameters accept ISO 8601 strings (e.g. '2026-03-01'). All parameters are optional.
 FTS5 tips:
 - Use short keywords, not full sentences: "goal project" not "what is the goal of this project"
 - Use OR for broader recall: "goal OR objective OR purpose"
