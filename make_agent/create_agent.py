@@ -94,8 +94,8 @@ def _render_tool(tool: dict) -> str:
 def _validate_spec_params(spec: dict) -> None:
     """Raise ``ValueError`` if any tool spec declares a param not used in its recipe.
 
-    Accepts ``$(NAME)``, ``${NAME}``, ``$$NAME``, or the ``$(NAME_FILE)`` form
-    (which is always available at runtime for every parameter).
+    Accepts ``$(NAME)``, ``${NAME}``, ``$$NAME``, the ``$(NAME_FILE)`` form,
+    and the raw-literal ``$(value NAME)`` / ``$(value NAME_FILE)`` form.
     """
     errors: list[str] = []
     for tool in spec.get("tools", []):
@@ -105,7 +105,7 @@ def _validate_spec_params(spec: dict) -> None:
             recipe_text = raw_recipe
         else:
             recipe_text = "\n".join(raw_recipe)
-        used = set(re.findall(r"\$\(([^)]+)\)|\$\{([^}]+)\}|\$\$(\w+)", recipe_text))
+        used = set(re.findall(r"\$\((?:value\s+)?([^)]+)\)|\$\{(?:value\s+)?([^}]+)\}|\$\$(\w+)", recipe_text))
         used_flat = {g for pair in used for g in pair if g}
         for param in tool.get("params", []):
             pname = param["name"]
@@ -131,7 +131,7 @@ def _write_output_no_symlink(output_path: Path, content: str) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.is_symlink():
         raise ValueError(f"refusing to overwrite symlink: {output_path}")
-    output_path.write_text(content)
+    output_path.write_text(content, encoding="utf-8")
 
 
 def render(spec: dict) -> str:
@@ -190,7 +190,7 @@ def main() -> None:
     if args.spec:
         raw = args.spec
     elif args.file:
-        raw = Path(args.file).read_text()
+        raw = Path(args.file).read_text(encoding="utf-8")
     else:
         raw = sys.stdin.read()
 

@@ -112,7 +112,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
     prompt = args.prompt
     if args.prompt_file is not None:
         try:
-            prompt = Path(args.prompt_file).read_text()
+            prompt = Path(args.prompt_file).read_text(encoding="utf-8")
         except OSError as e:
             sys.exit(f"make-agent run: {e}")
 

@@ -60,21 +60,21 @@ def _escape_make_value(value: str) -> str:
 def format_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> str:
     """Serialise tool output as a JSON string for the LLM.
 
-    *max_output* limits how many characters of *stdout* are kept.  When the
-    output is longer, the excess is dropped and an ``omitted_chars`` key is
-    added so the LLM knows it received a partial result.  ``0`` means no limit.
+    *max_output* limits how many characters of *stdout* and *stderr* are kept
+    (each stream capped independently).  When a stream is longer, the excess is
+    dropped and an ``omitted_chars`` key is added so the LLM knows it received
+    a partial result.  ``0`` means no limit.
     """
+    omitted = 0
     if max_output > 0 and len(stdout) > max_output:
-        omitted = len(stdout) - max_output
+        omitted += len(stdout) - max_output
         stdout = stdout[:max_output]
-        result: dict[str, Any] = {
-            "stdout": stdout,
-            "stderr": stderr,
-            "exit_code": exit_code,
-            "omitted_chars": omitted,
-        }
-    else:
-        result = {"stdout": stdout, "stderr": stderr, "exit_code": exit_code}
+    if max_output > 0 and len(stderr) > max_output:
+        omitted += len(stderr) - max_output
+        stderr = stderr[:max_output]
+    result: dict[str, Any] = {"stdout": stdout, "stderr": stderr, "exit_code": exit_code}
+    if omitted:
+        result["omitted_chars"] = omitted
     return json.dumps(result)
 
 
@@ -111,7 +111,7 @@ def build_tools(makefile: Makefile) -> list[dict[str, Any]]:
 
 def run_tool(
     target: str,
-    arguments: dict[str, str],
+    arguments: dict[str, Any],
     makefile_path: Path,
     timeout: int = 600,
     max_output: int = 0,
@@ -141,6 +141,8 @@ def run_tool(
         make_vars: list[str] = []
 
         for k, v in arguments.items():
+            # Normalise JSON primitives (int, float, bool) to str.
+            v_str = str(v)
             # Always write a temp file for $(PARAM_FILE) access.
             with tempfile.NamedTemporaryFile(
                 mode="w",
@@ -148,14 +150,14 @@ def run_tool(
                 suffix=".tmp",
                 delete=False,
             ) as tf:
-                tf.write(v)
+                tf.write(v_str)
                 file_path = Path(tf.name)
             tmp_files.append(file_path)
             make_vars.append(f"{k}_FILE={file_path}")
 
             # Also provide $(PARAM) for single-line values via params.mk.
-            if "\n" not in v:
-                params_mk_lines.append(f"{k} = {_escape_make_value(v)}")
+            if "\n" not in v_str:
+                params_mk_lines.append(f"{k} = {_escape_make_value(v_str)}")
 
         cmd: list[str] = ["make", "--no-print-directory"]
 

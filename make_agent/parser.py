@@ -308,11 +308,12 @@ def parse(text: str) -> Makefile:
 
 def parse_file(path: str | Path) -> Makefile:
     """Parse a Makefile from disk."""
-    return parse(Path(path).read_text())
+    return parse(Path(path).read_text(encoding="utf-8"))
 
 
-# Matches $(NAME), ${NAME}, or $$NAME (Make double-$ shell-variable form) in recipe text
-_RECIPE_VAR_RE = re.compile(r"\$\(([^)]+)\)|\$\{([^}]+)\}|\$\$(\w+)")
+# Matches $(NAME), ${NAME}, or $$NAME in recipe text.
+# The optional ``value `` prefix handles the ``$(value NAME)`` raw-literal form.
+_RECIPE_VAR_RE = re.compile(r"\$\((?:value\s+)?([^)]+)\)|\$\{(?:value\s+)?([^}]+)\}|\$\$(\w+)")
 
 
 def validate(makefile: Makefile) -> list[str]:

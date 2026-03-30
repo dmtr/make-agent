@@ -105,7 +105,7 @@ class Agent:
         self._max_tool_output = config.max_tool_output
         self._memory = config.memory
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
-        self._builtins = get_builtin_tools(agents_dir, config.agent_model or config.model, config.debug, config.memory, config.disabled_builtin_tools)
+        self._builtins = get_builtin_tools(agents_dir, config.agent_model or config.model, config.debug, config.memory, config.disabled_builtin_tools, config.tool_timeout)
         makefile_tools = build_tools(mf)
         memory_schemas = get_memory_schemas() if config.memory is not None else []
         active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
@@ -149,14 +149,17 @@ class Agent:
                     target = tc.function.name
                     try:
                         arguments = json.loads(tc.function.arguments)
-                    except json.JSONDecodeError:
-                        arguments = {}
+                    except json.JSONDecodeError as e:
+                        output = format_tool_result("", f"malformed JSON arguments: {e}", None)
+                        logger.debug("[tool_result] %s -> %s", target, output)
+                        self._messages.append({"role": "tool", "tool_call_id": tc.id, "content": output})
+                        continue
 
                     logger.debug("[tool_call] %s args=%s", target, arguments)
                     try:
                         if target in self._builtins:
                             raw = self._builtins[target](**arguments)
-                            output = format_tool_result(raw, "", 0, self._max_tool_output)
+                            output = format_tool_result(str(raw), "", 0, self._max_tool_output)
                         else:
                             output = run_tool(
                                 target,
@@ -165,6 +168,8 @@ class Agent:
                                 self._tool_timeout,
                                 self._max_tool_output,
                             )
+                    except TypeError as e:
+                        output = format_tool_result("", f"argument type error: {e}", None)
                     except Exception as e:
                         output = format_tool_result("", f"unexpected error: {e}", None)
                     logger.debug("[tool_result] %s -> %s", target, output)

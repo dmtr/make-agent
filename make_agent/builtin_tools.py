@@ -159,7 +159,7 @@ def create_agent(name: str, spec: str, agents_dir: str) -> str:
     return f"Created agent '{name}' at {mk_path} ({tool_count} tool(s))"
 
 
-def run_agent(name: str, prompt: str, agents_dir: str, model: str, debug: bool = False) -> str:
+def run_agent(name: str, prompt: str, agents_dir: str, model: str, debug: bool = False, timeout: int = 600) -> str:
     """Run a specialist agent as a subprocess and return its output."""
     if not _valid_agent_name(name):
         return f"Error: invalid agent name {name!r}."
@@ -179,7 +179,9 @@ def run_agent(name: str, prompt: str, agents_dir: str, model: str, debug: bool =
         cmd.append("--debug")
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return f"Error: agent '{name}' exceeded {timeout}s time limit"
     except OSError as e:
         return f"Error: failed to run agent: {e}"
 
@@ -294,7 +296,7 @@ BUILTIN_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
-def get_builtin_tools(agents_dir: str, model: str, debug: bool = False, memory: Any = None, disabled: frozenset[str] = frozenset()) -> dict[str, Any]:
+def get_builtin_tools(agents_dir: str, model: str, debug: bool = False, memory: Any = None, disabled: frozenset[str] = frozenset(), tool_timeout: int = 600) -> dict[str, Any]:
     """Return a name → callable mapping for all built-in tools.
 
     Each callable accepts only the LLM-provided arguments; ``agents_dir``,
@@ -305,7 +307,7 @@ def get_builtin_tools(agents_dir: str, model: str, debug: bool = False, memory: 
         "list_agent": lambda **_kw: list_agent(agents_dir),
         "validate_agent": lambda name, **_kw: validate_agent(name, agents_dir),
         "create_agent": lambda name, spec, **_kw: create_agent(name, spec, agents_dir),
-        "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir, model, debug),
+        "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir, model, debug, tool_timeout),
     }
     if memory is not None:
         tools["search_user_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_user(query, limit, from_date, to_date)

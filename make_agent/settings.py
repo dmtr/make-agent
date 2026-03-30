@@ -32,15 +32,22 @@ def load_settings(cwd: str | None = None) -> dict[str, Any] | None:
     path = settings_file(cwd)
     if not path.exists():
         return None
-    text = path.read_text()
-    data = yaml.safe_load(text) or {}
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Invalid settings file {path}: expected a YAML mapping, "
+            f"got {type(data).__name__}. Please check your settings.yaml."
+        )
     return {k: v for k, v in data.items() if k in ("model", "makefile", "memory", "agent_model")}
 
 
 def save_settings(data: dict[str, Any], cwd: str | None = None) -> None:
     """Write *data* to ``~/.make-agent/<project>/settings.yaml``."""
     path = settings_file(cwd)
-    path.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
+    path.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True), encoding="utf-8")
 
 
 def run_setup_wizard() -> dict[str, Any]:
