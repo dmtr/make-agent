@@ -26,3 +26,6 @@ build-backend = "setuptools.build_meta"
 
 [project.urls]
 Homepage = "https://github.com/dmtr/make-agent"
+
+[tool.ruff.lint]
+ignore = ["E741"]
