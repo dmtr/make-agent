@@ -304,6 +304,7 @@ def get_builtin_tools(agents_dir: str, model: str, debug: bool = False, memory: 
     if memory is not None:
         tools["search_user_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_user(query, limit, from_date, to_date)
         tools["search_agent_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_agent(query, limit, from_date, to_date)
+        tools["get_recent_messages"] = lambda limit=10, **_kw: memory.recent(limit)
     return tools
 
 
@@ -337,6 +338,27 @@ def get_memory_schemas() -> list[dict[str, Any]]:
                     "If the first query returns no results, retry with broader or alternative keywords."
                 ),
                 "parameters": _MEMORY_SEARCH_PARAMS,
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_recent_messages",
+                "description": (
+                    "Fetch the N most recent messages from memory, in chronological order. "
+                    "Each entry shows the timestamp, sender (user or agent), and message text. "
+                    "Use this to quickly recall recent conversation context without needing keywords."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "description": "Number of recent messages to return (default: 10).",
+                        },
+                    },
+                    "required": [],
+                },
             },
         },
     ]

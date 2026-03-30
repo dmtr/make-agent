@@ -269,6 +269,50 @@ class TestMemorySearch:
         assert "[" in result and "]" in result  # [created_at] message format
 
 
+# ── recent() ──────────────────────────────────────────────────────────────────
+
+class TestMemoryRecent:
+    def test_returns_messages_in_chronological_order(self, mem):
+        mem.store("user", "first")
+        mem.store("agent", "second")
+        mem.store("user", "third")
+        result = mem.recent(10)
+        assert result.index("first") < result.index("second") < result.index("third")
+
+    def test_limit_respected(self, mem):
+        for i in range(5):
+            mem.store("user", f"msg {i}")
+        result = mem.recent(3)
+        lines = [l for l in result.splitlines() if l.strip()]
+        assert len(lines) == 3
+
+    def test_returns_most_recent_when_limited(self, mem):
+        for i in range(5):
+            mem.store("user", f"msg {i}")
+        result = mem.recent(2)
+        assert "msg 4" in result
+        assert "msg 3" in result
+        assert "msg 0" not in result
+
+    def test_includes_sender_in_output(self, mem):
+        mem.store("user", "hello")
+        mem.store("agent", "hi back")
+        result = mem.recent()
+        assert "user" in result
+        assert "agent" in result
+
+    def test_empty_memory_returns_message(self, mem):
+        result = mem.recent()
+        assert result == "No messages found."
+
+    def test_default_limit_is_ten(self, mem):
+        for i in range(15):
+            mem.store("user", f"msg {i}")
+        result = mem.recent()
+        lines = [l for l in result.splitlines() if l.strip()]
+        assert len(lines) == 10
+
+
 # ── Built-in tools integration ────────────────────────────────────────────────
 
 class TestMemoryBuiltinTools:
@@ -277,20 +321,23 @@ class TestMemoryBuiltinTools:
         names = [s["function"]["name"] for s in schemas]
         assert "search_user_memory" in names
         assert "search_agent_memory" in names
+        assert "get_recent_messages" in names
 
     def test_memory_schemas_have_required_query(self):
         schemas = get_memory_schemas()
         for schema in schemas:
             params = schema["function"]["parameters"]
-            assert "query" in params["required"]
+            if schema["function"]["name"] in ("search_user_memory", "search_agent_memory"):
+                assert "query" in params["required"]
 
     def test_memory_schemas_have_optional_params(self):
         schemas = get_memory_schemas()
         for schema in schemas:
             props = schema["function"]["parameters"]["properties"]
-            assert "limit" in props
-            assert "from_date" in props
-            assert "to_date" in props
+            if schema["function"]["name"] in ("search_user_memory", "search_agent_memory"):
+                assert "limit" in props
+                assert "from_date" in props
+                assert "to_date" in props
 
     def test_search_user_memory_tool_callable(self, mem):
         mem.store("user", "remember this phrase")
@@ -310,11 +357,20 @@ class TestMemoryBuiltinTools:
         tools = get_builtin_tools("agents_dir", "model")
         assert "search_user_memory" not in tools
         assert "search_agent_memory" not in tools
+        assert "get_recent_messages" not in tools
 
     def test_no_memory_schemas_not_injected_without_memory(self):
         schemas = get_memory_schemas()
-        # Verify these are the only two
-        assert len(schemas) == 2
+        assert len(schemas) == 3
+
+    def test_get_recent_messages_tool_callable(self, mem):
+        mem.store("user", "first message")
+        mem.store("agent", "first reply")
+        tools = get_builtin_tools("agents_dir", "model", memory=mem)
+        assert "get_recent_messages" in tools
+        result = tools["get_recent_messages"](limit=5)
+        assert "first message" in result
+        assert "first reply" in result
 
 
 # ── Agent auto-storage ────────────────────────────────────────────────────────
