@@ -30,5 +30,10 @@ Homepage = "https://github.com/dmtr/make-agent"
 [tool.setuptools.package-data]
 make_agent = ["templates/*.mk"]
 
+[tool.pytest.ini_options]
+markers = [
+    "e2e: end-to-end tests that call the real API (skipped by default; pass --e2e to run)",
+]
+
 [tool.ruff.lint]
 ignore = ["E741"]
