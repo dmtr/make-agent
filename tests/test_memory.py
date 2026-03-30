@@ -508,6 +508,7 @@ class TestWithMemoryFlag:
             max_tokens=4096,
             agents_dir=None,
             with_memory=True,
+            disable_builtin_tools=None,
         )
 
         captured: dict = {}
@@ -545,6 +546,7 @@ class TestWithMemoryFlag:
             max_tokens=4096,
             agents_dir=None,
             with_memory=False,
+            disable_builtin_tools=None,
         )
 
         captured: dict = {}
@@ -579,6 +581,7 @@ class TestWithMemoryFlag:
             max_tokens=4096,
             agents_dir=None,
             with_memory=False,  # not set via CLI
+            disable_builtin_tools=None,
         )
 
         captured: dict = {}

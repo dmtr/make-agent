@@ -39,6 +39,7 @@ class TestRunPromptInput:
             max_tool_output=20000,
             max_tokens=4096,
             agents_dir=None,
+            disable_builtin_tools=None,
         )
         captured: dict = {}
 

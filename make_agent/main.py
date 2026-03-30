@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from make_agent.agent import _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT
+from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
 from make_agent.agent_shell import run
 from make_agent.app_dirs import default_agents_dir, log_file, project_dir
 from make_agent.memory import Memory
@@ -73,11 +74,33 @@ def _resolve_run_args(args: argparse.Namespace) -> argparse.Namespace:
     if not model_explicit:
         args.model = settings.get("model")
 
+    # agent_model: CLI flag > settings.yaml > falls back to main model at runtime
+    if not getattr(args, "agent_model", None):
+        args.agent_model = settings.get("agent_model") or None
+
     # Memory: CLI flag takes precedence, then settings.yaml
     if not getattr(args, "with_memory", False):
         args.with_memory = bool(settings.get("memory", False))
 
     return args
+
+
+def _parse_disabled_tools(value: str | None) -> frozenset[str]:
+    """Parse the --disable-builtin-tools value into a frozenset of tool names.
+
+    Accepts ``"all"`` or a comma-separated list of known built-in tool names.
+    Exits with an error on unknown names.
+    """
+    if not value:
+        return frozenset()
+    if value.strip().lower() == "all":
+        return BUILTIN_TOOL_NAMES
+    names = frozenset(n.strip() for n in value.split(",") if n.strip())
+    unknown = names - BUILTIN_TOOL_NAMES
+    if unknown:
+        sys.exit(f"make-agent: unknown built-in tool(s): {', '.join(sorted(unknown))}. "
+                 f"Valid names: {', '.join(sorted(BUILTIN_TOOL_NAMES))}")
+    return names
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -109,6 +132,8 @@ def _cmd_run(args: argparse.Namespace) -> None:
         max_tokens=args.max_tokens,
         agents_dir=args.agents_dir,
         memory=memory,
+        disabled_builtin_tools=_parse_disabled_tools(args.disable_builtin_tools),
+        agent_model=args.agent_model,
     )
 
 
@@ -147,6 +172,34 @@ def main() -> None:
     run_p.add_argument(
         "--with-memory", action="store_true", default=False, help="Enable persistent conversation memory (stored in ~/.make-agent/<project>/memory.db)"
     )
+    run_p.add_argument(
+        "--disable-builtin-tools",
+        default=None,
+        metavar="TOOLS",
+        help=f"Comma-separated built-in tool names to disable, or 'all'. Valid names: {', '.join(sorted(BUILTIN_TOOL_NAMES))}",
+    )
+    run_p.add_argument(
+        "--agent-model",
+        default=None,
+        metavar="MODEL",
+        help="Model used when running specialist agents via run_agent (default: same as --model)",
+    )
+
+    # ── legacy: no subcommand → behave as "run" ──────────────────────────────
+    parser.add_argument("-f", "--file", default=None, metavar="FILE", help=argparse.SUPPRESS)
+    parser.add_argument("--model", default=None, metavar="MODEL", help=argparse.SUPPRESS)
+    legacy_prompt_g = parser.add_mutually_exclusive_group()
+    legacy_prompt_g.add_argument("--prompt", default=None, metavar="PROMPT", help=argparse.SUPPRESS)
+    legacy_prompt_g.add_argument("--prompt-file", default=None, metavar="FILE", help=argparse.SUPPRESS)
+    parser.add_argument("--debug", action="store_true", default=False, help=argparse.SUPPRESS)
+    parser.add_argument("--max-retries", type=int, default=5, metavar="N", help=argparse.SUPPRESS)
+    parser.add_argument("--tool-timeout", type=int, default=600, metavar="SECONDS", help=argparse.SUPPRESS)
+    parser.add_argument("--agents-dir", default=None, metavar="DIR", help=argparse.SUPPRESS)
+    parser.add_argument("--max-tool-output", type=int, default=_DEFAULT_MAX_TOOL_OUTPUT, metavar="CHARS", help=argparse.SUPPRESS)
+    parser.add_argument("--max-tokens", type=int, default=_DEFAULT_MAX_TOKENS, metavar="N", help=argparse.SUPPRESS)
+    parser.add_argument("--with-memory", action="store_true", default=False, help=argparse.SUPPRESS)
+    parser.add_argument("--disable-builtin-tools", default=None, metavar="TOOLS", help=argparse.SUPPRESS)
+    parser.add_argument("--agent-model", default=None, metavar="MODEL", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
     _init_logging(args.debug)

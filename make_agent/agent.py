@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 import any_llm
 
 from make_agent.app_dirs import default_agents_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools, get_memory_schemas
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, BUILTIN_TOOL_NAMES, get_builtin_tools, get_memory_schemas
 from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, format_tool_result, run_tool
@@ -35,6 +35,8 @@ class AgentConfig(NamedTuple):
     agents_dir: str | None = None
     debug: bool = False
     memory: Memory | None = None
+    disabled_builtin_tools: frozenset[str] = frozenset()
+    agent_model: str | None = None  # model used by run_agent; falls back to model
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -103,10 +105,12 @@ class Agent:
         self._max_tool_output = config.max_tool_output
         self._memory = config.memory
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
-        self._builtins = get_builtin_tools(agents_dir, config.model, config.debug, config.memory)
+        self._builtins = get_builtin_tools(agents_dir, config.agent_model or config.model, config.debug, config.memory, config.disabled_builtin_tools)
         makefile_tools = build_tools(mf)
         memory_schemas = get_memory_schemas() if config.memory is not None else []
-        self._tools = BUILTIN_SCHEMAS + memory_schemas + makefile_tools
+        active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
+        active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in config.disabled_builtin_tools]
+        self._tools = active_builtin_schemas + active_memory_schemas + makefile_tools
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
         if mf.system_prompt:

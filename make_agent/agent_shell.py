@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 
 from make_agent.agent import _DEFAULT_MAX_RETRIES, _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
+from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
 from make_agent.memory import Memory
 
 
@@ -51,6 +52,8 @@ def run(
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     agents_dir: str | None = None,
     memory: Memory | None = None,
+    disabled_builtin_tools: frozenset[str] = frozenset(),
+    agent_model: str | None = None,
 ) -> None:
     """Start the interactive shell.
 
@@ -72,6 +75,8 @@ def run(
         agents_dir=agents_dir,
         debug=debug,
         memory=memory,
+        disabled_builtin_tools=disabled_builtin_tools,
+        agent_model=agent_model,
     )
     agent = Agent(agent_config)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")

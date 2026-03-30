@@ -25,6 +25,11 @@ from make_agent.parser import parse_file, validate
 
 _VALID_AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
+BUILTIN_TOOL_NAMES: frozenset[str] = frozenset({
+    "list_agent", "validate_agent", "create_agent", "run_agent",
+    "search_user_memory", "search_agent_memory", "get_recent_messages",
+})
+
 _MEMORY_SEARCH_PARAMS = {
     "type": "object",
     "properties": {
@@ -289,11 +294,12 @@ BUILTIN_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
-def get_builtin_tools(agents_dir: str, model: str, debug: bool = False, memory: Any = None) -> dict[str, Any]:
+def get_builtin_tools(agents_dir: str, model: str, debug: bool = False, memory: Any = None, disabled: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Return a name → callable mapping for all built-in tools.
 
     Each callable accepts only the LLM-provided arguments; ``agents_dir``,
-    ``model``, and ``memory`` are pre-bound via closure.
+    ``model``, and ``memory`` are pre-bound via closure.  Tools whose names
+    appear in *disabled* are omitted.
     """
     tools: dict[str, Any] = {
         "list_agent": lambda **_kw: list_agent(agents_dir),
@@ -305,7 +311,7 @@ def get_builtin_tools(agents_dir: str, model: str, debug: bool = False, memory: 
         tools["search_user_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_user(query, limit, from_date, to_date)
         tools["search_agent_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_agent(query, limit, from_date, to_date)
         tools["get_recent_messages"] = lambda limit=10, from_date=None, to_date=None, **_kw: memory.recent(limit, from_date, to_date)
-    return tools
+    return {name: fn for name, fn in tools.items() if name not in disabled}
 
 
 def get_memory_schemas() -> list[dict[str, Any]]:

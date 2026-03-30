@@ -34,7 +34,7 @@ def load_settings(cwd: str | None = None) -> dict[str, Any] | None:
         return None
     text = path.read_text()
     data = yaml.safe_load(text) or {}
-    return {k: v for k, v in data.items() if k in ("model", "makefile", "memory")}
+    return {k: v for k, v in data.items() if k in ("model", "makefile", "memory", "agent_model")}
 
 
 def save_settings(data: dict[str, Any], cwd: str | None = None) -> None:
