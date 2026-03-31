@@ -249,12 +249,11 @@ wheels = [
 ]
 
 [[package]]
-name = "make-agent"
-version = "0.2.0"
+name = "makefile-agent"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "any-llm-sdk", extra = ["ollama"] },
-    { name = "pytest" },
     { name = "pyyaml" },
 ]
 
@@ -267,7 +266,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "any-llm-sdk", extras = ["openai", "anthropic", "ollama", "openrouter"], specifier = "==1.13.0" },
-    { name = "pytest", specifier = ">=9.0.2" },
     { name = "pyyaml", specifier = ">=6" },
 ]
 

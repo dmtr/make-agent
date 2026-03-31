@@ -1,13 +1,29 @@
 [project]
-name = "make-agent"
+name = "makefile-agent"
 version = "0.3.0"
 description = "AI‑assistant‑as‑Makefile: a tool to create and manage AI agents using a simple YAML configuration."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
+authors = [
+    { name = "Dmitriy Sorochenkov" },
+]
+keywords = ["ai", "agent", "makefile", "llm", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "any-llm-sdk[openai,anthropic,ollama,openrouter]==1.13.0",
     "pyyaml>=6",
-    "pytest>=9.0.2",
 ]
 
 [dependency-groups]
@@ -26,6 +42,8 @@ build-backend = "setuptools.build_meta"
 
 [project.urls]
 Homepage = "https://github.com/dmtr/make-agent"
+Repository = "https://github.com/dmtr/make-agent"
+Issues = "https://github.com/dmtr/make-agent/issues"
 
 [tool.setuptools.package-data]
 make_agent = ["templates/*.mk"]
