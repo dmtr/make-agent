@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Real-World Example: K8s Monitoring Session | make-agent docs</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+<h1 class="brand"><a href="../index.html">make-agent docs</a></h1>
+<p class="meta">User documentation</p>
+<p class="meta"><a href="https://github.com/dmtr/make-agent">GitHub repository</a></p>
+<nav class="nav-section">
+<h2>Start</h2>
+<ul>
+<li><a href="../index.html">Home</a></li>
+<li><a href="../quickstart.html">Quick Start</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Workflows</h2>
+<ul>
+<li><a href="../workflows/interactive-shell.html">Interactive Shell</a></li>
+<li><a href="../workflows/single-prompt.html">Single Prompt</a></li>
+<li><a href="../workflows/project-settings.html">Project Settings</a></li>
+<li><a href="../workflows/specialist-agents.html">Specialist Agents</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Examples</h2>
+<ul>
+<li><a href="../examples/minimal-agent.html">Minimal Agent</a></li>
+<li><a href="../examples/orchestrator-pattern.html">Orchestrator Pattern</a></li>
+<li><a href="../examples/k8s-monitoring-session.html" aria-current="page">K8s Monitoring Session</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Reference</h2>
+<ul>
+<li><a href="../reference/cli.html">CLI Flags</a></li>
+<li><a href="../reference/makefile-format.html">Makefile Format</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Help</h2>
+<ul>
+<li><a href="../troubleshooting.html">Troubleshooting</a></li>
+</ul>
+</nav>
+    </aside>
+    <main class="main">
+      <p class="breadcrumbs">Home / Examples / K8s Monitoring Session</p>
+      <h1>Real-World Example: K8s Monitoring Session</h1>
+      <section class="on-this-page">
+        <h2>On this page</h2>
+        <ul>
+          <li><a href="#scenario">Scenario</a></li>
+          <li><a href="#what-happened">What happened in the session</a></li>
+          <li><a href="#created-agent-example">Created agent example</a></li>
+          <li><a href="#security-benefits">Security benefits and guardrails</a></li>
+          <li><a href="#apply-pattern">How to apply this pattern</a></li>
+        </ul>
+      </section>
+
+      <section id="scenario">
+        <h2>Scenario</h2>
+        <p>This guide is based on a real terminal session. The user started an orchestrator agent, created a specialist named <code>k8s-monitor</code>, and then asked operational questions (node count, resource usage, namespaces, and namespace events).</p>
+        <p>The session is a practical example of using <code>make-agent</code> for production-style diagnostics while keeping execution scope explicit and narrow.</p>
+        <pre><code>Type your message. Press Ctrl-D or Ctrl-C to exit.
+
+make-agent&gt; let's create an agent to monitor k8s cluster
+I've successfully created a **Kubernetes cluster monitoring agent** named `k8s-monitor` and tested it.
+
+### Agent capabilities:
+- `check-cluster-info`: Get basic cluster info (API server, CoreDNS status)
+- `get-nodes`: List all nodes with status and details
+- `get-pods-all-namespaces`: Show all pods across namespaces
+- `get-events`: Show recent cluster events (per namespace or all)
+- `describe-pod`: Get detailed info about a specific pod
+- `get-resources`: Show CPU/memory usage for nodes/pods
+
+### Test result:
+The agent confirmed your cluster is healthy — 27 nodes in `Ready` state, control plane and CoreDNS running. It also provided node details (version, runtime, age).
+
+Would you like me to:
+- Add more monitoring tools (e.g., check deployments, services, PVCs)?
+- Adjust the current tools or prompts?
+- Run another health check (e.g., pods, events, resource usage)?</code></pre>
+      </section>
+
+      <section id="what-happened">
+        <h2>What happened in the session</h2>
+        <ol>
+          <li>The orchestrator loaded with a small, explicit tool set: <code>list_agent</code>, <code>validate_agent</code>, <code>create_agent</code>, <code>run_agent</code>, plus utility tools.</li>
+          <li>The user asked to create a Kubernetes monitoring specialist.</li>
+          <li>The specialist was generated with focused tools such as <code>get-nodes</code>, <code>get-events</code>, <code>describe-pod</code>, and <code>get-resources</code>.</li>
+          <li>The user performed read-oriented troubleshooting tasks and got structured summaries/tables.</li>
+          <li>The agent also showed planning behavior before a costly query (asking for confirmation before execution).</li>
+        </ol>
+        <div class="note"><strong>Note:</strong> The value of this flow is not just convenience. It creates an auditable chain of actions: user request → named tool call → bounded command behavior.</div>
+      </section>
+
+      <section id="created-agent-example">
+        <h2>Created agent example</h2>
+        <p>The following is the specialist Makefile definition used as an example in this real-world flow. You can copy it directly into a <code>.mk</code> file and run it with <code>make-agent</code>.</p>
+        <pre><code>define SYSTEM_PROMPT
+You are a Kubernetes cluster monitoring specialist. Your job is to help users inspect the health and status of their Kubernetes cluster using kubectl commands. Always ask for clarification if the user's request is ambiguous, and report errors clearly by starting your message with 'ERROR:' if something goes wrong.
+endef
+
+.PHONY: check-cluster-info get-nodes get-namespaces get-pods-all-namespaces get-events describe-pod get-resources
+
+# &lt;tool&gt;
+# Get basic cluster information
+# &lt;/tool&gt;
+check-cluster-info:
+	@kubectl cluster-info
+
+
+# &lt;tool&gt;
+# List all nodes in the cluster with their status
+# &lt;/tool&gt;
+get-nodes:
+	@kubectl get nodes -o wide
+
+
+# &lt;tool&gt;
+# List all namespaces in the cluster
+# &lt;/tool&gt;
+get-namespaces:
+	@kubectl get namespaces -o wide
+
+
+# &lt;tool&gt;
+# List all pods across all namespaces
+# &lt;/tool&gt;
+get-pods-all-namespaces:
+	@kubectl get pods --all-namespaces -o wide
+
+
+# &lt;tool&gt;
+# Show recent events in the cluster
+# @param NAMESPACE string Namespace to show events from (use 'all' for all namespaces)
+# &lt;/tool&gt;
+get-events:
+	@if [ "$(NAMESPACE)" = "all" ]; then kubectl get events --all-namespaces --sort-by=".lastTimestamp"; else kubectl get events -n "$(NAMESPACE)" --sort-by=".lastTimestamp"; fi
+
+
+# &lt;tool&gt;
+# Get detailed information about a specific pod
+# @param POD_NAME string Name of the pod
+# @param NAMESPACE string Namespace where the pod is located
+# &lt;/tool&gt;
+describe-pod:
+	@kubectl describe pod "$(POD_NAME)" -n "$(NAMESPACE)"
+
+
+# &lt;tool&gt;
+# Show resource usage (CPU/memory) for nodes and pods
+# @param TYPE string Resource type to show — 'nodes', 'pods', or 'all'
+# &lt;/tool&gt;
+get-resources:
+	@if [ "$(TYPE)" = "nodes" ]; then kubectl top nodes; elif [ "$(TYPE)" = "pods" ]; then kubectl top pods --all-namespaces; else kubectl top nodes && echo "--- PODS ---" && kubectl top pods --all-namespaces; fi</code></pre>
+      </section>
+
+      <section id="security-benefits">
+        <h2>Security benefits and guardrails</h2>
+        <p>This session highlights two core security controls in <code>make-agent</code>:</p>
+
+        <h3>1) User-limited tools (allowlist by design)</h3>
+        <p>The model can only call tools that the user exposes in the Makefile and built-ins enabled for the run. In the log, the orchestrator did not have arbitrary shell access; it had specific orchestration tools. The <code>k8s-monitor</code> specialist also had a bounded set of cluster-observability tools.</p>
+
+        <h3>2) System prompt as policy boundary</h3>
+        <p>The specialist prompt in the log explicitly constrained behavior (for example: ask for clarification on ambiguity and format errors clearly). This prompt acts as a policy layer that shapes decisions, response style, and error handling.</p>
+
+        <h3>3) Disable risky built-ins for production runs</h3>
+        <p>For a safer Kubernetes specialist session, disable agent-creation and delegation built-ins so the runtime cannot create or launch additional specialists dynamically.</p>
+        <pre><code>uv run make_agent -f k8s-monitor.mk --disable-builtin-tools all
+
+# or disable only delegation/creation built-ins
+uv run make_agent -f k8s-monitor.mk --disable-builtin-tools run_agent,create_agent</code></pre>
+        <div class="warning"><strong>Warning:</strong> In sensitive environments, prefer a single-purpose specialist with only explicit kubectl tools and no built-in orchestration tools.</div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Control</th>
+              <th>What it limits</th>
+              <th>Benefit</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Tool allowlist</td>
+              <td>Only declared tools are callable</td>
+              <td>Reduces blast radius and accidental misuse</td>
+            </tr>
+            <tr>
+              <td>System prompt rules</td>
+              <td>Agent behavior and decision style</td>
+              <td>More predictable and reviewable outputs</td>
+            </tr>
+            <tr>
+              <td>Specialist separation</td>
+              <td>Task scope per agent</td>
+              <td>Least-privilege architecture</td>
+            </tr>
+            <tr>
+              <td>Disable built-ins</td>
+              <td>Blocks dynamic agent creation/delegation paths</td>
+              <td>Lower risk in production troubleshooting sessions</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="tip"><strong>Tip:</strong> For sensitive environments, keep specialist tools read-only first. Add mutating tools only when truly needed, isolate them in separate specialists, and disable unneeded built-ins.</div>
+      </section>
+
+      <section id="apply-pattern">
+        <h2>How to apply this pattern</h2>
+        <ol>
+          <li>Start with an orchestrator that can manage specialists, not perform broad direct actions.</li>
+          <li>Create a domain specialist with minimal tools for one job (for example, cluster health checks only).</li>
+          <li>Write a system prompt that encodes operational policy (clarify ambiguity, explicit error format, no hidden assumptions).</li>
+          <li>Validate with realistic queries from your runbooks.</li>
+          <li>Expand capabilities gradually, tool by tool, after review.</li>
+        </ol>
+        <p>This gives you fast AI-assisted operations with explicit controls that are easy to reason about and audit.</p>
+      </section>
+
+      <p class="footer-note">Last synced with README context at commit <code>eb18bec</code>.</p>
+    </main>
+  </div>
+</body>
+</html>

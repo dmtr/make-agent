@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orchestrator Pattern Example | make-agent docs</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+<h1 class="brand"><a href="../index.html">make-agent docs</a></h1>
+<p class="meta">User documentation</p>
+<p class="meta"><a href="https://github.com/dmtr/make-agent">GitHub repository</a></p>
+<nav class="nav-section">
+<h2>Start</h2>
+<ul>
+<li><a href="../index.html">Home</a></li>
+<li><a href="../quickstart.html">Quick Start</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Workflows</h2>
+<ul>
+<li><a href="../workflows/interactive-shell.html">Interactive Shell</a></li>
+<li><a href="../workflows/single-prompt.html">Single Prompt</a></li>
+<li><a href="../workflows/project-settings.html">Project Settings</a></li>
+<li><a href="../workflows/specialist-agents.html">Specialist Agents</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Examples</h2>
+<ul>
+<li><a href="../examples/minimal-agent.html">Minimal Agent</a></li>
+<li><a href="../examples/orchestrator-pattern.html" aria-current="page">Orchestrator Pattern</a></li>
+<li><a href="../examples/k8s-monitoring-session.html">K8s Monitoring Session</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Reference</h2>
+<ul>
+<li><a href="../reference/cli.html">CLI Flags</a></li>
+<li><a href="../reference/makefile-format.html">Makefile Format</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Help</h2>
+<ul>
+<li><a href="../troubleshooting.html">Troubleshooting</a></li>
+</ul>
+</nav>
+    </aside>
+    <main class="main">
+      <p class="breadcrumbs">Home / Examples / Orchestrator Pattern</p>
+      <h1>Orchestrator Pattern Example</h1>
+      <section class="on-this-page">
+        <h2>On this page</h2>
+        <ul>
+  <li><a href="#what-it-does">What it does</a></li>
+  <li><a href="#run">Run the orchestrator</a></li>
+  <li><a href="#flow">Delegation flow</a></li>
+</ul>
+      </section>
+      <section id="what-it-does">
+  <h2>What it does</h2>
+  <p>The orchestrator discovers, creates, validates, and runs specialist agents for each task.</p>
+</section>
+<section id="run">
+  <h2>Run the orchestrator</h2>
+  <pre><code>make_agent -f examples/orchestra.mk</code></pre>
+</section>
+<section id="flow">
+  <h2>Delegation flow</h2>
+  <ol>
+    <li>Call <code>list_agent</code> to discover specialists.</li>
+    <li>Create a specialist via <code>create_agent</code> if needed.</li>
+    <li>Delegate with <code>run_agent</code>.</li>
+  </ol>
+</section>
+<section id="real-world-guide">
+  <h2>Real-world guide</h2>
+  <p>For a production-style transcript walkthrough (including security guardrails), see <a href="../examples/k8s-monitoring-session.html">K8s Monitoring Session</a>.</p>
+</section>
+      <p class="footer-note">Last synced with README context at commit <code>eb18bec</code>.</p>
+    </main>
+  </div>
+</body>
+</html>

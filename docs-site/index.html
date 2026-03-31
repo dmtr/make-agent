@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Home | make-agent docs</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+<h1 class="brand"><a href="index.html">make-agent docs</a></h1>
+<p class="meta">User documentation</p>
+<p class="meta"><a href="https://github.com/dmtr/make-agent">GitHub repository</a></p>
+<nav class="nav-section">
+<h2>Start</h2>
+<ul>
+<li><a href="index.html" aria-current="page">Home</a></li>
+<li><a href="quickstart.html">Quick Start</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Workflows</h2>
+<ul>
+<li><a href="workflows/interactive-shell.html">Interactive Shell</a></li>
+<li><a href="workflows/single-prompt.html">Single Prompt</a></li>
+<li><a href="workflows/project-settings.html">Project Settings</a></li>
+<li><a href="workflows/specialist-agents.html">Specialist Agents</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Examples</h2>
+<ul>
+<li><a href="examples/minimal-agent.html">Minimal Agent</a></li>
+<li><a href="examples/orchestrator-pattern.html">Orchestrator Pattern</a></li>
+<li><a href="examples/k8s-monitoring-session.html">K8s Monitoring Session</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Reference</h2>
+<ul>
+<li><a href="reference/cli.html">CLI Flags</a></li>
+<li><a href="reference/makefile-format.html">Makefile Format</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Help</h2>
+<ul>
+<li><a href="troubleshooting.html">Troubleshooting</a></li>
+</ul>
+</nav>
+    </aside>
+    <main class="main">
+      <p class="breadcrumbs">Home</p>
+      <h1>Home</h1>
+      <section class="on-this-page">
+        <h2>On this page</h2>
+        <ul>
+  <li><a href="#what-is-make-agent">What is make-agent?</a></li>
+  <li><a href="#before-you-start">Before you start</a></li>
+  <li><a href="#llm-model-support">LLM model support</a></li>
+  <li><a href="#next-steps">Next steps</a></li>
+</ul>
+      </section>
+      <section id="what-is-make-agent">
+  <h2>What is make-agent?</h2>
+  <p><code>make-agent</code> is an AI agent framework where your system prompt and tools are defined in a Makefile. Annotated targets become callable tools.</p>
+</section>
+<section id="before-you-start">
+  <h2>Before you start</h2>
+  <ul>
+    <li>Python 3.11 or newer</li>
+    <li>A working <code>make</code> binary</li>
+    <li>An API key for your chosen model provider (for example <code>ANTHROPIC_API_KEY</code>)</li>
+  </ul>
+</section>
+<section id="llm-model-support">
+  <h2>LLM model support</h2>
+  <p><code>make-agent</code> supports OpenAI, Anthropic, OpenRouter, and Ollama model providers through model strings passed to <code>--model</code> and <code>--agent-model</code>.</p>
+  <p>You can also use a <code>llama.cpp</code>-compatible server by configuring a matching model/provider endpoint in your environment and passing the corresponding model string.</p>
+  <pre><code>uv run make_agent --agent-model ollama/gpt-oss:120b --model ollama/gpt-oss:120b</code></pre>
+  <div class="tip"><strong>Tip:</strong> Use the same provider/model for both flags when you want consistent behavior between the main agent and delegated specialist agents.</div>
+</section>
+<section id="next-steps">
+  <h2>Next steps</h2>
+  <ol>
+    <li>Follow <a href="quickstart.html">Quick Start</a> to run your first agent.</li>
+    <li>Explore <a href="workflows/interactive-shell.html">common workflows</a>.</li>
+    <li>Use <a href="reference/cli.html">CLI reference</a> when you need exact flags.</li>
+  </ol>
+</section>
+      <p class="footer-note">Last synced with README context at commit <code>eb18bec</code>.</p>
+    </main>
+  </div>
+</body>
+</html>

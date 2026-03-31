@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Makefile Format Reference | make-agent docs</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+<h1 class="brand"><a href="../index.html">make-agent docs</a></h1>
+<p class="meta">User documentation</p>
+<p class="meta"><a href="https://github.com/dmtr/make-agent">GitHub repository</a></p>
+<nav class="nav-section">
+<h2>Start</h2>
+<ul>
+<li><a href="../index.html">Home</a></li>
+<li><a href="../quickstart.html">Quick Start</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Workflows</h2>
+<ul>
+<li><a href="../workflows/interactive-shell.html">Interactive Shell</a></li>
+<li><a href="../workflows/single-prompt.html">Single Prompt</a></li>
+<li><a href="../workflows/project-settings.html">Project Settings</a></li>
+<li><a href="../workflows/specialist-agents.html">Specialist Agents</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Examples</h2>
+<ul>
+<li><a href="../examples/minimal-agent.html">Minimal Agent</a></li>
+<li><a href="../examples/orchestrator-pattern.html">Orchestrator Pattern</a></li>
+<li><a href="../examples/k8s-monitoring-session.html">K8s Monitoring Session</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Reference</h2>
+<ul>
+<li><a href="../reference/cli.html">CLI Flags</a></li>
+<li><a href="../reference/makefile-format.html" aria-current="page">Makefile Format</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Help</h2>
+<ul>
+<li><a href="../troubleshooting.html">Troubleshooting</a></li>
+</ul>
+</nav>
+    </aside>
+    <main class="main">
+      <p class="breadcrumbs">Home / Reference / Makefile Format</p>
+      <h1>Makefile Format Reference</h1>
+      <section class="on-this-page">
+        <h2>On this page</h2>
+        <ul>
+  <li><a href="#system-prompt">SYSTEM_PROMPT block</a></li>
+  <li><a href="#tool-blocks">Tool blocks</a></li>
+  <li><a href="#param-file">PARAM_FILE guidance</a></li>
+</ul>
+      </section>
+      <section id="system-prompt">
+  <h2>SYSTEM_PROMPT block</h2>
+  <pre><code>define SYSTEM_PROMPT
+You are a helpful assistant.
+endef</code></pre>
+</section>
+<section id="tool-blocks">
+  <h2>Tool blocks</h2>
+  <pre><code># &lt;tool&gt;
+# Description of the tool.
+# @param NAME string Description
+# &lt;/tool&gt;
+my-target:
+	@echo $(NAME)</code></pre>
+</section>
+<section id="param-file">
+  <h2>PARAM_FILE guidance</h2>
+  <p>Use <code>$(PARAM_FILE)</code> for multiline content or values that may contain shell metacharacters.</p>
+</section>
+      <p class="footer-note">Last synced with README context at commit <code>eb18bec</code>.</p>
+    </main>
+  </div>
+</body>
+</html>

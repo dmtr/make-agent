@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project Settings | make-agent docs</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+<h1 class="brand"><a href="../index.html">make-agent docs</a></h1>
+<p class="meta">User documentation</p>
+<p class="meta"><a href="https://github.com/dmtr/make-agent">GitHub repository</a></p>
+<nav class="nav-section">
+<h2>Start</h2>
+<ul>
+<li><a href="../index.html">Home</a></li>
+<li><a href="../quickstart.html">Quick Start</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Workflows</h2>
+<ul>
+<li><a href="../workflows/interactive-shell.html">Interactive Shell</a></li>
+<li><a href="../workflows/single-prompt.html">Single Prompt</a></li>
+<li><a href="../workflows/project-settings.html" aria-current="page">Project Settings</a></li>
+<li><a href="../workflows/specialist-agents.html">Specialist Agents</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Examples</h2>
+<ul>
+<li><a href="../examples/minimal-agent.html">Minimal Agent</a></li>
+<li><a href="../examples/orchestrator-pattern.html">Orchestrator Pattern</a></li>
+<li><a href="../examples/k8s-monitoring-session.html">K8s Monitoring Session</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Reference</h2>
+<ul>
+<li><a href="../reference/cli.html">CLI Flags</a></li>
+<li><a href="../reference/makefile-format.html">Makefile Format</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Help</h2>
+<ul>
+<li><a href="../troubleshooting.html">Troubleshooting</a></li>
+</ul>
+</nav>
+    </aside>
+    <main class="main">
+      <p class="breadcrumbs">Home / Workflows / Project Settings</p>
+      <h1>Project Settings</h1>
+      <section class="on-this-page">
+        <h2>On this page</h2>
+        <ul>
+  <li><a href="#where-settings-live">Where settings live</a></li>
+  <li><a href="#sample-settings">Sample settings.yaml</a></li>
+  <li><a href="#precedence">Flag precedence</a></li>
+</ul>
+      </section>
+      <section id="where-settings-live">
+  <h2>Where settings live</h2>
+  <p>Settings are stored in <code>~/.make-agent/&lt;project-slug&gt;/settings.yaml</code>.</p>
+</section>
+<section id="sample-settings">
+  <h2>Sample settings.yaml</h2>
+  <pre><code>model: anthropic/claude-haiku-4-5-20251001
+makefile: ./my-agent.mk
+memory: true
+agent_model: anthropic/claude-opus-4-5</code></pre>
+</section>
+<section id="precedence">
+  <h2>Flag precedence</h2>
+  <p>CLI flags override values from <code>settings.yaml</code>.</p>
+</section>
+      <p class="footer-note">Last synced with README context at commit <code>eb18bec</code>.</p>
+    </main>
+  </div>
+</body>
+</html>

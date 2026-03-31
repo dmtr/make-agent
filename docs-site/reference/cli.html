@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI Reference | make-agent docs</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+<h1 class="brand"><a href="../index.html">make-agent docs</a></h1>
+<p class="meta">User documentation</p>
+<p class="meta"><a href="https://github.com/dmtr/make-agent">GitHub repository</a></p>
+<nav class="nav-section">
+<h2>Start</h2>
+<ul>
+<li><a href="../index.html">Home</a></li>
+<li><a href="../quickstart.html">Quick Start</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Workflows</h2>
+<ul>
+<li><a href="../workflows/interactive-shell.html">Interactive Shell</a></li>
+<li><a href="../workflows/single-prompt.html">Single Prompt</a></li>
+<li><a href="../workflows/project-settings.html">Project Settings</a></li>
+<li><a href="../workflows/specialist-agents.html">Specialist Agents</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Examples</h2>
+<ul>
+<li><a href="../examples/minimal-agent.html">Minimal Agent</a></li>
+<li><a href="../examples/orchestrator-pattern.html">Orchestrator Pattern</a></li>
+<li><a href="../examples/k8s-monitoring-session.html">K8s Monitoring Session</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Reference</h2>
+<ul>
+<li><a href="../reference/cli.html" aria-current="page">CLI Flags</a></li>
+<li><a href="../reference/makefile-format.html">Makefile Format</a></li>
+</ul>
+</nav>
+<nav class="nav-section">
+<h2>Help</h2>
+<ul>
+<li><a href="../troubleshooting.html">Troubleshooting</a></li>
+</ul>
+</nav>
+    </aside>
+    <main class="main">
+      <p class="breadcrumbs">Home / Reference / CLI Reference</p>
+      <h1>CLI Reference</h1>
+      <section class="on-this-page">
+        <h2>On this page</h2>
+        <ul>
+  <li><a href="#base-command">Base command</a></li>
+  <li><a href="#common-flags">Common flags</a></li>
+  <li><a href="#model-providers">Model providers</a></li>
+  <li><a href="#notes">Notes</a></li>
+</ul>
+      </section>
+      <section id="base-command">
+  <h2>Base command</h2>
+  <pre><code>ANTHROPIC_API_KEY=&lt;key&gt; uv run make_agent [run] [flags]</code></pre>
+</section>
+<section id="common-flags">
+  <h2>Common flags</h2>
+  <ul>
+    <li><code>-f FILE</code> - Makefile to load</li>
+    <li><code>--model MODEL</code> - any-llm model string</li>
+    <li><code>--prompt PROMPT</code> - send one prompt and exit</li>
+    <li><code>--prompt-file FILE</code> - read prompt from file</li>
+    <li><code>--with-memory</code> - enable persistent memory</li>
+    <li><code>--disable-builtin-tools TOOLS</code> - disable built-in tools (comma-separated names or <code>all</code>)</li>
+    <li><code>--max-tool-output CHARS</code> - truncate tool output</li>
+  </ul>
+</section>
+<section id="model-providers">
+  <h2>Model providers</h2>
+  <p>Supported providers include OpenAI, Anthropic, OpenRouter, and Ollama.</p>
+  <p>You can also run against a <code>llama.cpp</code>-compatible server if exposed through a compatible provider endpoint/model string.</p>
+  <pre><code>uv run make_agent --agent-model ollama/gpt-oss:120b --model ollama/gpt-oss:120b</code></pre>
+</section>
+<section id="notes">
+  <h2>Notes</h2>
+  <p>CLI flags always override values in <code>settings.yaml</code>.</p>
+  <div class="tip"><strong>Tip:</strong> For locked-down specialist runs, use <code>--disable-builtin-tools all</code> or <code>--disable-builtin-tools run_agent,create_agent</code>.</div>
+</section>
+      <p class="footer-note">Last synced with README context at commit <code>eb18bec</code>.</p>
+    </main>
+  </div>
+</body>
+</html>

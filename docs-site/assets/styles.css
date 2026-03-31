@@ -1,0 +1,187 @@
+:root {
+  --bg: #ffffff;
+  --bg-muted: #f6f8fa;
+  --text: #1f2328;
+  --text-muted: #59636e;
+  --border: #d0d7de;
+  --link: #0969da;
+  --code-bg: #f6f8fa;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+a:hover,
+a:focus {
+  text-decoration: underline;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--bg-muted);
+  padding: 1.25rem 1rem;
+}
+
+.brand {
+  margin: 0 0 1rem;
+  font-size: 1.2rem;
+}
+
+.brand a {
+  color: var(--text);
+}
+
+.sidebar .meta {
+  margin: 0 0 1rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.nav-section {
+  margin-bottom: 1.2rem;
+}
+
+.nav-section h2 {
+  margin: 0 0 0.45rem;
+  font-size: 0.82rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.nav-section ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-section li {
+  margin: 0.2rem 0;
+}
+
+.main {
+  padding: 1.5rem 2rem;
+  max-width: 980px;
+}
+
+.breadcrumbs {
+  margin: 0 0 1rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.main h1 {
+  margin-top: 0;
+  font-size: 1.9rem;
+}
+
+.note,
+.tip,
+.warning {
+  border-left: 4px solid var(--border);
+  background: var(--bg-muted);
+  padding: 0.75rem 0.9rem;
+  margin: 1rem 0;
+}
+
+.tip {
+  border-left-color: #1a7f37;
+}
+
+.warning {
+  border-left-color: #cf222e;
+}
+
+pre {
+  margin: 0.8rem 0;
+  padding: 0.9rem;
+  overflow-x: auto;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+}
+
+.on-this-page {
+  border: 1px solid var(--border);
+  background: var(--bg-muted);
+  border-radius: 6px;
+  padding: 0.8rem 1rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.on-this-page h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+
+.on-this-page ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.footer-note {
+  margin-top: 2rem;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    display: block;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .main {
+    padding: 1.2rem 1rem 1.6rem;
+  }
+}
+
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8rem 0 1rem;
+}
+
+th,
+td {
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--bg-muted);
+}
