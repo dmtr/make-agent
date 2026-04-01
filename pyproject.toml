@@ -1,6 +1,6 @@
 [project]
 name = "makefile-agent"
-version = "0.3.0"
+version = "0.3.2"
 description = "AI‑assistant‑as‑Makefile: a tool to create and manage AI agents using a simple YAML configuration."
 readme = "README.md"
 license = "MIT"
