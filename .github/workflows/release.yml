@@ -5,6 +5,10 @@ on:
     types: [closed]
     branches: [main, master]
 
+concurrency:
+  group: release-${{ github.event.pull_request.base.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Bump version and publish
@@ -21,6 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -35,18 +40,39 @@ jobs:
       - name: Determine bump type
         id: bump
         run: |
+          set -euo pipefail
           BRANCH="${{ github.event.pull_request.head.ref }}"
           if [[ "$BRANCH" == release/* ]]; then
             echo "type=minor" >> "$GITHUB_OUTPUT"
           elif [[ "$BRANCH" == fix/* ]]; then
             echo "type=patch" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unsupported branch name '$BRANCH'. Expected 'release/*' or 'fix/*'." >&2
+            exit 1
           fi
 
       - name: Bump version in pyproject.toml
         id: version
         run: |
+          set -euo pipefail
           BUMP_TYPE="${{ steps.bump.outputs.type }}"
-          CURRENT=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          if [[ -z "${BUMP_TYPE}" ]]; then
+            echo "BUMP_TYPE is empty; previous step did not set bump type." >&2
+            exit 1
+          fi
+          if [[ "$BUMP_TYPE" != "minor" && "$BUMP_TYPE" != "patch" ]]; then
+            echo "Unsupported bump type '$BUMP_TYPE'. Expected 'minor' or 'patch'." >&2
+            exit 1
+          fi
+          CURRENT_LINE=$(grep -E '^version[[:space:]]*=[[:space:]]*"' pyproject.toml) || {
+            echo "Could not find a 'version = \"MAJOR.MINOR.PATCH\"' line in pyproject.toml." >&2
+            exit 1
+          }
+          CURRENT=$(printf '%s\n' "$CURRENT_LINE" | sed -E 's/version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
+          if [[ ! "$CURRENT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Current version '$CURRENT' is not in 'MAJOR.MINOR.PATCH' format." >&2
+            exit 1
+          fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
           if [[ "$BUMP_TYPE" == "minor" ]]; then
             MINOR=$((MINOR + 1))
@@ -55,7 +81,7 @@ jobs:
             PATCH=$((PATCH + 1))
           fi
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW_VERSION}\"/" pyproject.toml
+          sed -i -E "s/^version[[:space:]]*=[[:space:]]*\"${CURRENT}\"/version = \"${NEW_VERSION}\"/" pyproject.toml
           echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Bumped $CURRENT → $NEW_VERSION ($BUMP_TYPE)"
 
@@ -66,7 +92,7 @@ jobs:
           git add pyproject.toml
           git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
           git tag "v${{ steps.version.outputs.new_version }}"
-          git push origin HEAD --tags
+          git push origin HEAD:${{ github.event.pull_request.base.ref }} --tags
 
       - name: Install dependencies
         run: uv sync --dev
