@@ -12,6 +12,7 @@ import any_llm
 
 from make_agent.app_dirs import default_agents_dir
 from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools, get_memory_schemas
+from make_agent.file_tools import FILE_TOOL_SCHEMAS
 from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, format_tool_result, run_tool
@@ -110,7 +111,8 @@ class Agent:
         memory_schemas = get_memory_schemas() if config.memory is not None else []
         active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
         active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in config.disabled_builtin_tools]
-        self._tools = active_builtin_schemas + active_memory_schemas + makefile_tools
+        active_file_schemas = [s for s in FILE_TOOL_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
+        self._tools = active_builtin_schemas + active_memory_schemas + active_file_schemas + makefile_tools
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
         if mf.system_prompt:

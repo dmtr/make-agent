@@ -21,6 +21,7 @@ from typing import Any
 import yaml
 
 from make_agent.create_agent import render, _write_output_no_symlink
+from make_agent.file_tools import FILE_TOOL_NAMES
 from make_agent.parser import parse_file, validate
 
 _VALID_AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -28,7 +29,7 @@ _VALID_AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 BUILTIN_TOOL_NAMES: frozenset[str] = frozenset({
     "list_agent", "validate_agent", "create_agent", "run_agent",
     "search_user_memory", "search_agent_memory", "get_recent_messages",
-})
+}) | FILE_TOOL_NAMES
 
 _MEMORY_SEARCH_PARAMS = {
     "type": "object",
@@ -313,6 +314,10 @@ def get_builtin_tools(agents_dir: str, model: str, debug: bool = False, memory: 
         tools["search_user_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_user(query, limit, from_date, to_date)
         tools["search_agent_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_agent(query, limit, from_date, to_date)
         tools["get_recent_messages"] = lambda limit=10, from_date=None, to_date=None, **_kw: memory.recent(limit, from_date, to_date)
+
+    from make_agent.file_tools import get_file_tools
+    tools.update(get_file_tools(disabled))
+
     return {name: fn for name, fn in tools.items() if name not in disabled}
 
 

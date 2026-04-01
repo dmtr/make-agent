@@ -262,7 +262,10 @@ def test_builtin_schemas_required_params():
 
 def test_get_builtin_tools_returns_all_four():
     tools = get_builtin_tools(".agents", "test-model")
-    assert set(tools.keys()) == {"list_agent", "validate_agent", "create_agent", "run_agent"}
+    assert set(tools.keys()) == {
+        "list_agent", "validate_agent", "create_agent", "run_agent",
+        "read_file", "replace_lines", "insert_lines",
+    }
 
 
 def test_get_builtin_tools_list_agent_callable(tmp_path):
