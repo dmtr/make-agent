@@ -7,7 +7,7 @@ Each Makefile target annotated with a `# <tool>` comment block becomes a callabl
 ## Installation
 
 ```
-uv pip install .
+pip install makefile-agent
 ```
 
 Requires Python 3.11+ and a working `make` binary. Uses [any-llm-sdk](https://pypi.org/project/any-llm-sdk/) for model access, so any API keys (e.g. `ANTHROPIC_API_KEY`) must be set in the environment.
