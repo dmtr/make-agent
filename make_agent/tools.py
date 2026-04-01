@@ -1,40 +1,34 @@
 """Tool schema builder and executor for the make-agent.
 
-Converts parsed Makefile rules into OpenAI-compatible tool definitions and
-executes them by injecting parameters safely before invoking ``make``.
+Converts parsed Makefile rules into tool definitions and
+executes them by invoking ``make`` with parameters injected via the subprocess
+environment.
 
 Parameter injection
 -------------------
-For each tool call, values are injected in two complementary ways:
+Every parameter value is set as an environment variable for the subprocess.
+Recipes access it with shell syntax (``$$PARAM``)::
 
-1. **Temp file** (``PARAM_FILE``): Every parameter value is written to a
-   temporary file.  Make receives ``PARAM_FILE=/tmp/...`` so recipes can
-   read arbitrary content::
+    greet:
+        @echo "Hello, $$NAME!"
 
-       write-file:
-           @cat "$(PARAM_FILE)" > "$(DEST)"
+    write-file:
+        @printf '%s' "$$CONTENT" > output.txt
 
-2. **params.mk** (``PARAM``): For single-line values, a temporary
-   ``params.mk`` is also written with ``PARAM = <value>`` (``$`` signs
-   escaped as ``$$``) and loaded with ``-f params.mk``.  Recipes that
-   reference ``$(PARAM)`` directly continue to work for simple values::
-
-       greet:
-           @echo "Hello, $(NAME)!"
-
-The ``_FILE`` suffix form works for **all** values including multiline
-text; the bare form is a convenience for the common single-line case.
+This works for both single-line and multiline values — the OS passes env vars
+to the recipe shell intact regardless of newlines.  Make also auto-imports
+environment variables as Make variables, so ``$(PARAM)`` continues to work
+for simple values where the Makefile does not define its own ``PARAM``.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import os
 import re
 import subprocess
-import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from make_agent.parser import Makefile, Param
 
@@ -44,38 +38,54 @@ logger = logging.getLogger(__name__)
 _VALID_MAKE_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+class ToolExecutionResult(NamedTuple):
+    is_error: bool
+    output: str
+
+
 def _is_valid_make_var_name(name: str) -> bool:
     return bool(_VALID_MAKE_VAR_NAME_RE.fullmatch(name))
 
 
-def _escape_make_value(value: str) -> str:
-    """Escape *value* for use on the right-hand side of a Make ``=`` assignment.
-
-    Only ``$`` needs escaping: ``$`` → ``$$``.  Everything else (quotes,
-    backslashes, spaces) is safe in a Make variable value.
+def get_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> ToolExecutionResult:
     """
-    return value.replace("$", "$$")
-
-
-def format_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> str:
-    """Serialise tool output as a JSON string for the LLM.
-
-    *max_output* limits how many characters of *stdout* and *stderr* are kept
-    (each stream capped independently).  When a stream is longer, the excess is
-    dropped and an ``omitted_chars`` key is added so the LLM knows it received
-    a partial result.  ``0`` means no limit.
+    *max_output* limits how many characters of the final combined output are kept.
+    When the combined output exceeds that limit, the excess is dropped and a
+    truncation notice is included within the limit.  ``0`` means no limit.
     """
-    omitted = 0
-    if max_output > 0 and len(stdout) > max_output:
-        omitted += len(stdout) - max_output
-        stdout = stdout[:max_output]
-    if max_output > 0 and len(stderr) > max_output:
-        omitted += len(stderr) - max_output
-        stderr = stderr[:max_output]
-    result: dict[str, Any] = {"stdout": stdout, "stderr": stderr, "exit_code": exit_code}
-    if omitted:
-        result["omitted_chars"] = omitted
-    return json.dumps(result)
+    result = []
+    is_error = (exit_code != 0 if exit_code is not None else True) or bool(stderr.strip())
+    is_stdout_empty = stdout.strip() == ""
+
+    if is_error:
+        stdout_stripped = stdout.strip()
+        stderr_stripped = stderr.strip()
+        if stdout_stripped:
+            result.append(stdout_stripped)
+        if stderr_stripped:
+            result.append("ERROR: ")
+            result.append(stderr_stripped)
+        else:
+            result.append("ERROR: unknown error")
+    else:
+        result.append(stdout.strip())
+
+    if not is_error and is_stdout_empty:
+        result.append("OK. Execution succeeded with no output.")
+
+    final_result = "\n".join(result)
+
+    if max_output > 0 and len(final_result) > max_output:
+        omitted = len(final_result) - max_output
+        notice = f"(Output was truncated, {omitted} omitted_chars)"
+        notice_len = len(notice)
+        if notice_len >= max_output:
+            final_result = notice[:max_output]
+        else:
+            available = max_output - notice_len
+            final_result = final_result[:available] + notice
+
+    return ToolExecutionResult(is_error=is_error, output=final_result)
 
 
 def _param_schema(p: Param) -> dict[str, str]:
@@ -115,7 +125,7 @@ def run_tool(
     makefile_path: Path,
     timeout: int = 600,
     max_output: int = 0,
-) -> str:
+) -> ToolExecutionResult:
     """Invoke ``make`` with safely injected parameters and return output as JSON.
 
     Returns a JSON string with keys ``stdout``, ``stderr``, and ``exit_code``
@@ -123,71 +133,25 @@ def run_tool(
     *max_output* is non-zero and the stdout exceeds that limit, the output is
     truncated and an ``omitted_chars`` key is added.
 
-    Every argument value is written to a temporary file; Make receives
-    ``PARAM_FILE=/tmp/...`` for each parameter.  For single-line values
-    that contain no newlines, a temporary ``params.mk`` is also written
-    with ``PARAM = <escaped-value>`` so recipes can use ``$(PARAM)``
-    directly without any quoting ceremony.
-
-    All temporary files are always removed after the subprocess exits.
+    All parameter values are injected as environment variables.  Recipes access
+    them with shell syntax (``$$PARAM``).
     """
-    tmp_files: list[Path] = []
+    for k in arguments:
+        if not _is_valid_make_var_name(k):
+            return get_tool_result("", f"{k!r} is not a valid make variable name", None)
+        if k in os.environ:
+            return get_tool_result("", f"argument {k!r} shadows the system environment variable {k!r}", None)
+
+    env = {**os.environ, **{k: str(v) for k, v in arguments.items()}}
+    cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target]
+    logger.debug(f"running tool with command: {' '.join(cmd)}")
     try:
-        for k in arguments:
-            if not _is_valid_make_var_name(k):
-                return format_tool_result("", f"{k!r} is not a valid make variable name", None)
-
-        params_mk_lines: list[str] = []
-        make_vars: list[str] = []
-
-        for k, v in arguments.items():
-            # Normalise JSON primitives (int, float, bool) to str.
-            v_str = str(v)
-            # Always write a temp file for $(PARAM_FILE) access.
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                prefix=f"make-agent-{k}-",
-                suffix=".tmp",
-                delete=False,
-            ) as tf:
-                tf.write(v_str)
-                file_path = Path(tf.name)
-            tmp_files.append(file_path)
-            make_vars.append(f"{k}_FILE={file_path}")
-
-            # Also provide $(PARAM) for single-line values via params.mk.
-            if "\n" not in v_str:
-                params_mk_lines.append(f"{k} = {_escape_make_value(v_str)}")
-
-        cmd: list[str] = ["make", "--no-print-directory"]
-
-        if params_mk_lines:
-            params_content = "\n".join(params_mk_lines) + "\n"
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                prefix="make-agent-params-",
-                suffix=".mk",
-                delete=False,
-            ) as tf:
-                tf.write(params_content)
-                params_mk = Path(tf.name)
-            tmp_files.append(params_mk)
-            cmd += ["-f", str(params_mk)]
-
-        cmd += ["-f", str(makefile_path), target] + make_vars
-
-        logger.debug(f"running tool with command: {' '.join(cmd)}")
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout)
-            logger.debug(f"result of '{' '.join(cmd)}': exit {result.returncode}, stdout: {result.stdout!r}, stderr: {result.stderr!r}")
-        except subprocess.TimeoutExpired:
-            return format_tool_result("", f"tool '{target}' exceeded {timeout}s limit", None)
-        except OSError as e:
-            return format_tool_result("", f"failed to run make: {e}", None)
-        return format_tool_result(result.stdout, result.stderr, result.returncode, max_output)
-    finally:
-        for tmp in tmp_files:
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout)
+        logger.info(f"result of '{' '.join(cmd)}': exit {result.returncode}, stdout: {result.stdout!r}, stderr: {result.stderr!r}")
+    except subprocess.TimeoutExpired:
+        logger.error("tool '%s' exceeded %ds timeout", target, timeout)
+        return get_tool_result("", f"tool '{target}' exceeded {timeout}s limit", None)
+    except OSError as e:
+        logger.error("OS error when running tool %s %s", target, e)
+        return get_tool_result("", f"failed to run make: {e}", None)
+    return get_tool_result(result.stdout, result.stderr, result.returncode, max_output)

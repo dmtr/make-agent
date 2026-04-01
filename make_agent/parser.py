@@ -88,6 +88,7 @@ class Rule:
 @dataclass
 class Makefile:
     system_prompt: str | None = None
+    description: str | None = None
     variables: dict[str, Variable] = field(default_factory=dict)
     rules: list[Rule] = field(default_factory=list)
     default_target: str | None = None  # first non-special target
@@ -154,7 +155,7 @@ def parse(text: str) -> Makefile:
             in_define = True
         elif in_define:
             logical_lines.append(raw)
-            if stripped_raw == "endef":
+            if raw.startswith("endef") and raw.strip() == "endef":
                 in_define = False
         elif raw.endswith("\\"):
             buf += raw[:-1] + " "
@@ -167,11 +168,13 @@ def parse(text: str) -> Makefile:
     for line in logical_lines:
         # ── Inside a define block ────────────────────────────────────────────
         if state == _State.DEFINE:
-            if line.strip() == "endef":
+            if line.startswith("endef") and line.strip() == "endef":
                 value = "\n".join(define_lines)
                 result.variables[define_name] = Variable(name=define_name, value=value, flavor="define")
                 if define_name == "SYSTEM_PROMPT":
                     result.system_prompt = value.strip() or None
+                if define_name == "DESCRIPTION":
+                    result.description = value.strip() or None
                 state = _State.NORMAL
             else:
                 define_lines.append(line)
@@ -319,10 +322,7 @@ _RECIPE_VAR_RE = re.compile(r"\$\((?:value\s+)?([^)]+)\)|\$\{(?:value\s+)?([^}]+
 def validate(makefile: Makefile) -> list[str]:
     """Check that every ``@param NAME`` is referenced in the rule's recipe body.
 
-    Accepts ``$(NAME)``, ``${NAME}``, ``$$NAME``, or ``$(NAME_FILE)`` /
-    ``${NAME_FILE}`` / ``$$NAME_FILE`` as valid references.  The ``_FILE``
-    form is always available at runtime (a temp file is written for every
-    parameter) so either convention is valid in a recipe.
+    Accepts ``$(NAME)``, ``${NAME}``, or ``$$NAME`` as valid references.
 
     Returns a list of human-readable error strings (empty list means valid).
     """
@@ -333,13 +333,12 @@ def validate(makefile: Makefile) -> list[str]:
         recipe_text = "\n".join(rule.recipes)
         used_vars = {m.group(1) or m.group(2) or m.group(3) for m in _RECIPE_VAR_RE.finditer(recipe_text)}
         for param in rule.params:
-            file_var = f"{param.name}_FILE"
-            if param.name not in used_vars and file_var not in used_vars:
+            if param.name not in used_vars:
                 errors.append(
                     f"Tool '{rule.target}': @param {param.name} declared but never "
                     f"referenced in recipe.\n"
-                    f"  Expected $({param.name}), ${{{param.name}}}, $${param.name}, "
-                    f"or $({file_var}) in the recipe body."
+                    f"  Expected $({param.name}), ${{{param.name}}}, or $${param.name} "
+                    f"in the recipe body."
                 )
     return errors
 

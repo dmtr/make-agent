@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 import make_agent.settings as settings_module
@@ -91,6 +92,7 @@ def _make_args(**kwargs) -> argparse.Namespace:
         tool_timeout=600,
         max_tool_output=20000,
         agents_dir=None,
+        reasoning_effort=None,
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
@@ -200,6 +202,30 @@ class TestResolveRunArgs:
             args = _make_args(file=None, model=None)
             main_module._resolve_run_args(args)
         mock_wizard.assert_not_called()
+
+    def test_reasoning_effort_default_auto_when_not_in_settings(self):
+        with patch("make_agent.main.load_settings", return_value={"model": "m"}):
+            args = _make_args(file="f.mk", model="m")
+            result = main_module._resolve_run_args(args)
+        assert result.reasoning_effort == "auto"
+
+    def test_reasoning_effort_from_settings(self):
+        with patch("make_agent.main.load_settings", return_value={"model": "m", "reasoning_effort": "low"}):
+            args = _make_args(file="f.mk", model="m")
+            result = main_module._resolve_run_args(args)
+        assert result.reasoning_effort == "low"
+
+    def test_cli_reasoning_effort_overrides_settings(self):
+        with patch("make_agent.main.load_settings", return_value={"model": "m", "reasoning_effort": "low"}):
+            args = _make_args(file="f.mk", model="m", reasoning_effort="high")
+            result = main_module._resolve_run_args(args)
+        assert result.reasoning_effort == "high"
+
+    def test_invalid_reasoning_effort_in_settings_raises(self):
+        with patch("make_agent.main.load_settings", return_value={"model": "m", "reasoning_effort": "extreme"}):
+            args = _make_args(file="f.mk", model="m")
+            with pytest.raises(ValueError, match="Invalid reasoning_effort"):
+                main_module._resolve_run_args(args)
 
 
 # ── _find_makefile ────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 An AI agent whose system prompt and tools are defined in a Makefile.
 
-Each Makefile target annotated with a `# <tool>` comment block becomes a callable tool. The agent invokes targets via `make`, passing parameters as `KEY=value` arguments. A `define SYSTEM_PROMPT` block sets the agent's system prompt.
+Each Makefile target annotated with a `# <tool>` comment block becomes a callable tool. The agent invokes targets via `make`, injecting parameters as environment variables. A `define SYSTEM_PROMPT` block sets the agent's system prompt.
 
 ## Installation
 
@@ -26,27 +26,36 @@ ANTHROPIC_API_KEY=<key> uv run make_agent [run] [-f FILE] [--model MODEL] [--pro
 - `--agent-model MODEL` — model used when running specialist agents via `run_agent` (default: same as `--model`)
 - `--with-memory` — enable persistent conversation memory (see [Memory](#memory))
 - `--disable-builtin-tools TOOLS` — comma-separated built-in tool names to disable, or `all`
-- `--max-tool-output CHARS` — truncate tool stdout to this many characters; `0` = unlimited (default: 20000)
+- `--max-tool-output CHARS` — truncate tool stdout to this many characters; `0` = unlimited (default: 16000)
 - `--max-tokens N` — max tokens in the model response (default: 4096)
+- `--reasoning-effort EFFORT` — reasoning effort level: `none|minimal|low|medium|high|xhigh|auto` (default: `auto`)
 - `--max-retries N` — max retry attempts on rate limit errors (default: 5)
 - `--tool-timeout SECONDS` — timeout for each tool subprocess (default: 600)
-- `--debug` — write all messages to `~/.make-agent/<project>/logs/make-agent.log`
+- `--loglevel LEVEL` — set logging level to DEBUG, INFO, WARNING, ERROR, or CRITICAL (default: INFO)
 
-Without `--prompt`, the agent starts an interactive REPL. Type `exit`, `quit`, or press Ctrl-D to leave.
+Without `--prompt`, the agent starts an interactive REPL. Use `/exit` or `/quit` (or press Ctrl-D) to leave.
+
+Interactive shell commands:
+
+- `/help` — show available shell commands
+- `/export` — export the current conversation to `conversation-<timestamp>.html`
+- `/stats` — show token usage totals for this session (when memory is enabled)
 
 ### First run — setup wizard
 
-If no `settings.yaml` exists for the project and no Makefile is found automatically, the agent prompts you to create one:
+If no `settings.yaml` exists for the project and no Makefile is found automatically, the agent starts a setup wizard:
 
 ```
 No settings.yaml found for this project.
 Let's create one. Press Enter to accept the default shown in brackets.
 
-  Makefile path [Makefile]: ./my-agent.mk
-  Model [anthropic/claude-haiku-4-5-20251001]:
+  Created ~/.make-agent/Users_alice_proj_myapp/agents/orchestra.mk
+  Model (required): anthropic/claude-haiku-4-5-20251001
 
 Saved settings to ~/.make-agent/Users_alice_proj_myapp/settings.yaml
 ```
+
+If specialist agents already exist in the agents directory, the wizard asks you to choose one instead of creating `orchestra.mk`.
 
 ## Project settings
 
@@ -59,7 +68,7 @@ All per-project data is stored under `~/.make-agent/`:
     ├── memory.db            # conversation history (when memory is enabled)
     ├── agents/              # specialist agent .mk files
     └── logs/
-        └── make-agent.log   # debug log (written when --debug is set)
+        └── make-agent.log   # log output at the selected --loglevel
 ```
 
 The **project slug** is the absolute path of the working directory with the leading `/` stripped and remaining `/` replaced by `_`.
@@ -70,10 +79,11 @@ The **project slug** is the absolute path of the working directory with the lead
 model: anthropic/claude-haiku-4-5-20251001
 makefile: ./my-agent.mk
 memory: true          # optional — enable persistent memory
-agent_model: anthropic/claude-opus-4-5  # optional — model for run_agent calls
+reasoning_effort: low # optional — none|minimal|low|medium|high|xhigh|auto
 ```
 
 All fields are optional. CLI flags always take precedence over `settings.yaml` values.
+Use `--agent-model` if you want specialists called via `run_agent` to use a different model than the main agent.
 
 ## Makefile format
 
@@ -89,27 +99,30 @@ endef
 # @param DIR string The directory path to list
 # </tool>
 list-files:
-	@ls -la $(DIR)
+	@ls -la "$$DIR"
 
 # <tool>
 # Greet someone.
 # @param NAME string The name to greet
 # </tool>
 greet:
-	@echo "Hello, $(NAME)!"
+	@echo "Hello, $$NAME!"
 ```
 
 ### Special comment blocks
 
 - `define SYSTEM_PROMPT ... endef` sets the system prompt passed to the model. The content is raw text — no `#` prefix needed. `endef` must be on its own line with no indentation.
+- `define DESCRIPTION ... endef` is optional metadata used by `list_agent` to describe a specialist.
 - `# <tool> ... # </tool>` marks the following target as an LLM-callable tool. Lines starting with `# @param NAME type description` declare parameters (JSON Schema primitives: `string`, `number`, `integer`, `boolean`). All other lines form the tool description.
 
-### Parameters and `$(PARAM_FILE)`
+### Parameters and `$$PARAM`
 
-Every declared parameter automatically gets two Make variables injected at call time:
+Every declared parameter is injected as an environment variable.  Recipes
+access it with shell syntax — `$$PARAM` in a Make recipe becomes `$PARAM` for
+the shell:
 
-- `$(PARAM)` — the value as a Make variable with shell-escaped value. Convenient for single-line values.
-- `$(PARAM_FILE)` — path to a temp file containing the full, unescaped value. Use this for multiline content or when the value might contain shell metacharacters.
+- `$$PARAM` — canonical form, works for both single-line and multiline values.
+- `$(PARAM)` — also works for simple single-line values (Make auto-imports env vars).
 
 ```makefile
 # <tool>
@@ -118,7 +131,7 @@ Every declared parameter automatically gets two Make variables injected at call 
 # @param CONTENT string Content to write (may be multiline)
 # </tool>
 write-file:
-	@cat "$(CONTENT_FILE)" > "$(FILE_PATH)"
+	@printf '%s' "$$CONTENT" > "$$FILE_PATH"
 ```
 
 Targets without a `# <tool>` block are invisible to the model.
@@ -131,10 +144,17 @@ Every agent automatically receives four built-in tools alongside its Makefile-de
 |---|---|
 | `list_agent` | Scan the agents directory and return each specialist's name and description |
 | `validate_agent` | Parse and validate a named specialist's Makefile, reporting any errors |
-| `create_agent` | Generate a new `.mk` file from a YAML spec and save it to the agents directory |
+| `create_agent` | Create or overwrite a specialist `.mk` file from a raw Makefile string |
 | `run_agent` | Delegate a task to a specialist agent and return its output |
 
 The agents directory defaults to `~/.make-agent/<project>/agents/` and can be changed with `--agents-dir`.
+
+You can disable built-ins per Makefile with `DISABLED_BUILTINS`:
+
+```makefile
+DISABLED_BUILTINS = run_agent,validate_agent
+# or: DISABLED_BUILTINS = all
+```
 
 ## Memory
 
@@ -169,7 +189,7 @@ When memory is enabled, three additional built-in tools are injected:
 
 | Tool | What it does |
 |---|---|
-| `get_recent_messages(limit)` | Return the N most recent messages in chronological order |
+| `get_recent_messages(limit, from_date, to_date)` | Return recent messages in chronological order (optionally date-filtered) |
 | `search_user_memory(query, limit, from_date, to_date)` | FTS5 keyword search over past user messages |
 | `search_agent_memory(query, limit, from_date, to_date)` | FTS5 keyword search over past agent replies |
 
@@ -199,25 +219,28 @@ For every task the orchestrator:
 2. Delegates to an existing specialist with `run_agent`, or designs and saves a new one with `create_agent` first.
 3. Improves any specialist by calling `create_agent` with the same name — it overwrites the previous version.
 
-### YAML spec for `create_agent`
+### Raw Makefile payload for `create_agent`
 
-```yaml
-system_prompt: "You are a specialist that searches source code for patterns."
-tools:
-  - name: search-files
-    description: Search files for a text pattern and return matching lines.
-    params:
-      - name: PATTERN
-        type: string
-        description: The text pattern to search for
-      - name: DIR
-        type: string
-        description: The directory to search in
-    recipe:
-      - '@grep -rn "$(PATTERN)" "$(DIR)" || echo "No matches found"'
+```makefile
+define SYSTEM_PROMPT
+You are a specialist that searches source code for patterns.
+endef
+
+# Optional but recommended: shown by list_agent
+define DESCRIPTION
+Searches files for a text pattern and returns matches.
+endef
+
+.PHONY: search-files
+
+# <tool>
+# Search files for a text pattern and return matching lines.
+# @param PATTERN string The text pattern to search for
+# @param DIR string The directory to search in
+# </tool>
+search-files:
+	@grep -rn "$$PATTERN" "$$DIR" || echo "No matches found"
 ```
-
-`make-agent-create` converts this spec into a standard `make-agent` Makefile.
 
 ## Example
 
@@ -232,6 +255,11 @@ make_agent -f examples/orchestra.mk
 | `current-dir` | `pwd` |
 | `os-info` | `uname -a` |
 | `current-date` | `date` |
+
+Additional specialist examples are available in:
+
+- `examples/file-explorer.mk`
+- `examples/file-editor.mk`
 
 ## Running tests
 

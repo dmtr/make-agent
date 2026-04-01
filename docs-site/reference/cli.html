@@ -71,11 +71,18 @@
   <ul>
     <li><code>-f FILE</code> - Makefile to load</li>
     <li><code>--model MODEL</code> - any-llm model string</li>
+    <li><code>--agent-model MODEL</code> - model used by specialists called via <code>run_agent</code></li>
     <li><code>--prompt PROMPT</code> - send one prompt and exit</li>
     <li><code>--prompt-file FILE</code> - read prompt from file</li>
+    <li><code>--agents-dir DIR</code> - directory for specialist <code>.mk</code> files</li>
     <li><code>--with-memory</code> - enable persistent memory</li>
     <li><code>--disable-builtin-tools TOOLS</code> - disable built-in tools (comma-separated names or <code>all</code>)</li>
-    <li><code>--max-tool-output CHARS</code> - truncate tool output</li>
+    <li><code>--max-tool-output CHARS</code> - truncate tool output (<code>0</code> = unlimited, default: <code>16000</code>)</li>
+    <li><code>--max-tokens N</code> - max tokens in model responses</li>
+    <li><code>--reasoning-effort EFFORT</code> - one of <code>none|minimal|low|medium|high|xhigh|auto</code></li>
+    <li><code>--max-retries N</code> - retry attempts on rate limits</li>
+    <li><code>--tool-timeout SECONDS</code> - timeout per tool subprocess</li>
+    <li><code>--loglevel LEVEL</code> - <code>DEBUG|INFO|WARNING|ERROR|CRITICAL</code></li>
   </ul>
 </section>
 <section id="model-providers">
