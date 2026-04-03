@@ -181,8 +181,10 @@ def run_tool(
             result = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout)
             logger.debug(f"result of '{' '.join(cmd)}': exit {result.returncode}, stdout: {result.stdout!r}, stderr: {result.stderr!r}")
         except subprocess.TimeoutExpired:
+            logger.error("tool '%s' exceeded %ds timeout", target, timeout)
             return format_tool_result("", f"tool '{target}' exceeded {timeout}s limit", None)
         except OSError as e:
+            logger.error("OS error when running tool %s %s", target, e)
             return format_tool_result("", f"failed to run make: {e}", None)
         return format_tool_result(result.stdout, result.stderr, result.returncode, max_output)
     finally:

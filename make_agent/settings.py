@@ -41,7 +41,7 @@ def load_settings(cwd: str | None = None) -> dict[str, Any] | None:
             f"Invalid settings file {path}: expected a YAML mapping, "
             f"got {type(data).__name__}. Please check your settings.yaml."
         )
-    return {k: v for k, v in data.items() if k in ("model", "makefile", "memory", "agent_model")}
+    return {k: v for k, v in data.items() if k in ("model", "makefile", "memory")}
 
 
 def save_settings(data: dict[str, Any], cwd: str | None = None) -> None:

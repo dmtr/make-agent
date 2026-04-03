@@ -11,8 +11,7 @@ from typing import Any, NamedTuple
 import any_llm
 
 from make_agent.app_dirs import default_agents_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools, get_memory_schemas
-from make_agent.file_tools import FILE_TOOL_SCHEMAS
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, FILE_TOOL_SCHEMAS, _SwapAgent, get_builtin_tools, get_memory_schemas
 from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, format_tool_result, run_tool
@@ -37,7 +36,7 @@ class AgentConfig(NamedTuple):
     debug: bool = False
     memory: Memory | None = None
     disabled_builtin_tools: frozenset[str] = frozenset()
-    agent_model: str | None = None  # model used by run_agent; falls back to model
+
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -106,13 +105,16 @@ class Agent:
         self._max_tool_output = config.max_tool_output
         self._memory = config.memory
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
-        self._builtins = get_builtin_tools(agents_dir, config.agent_model or config.model, config.debug, config.memory, config.disabled_builtin_tools, config.tool_timeout)
+        self._builtins = get_builtin_tools(
+            agents_dir, config.memory, config.disabled_builtin_tools, config.tool_timeout
+        )
         makefile_tools = build_tools(mf)
         memory_schemas = get_memory_schemas() if config.memory is not None else []
         active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
         active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in config.disabled_builtin_tools]
         active_file_schemas = [s for s in FILE_TOOL_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
-        self._tools = active_builtin_schemas + active_memory_schemas + active_file_schemas + makefile_tools
+        self._static_schemas = active_builtin_schemas + active_memory_schemas + active_file_schemas
+        self._tools = self._static_schemas + makefile_tools
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
         if mf.system_prompt:
@@ -122,6 +124,19 @@ class Agent:
     @property
     def tool_names(self) -> list[str]:
         return [t["function"]["name"] for t in self._tools]
+
+    def _swap_agent(self, mk_path: Path) -> None:
+        """Reinitialise this agent in-place with the Makefile at *mk_path*."""
+        mf = parse_file(mk_path)
+        validate_or_raise(mf)
+        self._makefile_path = mk_path
+        makefile_tools = build_tools(mf)
+        self._tools = self._static_schemas + makefile_tools
+        self._tool_kwargs = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
+        self._messages = []
+        if mf.system_prompt:
+            self._messages.append({"role": "system", "content": mf.system_prompt})
+            logger.debug("[system]\n%s", mf.system_prompt)
 
     def __call__(self, user_input: str) -> str:
         """Send *user_input* to the LLM and return the assistant's reply.
@@ -161,6 +176,9 @@ class Agent:
                     try:
                         if target in self._builtins:
                             raw = self._builtins[target](**arguments)
+                            if isinstance(raw, _SwapAgent):
+                                self._swap_agent(raw.mk_path)
+                                return self(raw.prompt)
                             output = format_tool_result(str(raw), "", 0, self._max_tool_output)
                         else:
                             output = run_tool(
@@ -171,8 +189,10 @@ class Agent:
                                 self._max_tool_output,
                             )
                     except TypeError as e:
+                        logger.error("argument type error when running tool %s: %s", target, e)
                         output = format_tool_result("", f"argument type error: {e}", None)
                     except Exception as e:
+                        logger.error("unexpected error when running tool %s: %s", target, e)
                         output = format_tool_result("", f"unexpected error: {e}", None)
                     logger.debug("[tool_result] %s -> %s", target, output)
 

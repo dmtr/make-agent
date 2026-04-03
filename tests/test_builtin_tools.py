@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import textwrap
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from make_agent.builtin_tools import (
     BUILTIN_SCHEMAS,
+    _SwapAgent,
     _agent_summary,
     _valid_agent_name,
     get_builtin_tools,
     list_agent,
-    run_agent,
+    load_agent,
     validate_agent,
 )
 
@@ -173,66 +173,24 @@ def test_validate_agent_reports_errors(tmp_path):
     assert "UNUSED" in result
 
 
-# ── run_agent ─────────────────────────────────────────────────────────────────
+# ── load_agent ────────────────────────────────────────────────────────────────
 
-def test_run_agent_missing_mk_file(tmp_path):
-    result = run_agent("ghost", "do something", str(tmp_path), "test-model")
+def test_load_agent_missing_mk_file(tmp_path):
+    result = load_agent("ghost", "do something", str(tmp_path))
     assert "not found" in result
 
 
-def test_run_agent_invalid_name(tmp_path):
-    result = run_agent("../evil", "do something", str(tmp_path), "test-model")
+def test_load_agent_invalid_name(tmp_path):
+    result = load_agent("../evil", "do something", str(tmp_path))
     assert result.startswith("Error")
 
 
-def test_run_agent_success(tmp_path):
+def test_load_agent_returns_swap_sentinel(tmp_path):
     (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nWorker.\nendef\n")
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stdout = "task done\n"
-    mock_result.stderr = ""
-    with patch("make_agent.builtin_tools.subprocess.run", return_value=mock_result) as mock_run:
-        result = run_agent("worker", "do the task", str(tmp_path), "anthropic/test")
-    assert result == "task done\n"
-    cmd = mock_run.call_args[0][0]
-    assert "-f" in cmd
-    assert str(tmp_path / "worker.mk") in cmd
-    assert "--prompt" in cmd
-    assert "do the task" in cmd
-    assert "--model" in cmd
-    assert "anthropic/test" in cmd
-    assert "--agents-dir" in cmd
-    assert "--debug" not in cmd
-
-
-def test_run_agent_passes_debug_flag(tmp_path):
-    (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nWorker.\nendef\n")
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stdout = "done"
-    mock_result.stderr = ""
-    with patch("make_agent.builtin_tools.subprocess.run", return_value=mock_result) as mock_run:
-        run_agent("worker", "task", str(tmp_path), "model", debug=True)
-    assert "--debug" in mock_run.call_args[0][0]
-
-
-def test_run_agent_nonzero_exit(tmp_path):
-    (tmp_path / "bad.mk").write_text("define SYSTEM_PROMPT\nBad.\nendef\n")
-    mock_result = MagicMock()
-    mock_result.returncode = 1
-    mock_result.stdout = ""
-    mock_result.stderr = "something went wrong"
-    with patch("make_agent.builtin_tools.subprocess.run", return_value=mock_result):
-        result = run_agent("bad", "fail", str(tmp_path), "model")
-    assert result.startswith("Error (exit 1)")
-    assert "something went wrong" in result
-
-
-def test_run_agent_os_error(tmp_path):
-    (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nWorker.\nendef\n")
-    with patch("make_agent.builtin_tools.subprocess.run", side_effect=OSError("not found")):
-        result = run_agent("worker", "task", str(tmp_path), "model")
-    assert result.startswith("Error")
+    result = load_agent("worker", "do the task", str(tmp_path))
+    assert isinstance(result, _SwapAgent)
+    assert result.mk_path == tmp_path / "worker.mk"
+    assert result.prompt == "do the task"
 
 
 # ── BUILTIN_SCHEMAS ───────────────────────────────────────────────────────────
@@ -243,7 +201,7 @@ def test_builtin_schemas_has_four_entries():
 
 def test_builtin_schemas_names():
     names = {s["function"]["name"] for s in BUILTIN_SCHEMAS}
-    assert names == {"list_agent", "validate_agent", "create_agent", "run_agent"}
+    assert names == {"list_agent", "validate_agent", "create_agent", "load_agent"}
 
 
 def test_builtin_schemas_are_function_type():
@@ -255,40 +213,35 @@ def test_builtin_schemas_required_params():
     by_name = {s["function"]["name"]: s["function"] for s in BUILTIN_SCHEMAS}
     assert by_name["list_agent"]["parameters"]["required"] == []
     assert by_name["validate_agent"]["parameters"]["required"] == ["name"]
-    assert set(by_name["run_agent"]["parameters"]["required"]) == {"name", "prompt"}
+    assert set(by_name["load_agent"]["parameters"]["required"]) == {"name", "prompt"}
 
 
 # ── get_builtin_tools ─────────────────────────────────────────────────────────
 
 def test_get_builtin_tools_returns_all_four():
-    tools = get_builtin_tools(".agents", "test-model")
+    tools = get_builtin_tools(".agents")
     assert set(tools.keys()) == {
-        "list_agent", "validate_agent", "create_agent", "run_agent",
+        "list_agent", "validate_agent", "create_agent", "load_agent",
         "read_file", "replace_lines", "insert_lines",
     }
 
 
 def test_get_builtin_tools_list_agent_callable(tmp_path):
-    tools = get_builtin_tools(str(tmp_path), "model")
+    tools = get_builtin_tools(str(tmp_path))
     result = tools["list_agent"]()
     assert "No agents found" in result
 
 
 def test_get_builtin_tools_validate_agent_callable(tmp_path):
     (tmp_path / "ok.mk").write_text(_AGENT_MK)
-    tools = get_builtin_tools(str(tmp_path), "model")
+    tools = get_builtin_tools(str(tmp_path))
     result = tools["validate_agent"](name="ok")
     assert result.startswith("OK")
 
 
-def test_get_builtin_tools_run_agent_passes_model(tmp_path):
+def test_get_builtin_tools_load_agent_returns_sentinel(tmp_path):
     (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nW.\nendef\n")
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stdout = "done"
-    mock_result.stderr = ""
-    with patch("make_agent.builtin_tools.subprocess.run", return_value=mock_result) as mock_run:
-        tools = get_builtin_tools(str(tmp_path), "my-model")
-        tools["run_agent"](name="worker", prompt="go")
-    cmd = mock_run.call_args[0][0]
-    assert "my-model" in cmd
+    tools = get_builtin_tools(str(tmp_path))
+    result = tools["load_agent"](name="worker", prompt="go")
+    assert isinstance(result, _SwapAgent)
+    assert result.prompt == "go"

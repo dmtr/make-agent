@@ -44,7 +44,6 @@ def run(
     makefile_path: Path,
     model: str = _DEFAULT_MODEL,
     prompt: Optional[str] = None,
-    debug: bool = False,
     max_retries: int = _DEFAULT_MAX_RETRIES,
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT,
@@ -52,16 +51,12 @@ def run(
     agents_dir: str | None = None,
     memory: Memory | None = None,
     disabled_builtin_tools: frozenset[str] = frozenset(),
-    agent_model: str | None = None,
 ) -> None:
     """Start the interactive shell.
 
     Reads the system prompt and tool definitions from *makefile_path*, then
     enters a :class:`MakeAgentShell` loop.  Press Ctrl-D, Ctrl-C, or type
     ``exit`` / ``quit`` to leave.
-
-    When *debug* is ``True`` all messages are logged to
-    ``~/.make-agent/<project>/logs/make-agent.log``.
     """
 
     agent_config = AgentConfig(
@@ -72,10 +67,8 @@ def run(
         max_tool_output=max_tool_output,
         max_tokens=max_tokens,
         agents_dir=agents_dir,
-        debug=debug,
         memory=memory,
         disabled_builtin_tools=disabled_builtin_tools,
-        agent_model=agent_model,
     )
     agent = Agent(agent_config)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")

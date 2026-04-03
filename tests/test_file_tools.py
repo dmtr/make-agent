@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from make_agent.file_tools import (
+from make_agent.builtin_tools.file_tools import (
     FILE_TOOL_NAMES,
     FILE_TOOL_SCHEMAS,
     get_file_tools,

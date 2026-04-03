@@ -391,20 +391,20 @@ class TestMemoryBuiltinTools:
 
     def test_search_user_memory_tool_callable(self, mem):
         mem.store("user", "remember this phrase")
-        tools = get_builtin_tools("agents_dir", "model", memory=mem)
+        tools = get_builtin_tools("agents_dir", memory=mem)
         assert "search_user_memory" in tools
         result = tools["search_user_memory"](query="remember this phrase")
         assert "remember this phrase" in result
 
     def test_search_agent_memory_tool_callable(self, mem):
         mem.store("agent", "I can recall things")
-        tools = get_builtin_tools("agents_dir", "model", memory=mem)
+        tools = get_builtin_tools("agents_dir", memory=mem)
         assert "search_agent_memory" in tools
         result = tools["search_agent_memory"](query="recall things")
         assert "I can recall things" in result
 
     def test_no_memory_tools_without_memory(self):
-        tools = get_builtin_tools("agents_dir", "model")
+        tools = get_builtin_tools("agents_dir")
         assert "search_user_memory" not in tools
         assert "search_agent_memory" not in tools
         assert "get_recent_messages" not in tools
@@ -416,7 +416,7 @@ class TestMemoryBuiltinTools:
     def test_get_recent_messages_tool_callable(self, mem):
         mem.store("user", "first message")
         mem.store("agent", "first reply")
-        tools = get_builtin_tools("agents_dir", "model", memory=mem)
+        tools = get_builtin_tools("agents_dir", memory=mem)
         assert "get_recent_messages" in tools
         result = tools["get_recent_messages"](limit=5)
         assert "first message" in result

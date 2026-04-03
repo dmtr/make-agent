@@ -74,10 +74,6 @@ def _resolve_run_args(args: argparse.Namespace) -> argparse.Namespace:
     if not model_explicit:
         args.model = settings.get("model")
 
-    # agent_model: CLI flag > settings.yaml > falls back to main model at runtime
-    if not getattr(args, "agent_model", None):
-        args.agent_model = settings.get("agent_model") or None
-
     # Memory: CLI flag takes precedence, then settings.yaml
     if not getattr(args, "with_memory", False):
         args.with_memory = bool(settings.get("memory", False))
@@ -125,7 +121,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
         makefile_path=Path(args.file),
         model=args.model,
         prompt=prompt,
-        debug=args.debug,
         max_retries=args.max_retries,
         tool_timeout=args.tool_timeout,
         max_tool_output=args.max_tool_output,
@@ -133,7 +128,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
         agents_dir=args.agents_dir,
         memory=memory,
         disabled_builtin_tools=_parse_disabled_tools(args.disable_builtin_tools),
-        agent_model=args.agent_model,
     )
 
 
@@ -178,12 +172,6 @@ def main() -> None:
         metavar="TOOLS",
         help=f"Comma-separated built-in tool names to disable, or 'all'. Valid names: {', '.join(sorted(BUILTIN_TOOL_NAMES))}",
     )
-    run_p.add_argument(
-        "--agent-model",
-        default=None,
-        metavar="MODEL",
-        help="Model used when running specialist agents via run_agent (default: same as --model)",
-    )
 
     # ── legacy: no subcommand → behave as "run" ──────────────────────────────
     parser.add_argument("-f", "--file", default=None, metavar="FILE", help=argparse.SUPPRESS)
@@ -199,7 +187,6 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=_DEFAULT_MAX_TOKENS, metavar="N", help=argparse.SUPPRESS)
     parser.add_argument("--with-memory", action="store_true", default=False, help=argparse.SUPPRESS)
     parser.add_argument("--disable-builtin-tools", default=None, metavar="TOOLS", help=argparse.SUPPRESS)
-    parser.add_argument("--agent-model", default=None, metavar="MODEL", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
     _init_logging(args.debug)
