@@ -15,12 +15,14 @@ from typing import Any
 
 from make_agent.builtin_tools.agent_tools import (
     AGENT_SCHEMAS,
+    _RunAgent,
     _SwapAgent,
     _agent_summary,
     _valid_agent_name,
     create_agent,
     list_agent,
     load_agent,
+    run_agent,
     validate_agent,
 )
 from make_agent.builtin_tools.file_tools import (
@@ -40,6 +42,7 @@ BUILTIN_TOOL_NAMES: frozenset[str] = (
             "validate_agent",
             "create_agent",
             "load_agent",
+            "run_agent",
             "search_user_memory",
             "search_agent_memory",
             "get_recent_messages",
@@ -66,6 +69,7 @@ def get_builtin_tools(
         "validate_agent": lambda name, **_kw: validate_agent(name, agents_dir),
         "create_agent": lambda name, spec, **_kw: create_agent(name, spec, agents_dir),
         "load_agent": lambda name, prompt, **_kw: load_agent(name, prompt, agents_dir),
+        "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir),
     }
     if memory is not None:
         tools["search_user_memory"] = lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_user(query, limit, from_date, to_date)
@@ -84,6 +88,7 @@ __all__ = [
     "FILE_TOOL_NAMES",
     "FILE_TOOL_SCHEMAS",
     "MEMORY_SCHEMAS",
+    "_RunAgent",
     "_SwapAgent",
     "_agent_summary",
     "_valid_agent_name",
@@ -96,5 +101,6 @@ __all__ = [
     "load_agent",
     "read_file",
     "replace_lines",
+    "run_agent",
     "validate_agent",
 ]

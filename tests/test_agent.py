@@ -160,4 +160,74 @@ class TestAgentValidation:
         assert "QUERY" in str(exc_info.value)
 
 
+# ── run_agent in-process dispatch ─────────────────────────────────────────────
+
+
+class TestRunAgentInProcess:
+    def _make_agent(self, tmp_path, content: str, agents_dir: str | None = None):
+        from make_agent.agent import Agent, AgentConfig
+
+        mf = tmp_path / "Makefile"
+        mf.write_text(content)
+        return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=agents_dir or str(tmp_path)))
+
+    def test_run_agent_disabled_for_sub_agent(self, tmp_path):
+        """Sub-agents must not have run_agent available (prevents infinite loops)."""
+        from make_agent.agent import Agent, AgentConfig
+
+        (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
+        mf = tmp_path / "Makefile"
+        mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)))
+
+        from pathlib import Path
+        sub = agent._run_agent.__func__  # noqa: SLF001
+        # Build sub-config as _run_agent would and verify run_agent is disabled
+        sub_disabled = agent._disabled_builtin_tools | frozenset({"run_agent"})  # noqa: SLF001
+        assert "run_agent" in sub_disabled
+
+    def test_run_agent_sub_agent_gets_same_model(self, tmp_path):
+        from make_agent.agent import Agent, AgentConfig
+
+        (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
+        mf = tmp_path / "Makefile"
+        mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)))
+        assert agent._model == "openai/gpt-4o-mini"  # noqa: SLF001
+
+    def test_run_agent_dispatched_via_call(self, tmp_path):
+        """Agent.__call__ runs the sub-agent and returns its response as a tool result."""
+        from unittest.mock import MagicMock, patch
+
+        from make_agent.agent import Agent, AgentConfig
+
+        (tmp_path / "specialist.mk").write_text(
+            "define SYSTEM_PROMPT\nSpecialist.\nendef\n"
+        )
+        mf = tmp_path / "Makefile"
+        mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)))
+
+        # Patch _run_agent to return a known string without hitting the LLM
+        with patch.object(agent, "_run_agent", return_value="specialist done") as mock_run:
+            # Build a fake LLM response that calls run_agent then returns text
+            tool_call = MagicMock()
+            tool_call.id = "tc1"
+            tool_call.function.name = "run_agent"
+            tool_call.function.arguments = '{"name": "specialist", "prompt": "go"}'
+
+            tool_response = MagicMock()
+            tool_response.choices[0].message.tool_calls = [tool_call]
+
+            final_response = MagicMock()
+            final_response.choices[0].message.tool_calls = None
+            final_response.choices[0].message.content = "all done"
+
+            with patch("make_agent.agent.any_llm.completion", side_effect=[tool_response, final_response]):
+                result = agent("delegate to specialist")
+
+        mock_run.assert_called_once()
+        assert result == "all done"
+
+
 

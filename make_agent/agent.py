@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 import any_llm
 
 from make_agent.app_dirs import default_agents_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, FILE_TOOL_SCHEMAS, _SwapAgent, get_builtin_tools, get_memory_schemas
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, FILE_TOOL_SCHEMAS, _RunAgent, _SwapAgent, get_builtin_tools, get_memory_schemas
 from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, format_tool_result, run_tool
@@ -105,6 +105,8 @@ class Agent:
         self._max_tool_output = config.max_tool_output
         self._memory = config.memory
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
+        self._agents_dir = agents_dir
+        self._disabled_builtin_tools = config.disabled_builtin_tools
         self._builtins = get_builtin_tools(
             agents_dir, config.memory, config.disabled_builtin_tools, config.tool_timeout
         )
@@ -137,6 +139,22 @@ class Agent:
         if mf.system_prompt:
             self._messages.append({"role": "system", "content": mf.system_prompt})
             logger.debug("[system]\n%s", mf.system_prompt)
+
+    def _run_agent(self, mk_path: Path, prompt: str) -> str:
+        """Instantiate a specialist agent in-process and return its response."""
+        sub_disabled = self._disabled_builtin_tools | frozenset({"run_agent"})
+        sub_config = AgentConfig(
+            makefile_path=mk_path,
+            model=self._model,
+            max_retries=self._max_retries,
+            tool_timeout=self._tool_timeout,
+            max_tool_output=self._max_tool_output,
+            max_tokens=self._max_tokens,
+            agents_dir=self._agents_dir,
+            memory=self._memory,
+            disabled_builtin_tools=sub_disabled,
+        )
+        return Agent(sub_config)(prompt)
 
     def __call__(self, user_input: str) -> str:
         """Send *user_input* to the LLM and return the assistant's reply.
@@ -179,7 +197,11 @@ class Agent:
                             if isinstance(raw, _SwapAgent):
                                 self._swap_agent(raw.mk_path)
                                 return self(raw.prompt)
-                            output = format_tool_result(str(raw), "", 0, self._max_tool_output)
+                            if isinstance(raw, _RunAgent):
+                                result = self._run_agent(raw.mk_path, raw.prompt)
+                                output = format_tool_result(result, "", 0, self._max_tool_output)
+                            else:
+                                output = format_tool_result(str(raw), "", 0, self._max_tool_output)
                         else:
                             output = run_tool(
                                 target,

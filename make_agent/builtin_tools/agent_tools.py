@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import yaml
-
 from make_agent.create_agent import _write_output_no_symlink, render
 from make_agent.parser import parse_file, validate
 
@@ -120,6 +119,13 @@ class _SwapAgent(NamedTuple):
     prompt: str
 
 
+class _RunAgent(NamedTuple):
+    """Sentinel returned by run_agent to trigger an in-process sub-agent call."""
+
+    mk_path: Path
+    prompt: str
+
+
 def load_agent(name: str, prompt: str, agents_dir: str) -> _SwapAgent | str:
     """Replace the current agent with the named specialist and process the given prompt."""
     if not _valid_agent_name(name):
@@ -130,6 +136,18 @@ def load_agent(name: str, prompt: str, agents_dir: str) -> _SwapAgent | str:
         return f"Agent '{name}' not found in {agents_dir}"
 
     return _SwapAgent(mk_path=mk_path, prompt=prompt)
+
+
+def run_agent(name: str, prompt: str, agents_dir: str) -> _RunAgent | str:
+    """Delegate a task to a named specialist agent and return its output."""
+    if not _valid_agent_name(name):
+        return f"Error: invalid agent name {name!r}."
+
+    mk_path = Path(agents_dir) / f"{name}.mk"
+    if not mk_path.exists():
+        return f"Agent '{name}' not found in {agents_dir}"
+
+    return _RunAgent(mk_path=mk_path, prompt=prompt)
 
 
 AGENT_SCHEMAS: list[dict[str, Any]] = [
@@ -201,13 +219,38 @@ AGENT_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    # {
+    #    "type": "function",
+    #    "function": {
+    #        "name": "load_agent",
+    #        "description": (
+    #            "Replace the current agent with a specialist and immediately process a prompt with it. "
+    #            "The specialist's system prompt and tools become active; conversation history is reset."
+    #        ),
+    #        "parameters": {
+    #            "type": "object",
+    #            "properties": {
+    #                "name": {
+    #                    "type": "string",
+    #                    "description": "The agent name (without .mk extension).",
+    #                },
+    #                "prompt": {
+    #                    "type": "string",
+    #                    "description": "The task or question to process with the specialist agent.",
+    #                },
+    #            },
+    #            "required": ["name", "prompt"],
+    #        },
+    #    },
+    # },
     {
         "type": "function",
         "function": {
-            "name": "load_agent",
+            "name": "run_agent",
             "description": (
-                "Replace the current agent with a specialist and immediately process a prompt with it. "
-                "The specialist's system prompt and tools become active; conversation history is reset."
+                "Delegate a task to a specialist agent and return its output. "
+                "The specialist runs in-process with its own system prompt and tools; "
+                "the current agent's conversation history is preserved."
             ),
             "parameters": {
                 "type": "object",
@@ -218,7 +261,7 @@ AGENT_SCHEMAS: list[dict[str, Any]] = [
                     },
                     "prompt": {
                         "type": "string",
-                        "description": "The task or question to process with the specialist agent.",
+                        "description": "The task or question to delegate to the specialist agent.",
                     },
                 },
                 "required": ["name", "prompt"],

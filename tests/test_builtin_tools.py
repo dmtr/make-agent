@@ -8,12 +8,14 @@ import pytest
 
 from make_agent.builtin_tools import (
     BUILTIN_SCHEMAS,
+    _RunAgent,
     _SwapAgent,
     _agent_summary,
     _valid_agent_name,
     get_builtin_tools,
     list_agent,
     load_agent,
+    run_agent,
     validate_agent,
 )
 
@@ -195,13 +197,13 @@ def test_load_agent_returns_swap_sentinel(tmp_path):
 
 # ── BUILTIN_SCHEMAS ───────────────────────────────────────────────────────────
 
-def test_builtin_schemas_has_four_entries():
-    assert len(BUILTIN_SCHEMAS) == 4
+def test_builtin_schemas_has_five_entries():
+    assert len(BUILTIN_SCHEMAS) == 5
 
 
 def test_builtin_schemas_names():
     names = {s["function"]["name"] for s in BUILTIN_SCHEMAS}
-    assert names == {"list_agent", "validate_agent", "create_agent", "load_agent"}
+    assert names == {"list_agent", "validate_agent", "create_agent", "load_agent", "run_agent"}
 
 
 def test_builtin_schemas_are_function_type():
@@ -214,6 +216,7 @@ def test_builtin_schemas_required_params():
     assert by_name["list_agent"]["parameters"]["required"] == []
     assert by_name["validate_agent"]["parameters"]["required"] == ["name"]
     assert set(by_name["load_agent"]["parameters"]["required"]) == {"name", "prompt"}
+    assert set(by_name["run_agent"]["parameters"]["required"]) == {"name", "prompt"}
 
 
 # ── get_builtin_tools ─────────────────────────────────────────────────────────
@@ -221,7 +224,7 @@ def test_builtin_schemas_required_params():
 def test_get_builtin_tools_returns_all_four():
     tools = get_builtin_tools(".agents")
     assert set(tools.keys()) == {
-        "list_agent", "validate_agent", "create_agent", "load_agent",
+        "list_agent", "validate_agent", "create_agent", "load_agent", "run_agent",
         "read_file", "replace_lines", "insert_lines",
     }
 
@@ -244,4 +247,32 @@ def test_get_builtin_tools_load_agent_returns_sentinel(tmp_path):
     tools = get_builtin_tools(str(tmp_path))
     result = tools["load_agent"](name="worker", prompt="go")
     assert isinstance(result, _SwapAgent)
+    assert result.prompt == "go"
+
+
+# ── run_agent ─────────────────────────────────────────────────────────────────
+
+def test_run_agent_missing_mk_file(tmp_path):
+    result = run_agent("ghost", "do something", str(tmp_path))
+    assert "not found" in result
+
+
+def test_run_agent_invalid_name(tmp_path):
+    result = run_agent("../evil", "do something", str(tmp_path))
+    assert result.startswith("Error")
+
+
+def test_run_agent_returns_run_sentinel(tmp_path):
+    (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nWorker.\nendef\n")
+    result = run_agent("worker", "do the task", str(tmp_path))
+    assert isinstance(result, _RunAgent)
+    assert result.mk_path == tmp_path / "worker.mk"
+    assert result.prompt == "do the task"
+
+
+def test_get_builtin_tools_run_agent_returns_sentinel(tmp_path):
+    (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nW.\nendef\n")
+    tools = get_builtin_tools(str(tmp_path))
+    result = tools["run_agent"](name="worker", prompt="go")
+    assert isinstance(result, _RunAgent)
     assert result.prompt == "go"
