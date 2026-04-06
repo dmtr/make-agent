@@ -5,22 +5,19 @@ from __future__ import annotations
 import textwrap
 
 import pytest
-
 from make_agent.builtin_tools import (
     BUILTIN_SCHEMAS,
-    _RunAgent,
-    _SwapAgent,
     _agent_summary,
+    _RunAgent,
     _valid_agent_name,
     get_builtin_tools,
     list_agent,
-    load_agent,
     run_agent,
     validate_agent,
 )
 
-
 # ── _valid_agent_name ─────────────────────────────────────────────────────────
+
 
 @pytest.mark.parametrize("name", ["file-search", "agent1", "my.agent", "A_B"])
 def test_valid_agent_name_accepts_valid(name):
@@ -107,6 +104,7 @@ def test_agent_summary_parse_error(tmp_path):
 
 # ── list_agent ────────────────────────────────────────────────────────────────
 
+
 def test_list_agent_missing_dir(tmp_path):
     result = list_agent(str(tmp_path / "nonexistent"))
     assert "No agents found" in result
@@ -136,6 +134,7 @@ def test_list_agent_sorted(tmp_path):
 
 # ── validate_agent ────────────────────────────────────────────────────────────
 
+
 def test_validate_agent_ok(tmp_path):
     (tmp_path / "ok.mk").write_text(_AGENT_MK)
     result = validate_agent("ok", str(tmp_path))
@@ -155,7 +154,8 @@ def test_validate_agent_invalid_name(tmp_path):
 
 def test_validate_agent_reports_errors(tmp_path):
     # param declared but never used in recipe → validation error
-    bad_mk = textwrap.dedent("""\
+    bad_mk = textwrap.dedent(
+        """\
         define SYSTEM_PROMPT
         Bad agent.
         endef
@@ -168,42 +168,24 @@ def test_validate_agent_reports_errors(tmp_path):
         # </tool>
         do-thing:
         \t@echo hello
-    """)
+    """
+    )
     (tmp_path / "bad.mk").write_text(bad_mk)
     result = validate_agent("bad", str(tmp_path))
     assert "Validation errors" in result
     assert "UNUSED" in result
 
 
-# ── load_agent ────────────────────────────────────────────────────────────────
-
-def test_load_agent_missing_mk_file(tmp_path):
-    result = load_agent("ghost", "do something", str(tmp_path))
-    assert "not found" in result
-
-
-def test_load_agent_invalid_name(tmp_path):
-    result = load_agent("../evil", "do something", str(tmp_path))
-    assert result.startswith("Error")
-
-
-def test_load_agent_returns_swap_sentinel(tmp_path):
-    (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nWorker.\nendef\n")
-    result = load_agent("worker", "do the task", str(tmp_path))
-    assert isinstance(result, _SwapAgent)
-    assert result.mk_path == tmp_path / "worker.mk"
-    assert result.prompt == "do the task"
-
-
 # ── BUILTIN_SCHEMAS ───────────────────────────────────────────────────────────
 
+
 def test_builtin_schemas_has_five_entries():
-    assert len(BUILTIN_SCHEMAS) == 5
+    assert len(BUILTIN_SCHEMAS) == 4
 
 
 def test_builtin_schemas_names():
     names = {s["function"]["name"] for s in BUILTIN_SCHEMAS}
-    assert names == {"list_agent", "validate_agent", "create_agent", "load_agent", "run_agent"}
+    assert names == {"list_agent", "validate_agent", "create_agent", "run_agent"}
 
 
 def test_builtin_schemas_are_function_type():
@@ -215,17 +197,22 @@ def test_builtin_schemas_required_params():
     by_name = {s["function"]["name"]: s["function"] for s in BUILTIN_SCHEMAS}
     assert by_name["list_agent"]["parameters"]["required"] == []
     assert by_name["validate_agent"]["parameters"]["required"] == ["name"]
-    assert set(by_name["load_agent"]["parameters"]["required"]) == {"name", "prompt"}
     assert set(by_name["run_agent"]["parameters"]["required"]) == {"name", "prompt"}
 
 
 # ── get_builtin_tools ─────────────────────────────────────────────────────────
 
+
 def test_get_builtin_tools_returns_all_four():
     tools = get_builtin_tools(".agents")
     assert set(tools.keys()) == {
-        "list_agent", "validate_agent", "create_agent", "load_agent", "run_agent",
-        "read_file", "replace_lines", "insert_lines",
+        "list_agent",
+        "validate_agent",
+        "create_agent",
+        "run_agent",
+        "read_file",
+        "replace_lines",
+        "insert_lines",
     }
 
 
@@ -242,15 +229,8 @@ def test_get_builtin_tools_validate_agent_callable(tmp_path):
     assert result.startswith("OK")
 
 
-def test_get_builtin_tools_load_agent_returns_sentinel(tmp_path):
-    (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nW.\nendef\n")
-    tools = get_builtin_tools(str(tmp_path))
-    result = tools["load_agent"](name="worker", prompt="go")
-    assert isinstance(result, _SwapAgent)
-    assert result.prompt == "go"
-
-
 # ── run_agent ─────────────────────────────────────────────────────────────────
+
 
 def test_run_agent_missing_mk_file(tmp_path):
     result = run_agent("ghost", "do something", str(tmp_path))

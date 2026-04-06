@@ -1,4 +1,4 @@
-"""Agent management tools: list_agent, validate_agent, create_agent, load_agent."""
+"""Agent management tools: list_agent, validate_agent, create_agent, run_agent."""
 
 from __future__ import annotations
 
@@ -112,30 +112,11 @@ def create_agent(name: str, spec: str, agents_dir: str) -> str:
     return f"Created agent '{name}' at {mk_path} ({tool_count} tool(s))"
 
 
-class _SwapAgent(NamedTuple):
-    """Sentinel returned by load_agent to trigger an in-place agent swap."""
-
-    mk_path: Path
-    prompt: str
-
-
 class _RunAgent(NamedTuple):
     """Sentinel returned by run_agent to trigger an in-process sub-agent call."""
 
     mk_path: Path
     prompt: str
-
-
-def load_agent(name: str, prompt: str, agents_dir: str) -> _SwapAgent | str:
-    """Replace the current agent with the named specialist and process the given prompt."""
-    if not _valid_agent_name(name):
-        return f"Error: invalid agent name {name!r}."
-
-    mk_path = Path(agents_dir) / f"{name}.mk"
-    if not mk_path.exists():
-        return f"Agent '{name}' not found in {agents_dir}"
-
-    return _SwapAgent(mk_path=mk_path, prompt=prompt)
 
 
 def run_agent(name: str, prompt: str, agents_dir: str) -> _RunAgent | str:
@@ -219,30 +200,6 @@ AGENT_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
-    # {
-    #    "type": "function",
-    #    "function": {
-    #        "name": "load_agent",
-    #        "description": (
-    #            "Replace the current agent with a specialist and immediately process a prompt with it. "
-    #            "The specialist's system prompt and tools become active; conversation history is reset."
-    #        ),
-    #        "parameters": {
-    #            "type": "object",
-    #            "properties": {
-    #                "name": {
-    #                    "type": "string",
-    #                    "description": "The agent name (without .mk extension).",
-    #                },
-    #                "prompt": {
-    #                    "type": "string",
-    #                    "description": "The task or question to process with the specialist agent.",
-    #                },
-    #            },
-    #            "required": ["name", "prompt"],
-    #        },
-    #    },
-    # },
     {
         "type": "function",
         "function": {

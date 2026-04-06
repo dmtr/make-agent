@@ -15,13 +15,11 @@ from typing import Any
 
 from make_agent.builtin_tools.agent_tools import (
     AGENT_SCHEMAS,
-    _RunAgent,
-    _SwapAgent,
     _agent_summary,
+    _RunAgent,
     _valid_agent_name,
     create_agent,
     list_agent,
-    load_agent,
     run_agent,
     validate_agent,
 )
@@ -41,7 +39,6 @@ BUILTIN_TOOL_NAMES: frozenset[str] = (
             "list_agent",
             "validate_agent",
             "create_agent",
-            "load_agent",
             "run_agent",
             "search_user_memory",
             "search_agent_memory",
@@ -55,9 +52,7 @@ BUILTIN_TOOL_NAMES: frozenset[str] = (
 BUILTIN_SCHEMAS: list[dict[str, Any]] = AGENT_SCHEMAS
 
 
-def get_builtin_tools(
-    agents_dir: str, memory: Any = None, disabled: frozenset[str] = frozenset(), tool_timeout: int = 600
-) -> dict[str, Any]:
+def get_builtin_tools(agents_dir: str, memory: Any = None, disabled: frozenset[str] = frozenset(), tool_timeout: int = 600) -> dict[str, Any]:
     """Return a name → callable mapping for all built-in tools.
 
     Each callable accepts only the LLM-provided arguments; ``agents_dir``
@@ -68,7 +63,6 @@ def get_builtin_tools(
         "list_agent": lambda **_kw: list_agent(agents_dir),
         "validate_agent": lambda name, **_kw: validate_agent(name, agents_dir),
         "create_agent": lambda name, spec, **_kw: create_agent(name, spec, agents_dir),
-        "load_agent": lambda name, prompt, **_kw: load_agent(name, prompt, agents_dir),
         "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir),
     }
     if memory is not None:
@@ -89,7 +83,6 @@ __all__ = [
     "FILE_TOOL_SCHEMAS",
     "MEMORY_SCHEMAS",
     "_RunAgent",
-    "_SwapAgent",
     "_agent_summary",
     "_valid_agent_name",
     "create_agent",
@@ -98,7 +91,6 @@ __all__ = [
     "get_memory_schemas",
     "insert_lines",
     "list_agent",
-    "load_agent",
     "read_file",
     "replace_lines",
     "run_agent",

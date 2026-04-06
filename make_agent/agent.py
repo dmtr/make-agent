@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 import any_llm
 
 from make_agent.app_dirs import default_agents_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, FILE_TOOL_SCHEMAS, _RunAgent, _SwapAgent, get_builtin_tools, get_memory_schemas
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, FILE_TOOL_SCHEMAS, _RunAgent, get_builtin_tools, get_memory_schemas
 from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, format_tool_result, run_tool
@@ -36,7 +36,6 @@ class AgentConfig(NamedTuple):
     debug: bool = False
     memory: Memory | None = None
     disabled_builtin_tools: frozenset[str] = frozenset()
-
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -107,9 +106,7 @@ class Agent:
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
         self._agents_dir = agents_dir
         self._disabled_builtin_tools = config.disabled_builtin_tools
-        self._builtins = get_builtin_tools(
-            agents_dir, config.memory, config.disabled_builtin_tools, config.tool_timeout
-        )
+        self._builtins = get_builtin_tools(agents_dir, config.memory, config.disabled_builtin_tools, config.tool_timeout)
         makefile_tools = build_tools(mf)
         memory_schemas = get_memory_schemas() if config.memory is not None else []
         active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
@@ -126,19 +123,6 @@ class Agent:
     @property
     def tool_names(self) -> list[str]:
         return [t["function"]["name"] for t in self._tools]
-
-    def _swap_agent(self, mk_path: Path) -> None:
-        """Reinitialise this agent in-place with the Makefile at *mk_path*."""
-        mf = parse_file(mk_path)
-        validate_or_raise(mf)
-        self._makefile_path = mk_path
-        makefile_tools = build_tools(mf)
-        self._tools = self._static_schemas + makefile_tools
-        self._tool_kwargs = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
-        self._messages = []
-        if mf.system_prompt:
-            self._messages.append({"role": "system", "content": mf.system_prompt})
-            logger.debug("[system]\n%s", mf.system_prompt)
 
     def _run_agent(self, mk_path: Path, prompt: str) -> str:
         """Instantiate a specialist agent in-process and return its response."""
@@ -194,9 +178,6 @@ class Agent:
                     try:
                         if target in self._builtins:
                             raw = self._builtins[target](**arguments)
-                            if isinstance(raw, _SwapAgent):
-                                self._swap_agent(raw.mk_path)
-                                return self(raw.prompt)
                             if isinstance(raw, _RunAgent):
                                 result = self._run_agent(raw.mk_path, raw.prompt)
                                 output = format_tool_result(result, "", 0, self._max_tool_output)
