@@ -180,8 +180,6 @@ class TestRunAgentInProcess:
         mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
         agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)))
 
-        from pathlib import Path
-        sub = agent._run_agent.__func__  # noqa: SLF001
         # Build sub-config as _run_agent would and verify run_agent is disabled
         sub_disabled = agent._disabled_builtin_tools | frozenset({"run_agent"})  # noqa: SLF001
         assert "run_agent" in sub_disabled
@@ -201,9 +199,7 @@ class TestRunAgentInProcess:
 
         from make_agent.agent import Agent, AgentConfig
 
-        (tmp_path / "specialist.mk").write_text(
-            "define SYSTEM_PROMPT\nSpecialist.\nendef\n"
-        )
+        (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
         mf = tmp_path / "Makefile"
         mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
         agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)))
@@ -228,6 +224,3 @@ class TestRunAgentInProcess:
 
         mock_run.assert_called_once()
         assert result == "all done"
-
-
-
