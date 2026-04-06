@@ -40,6 +40,7 @@ class TestRunPromptInput:
             max_tokens=4096,
             agents_dir=None,
             disable_builtin_tools=None,
+            reasoning_effort=None,
         )
         captured: dict = {}
 

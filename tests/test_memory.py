@@ -509,6 +509,7 @@ class TestWithMemoryFlag:
             agents_dir=None,
             with_memory=True,
             disable_builtin_tools=None,
+            reasoning_effort=None,
         )
 
         captured: dict = {}
@@ -547,6 +548,7 @@ class TestWithMemoryFlag:
             agents_dir=None,
             with_memory=False,
             disable_builtin_tools=None,
+            reasoning_effort=None,
         )
 
         captured: dict = {}
@@ -582,6 +584,7 @@ class TestWithMemoryFlag:
             agents_dir=None,
             with_memory=False,  # not set via CLI
             disable_builtin_tools=None,
+            reasoning_effort=None,
         )
 
         captured: dict = {}

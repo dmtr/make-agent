@@ -2,7 +2,7 @@ import cmd
 from pathlib import Path
 from typing import Optional
 
-from make_agent.agent import _DEFAULT_MAX_RETRIES, _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_MODEL, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
+from make_agent.agent import _DEFAULT_MAX_RETRIES, _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_MODEL, _DEFAULT_REASONING_EFFORT, _DEFAULT_TOOL_TIMEOUT, Agent, AgentConfig
 from make_agent.memory import Memory
 
 
@@ -51,6 +51,7 @@ def run(
     agents_dir: str | None = None,
     memory: Memory | None = None,
     disabled_builtin_tools: frozenset[str] = frozenset(),
+    reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
 ) -> None:
     """Start the interactive shell.
 
@@ -69,6 +70,7 @@ def run(
         agents_dir=agents_dir,
         memory=memory,
         disabled_builtin_tools=disabled_builtin_tools,
+        reasoning_effort=reasoning_effort,
     )
     agent = Agent(agent_config)
     print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")

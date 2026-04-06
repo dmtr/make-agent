@@ -21,6 +21,7 @@ _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
 _DEFAULT_MAX_TOOL_OUTPUT = 20000  # characters; 0 = unlimited
 _DEFAULT_MAX_TOKENS = 4096
+_DEFAULT_REASONING_EFFORT = "auto"
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class AgentConfig(NamedTuple):
     debug: bool = False
     memory: Memory | None = None
     disabled_builtin_tools: frozenset[str] = frozenset()
+    reasoning_effort: str = _DEFAULT_REASONING_EFFORT
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -62,6 +64,7 @@ def _completion_with_retry(
     tool_kwargs: dict[str, Any],
     max_retries: int,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
+    reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
 ) -> Any:
     """Call ``any_llm.completion``, retrying on rate limit up to *max_retries* times.
 
@@ -72,7 +75,7 @@ def _completion_with_retry(
     """
     for attempt in range(max_retries + 1):
         try:
-            return any_llm.completion(model=model, messages=messages, max_tokens=max_tokens, **tool_kwargs)
+            return any_llm.completion(model=model, messages=messages, max_tokens=max_tokens, reasoning_effort=reasoning_effort, **tool_kwargs)
         except any_llm.RateLimitError as e:
             if attempt == max_retries:
                 raise
@@ -103,6 +106,7 @@ class Agent:
         self._tool_timeout = config.tool_timeout
         self._max_tool_output = config.max_tool_output
         self._memory = config.memory
+        self._reasoning_effort = config.reasoning_effort
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
         self._agents_dir = agents_dir
         self._disabled_builtin_tools = config.disabled_builtin_tools
@@ -137,6 +141,7 @@ class Agent:
             agents_dir=self._agents_dir,
             memory=self._memory,
             disabled_builtin_tools=sub_disabled,
+            reasoning_effort=self._reasoning_effort,
         )
         return Agent(sub_config)(prompt)
 
@@ -158,6 +163,7 @@ class Agent:
                 self._tool_kwargs,
                 self._max_retries,
                 self._max_tokens,
+                self._reasoning_effort,
             )
             msg = response.choices[0].message
 

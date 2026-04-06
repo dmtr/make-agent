@@ -15,6 +15,7 @@ from make_agent.settings import load_settings, run_setup_wizard
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAKEFILE = "Makefile"
+_REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "auto")
 
 
 def _init_logging(debug: bool) -> None:
@@ -78,6 +79,16 @@ def _resolve_run_args(args: argparse.Namespace) -> argparse.Namespace:
     if not getattr(args, "with_memory", False):
         args.with_memory = bool(settings.get("memory", False))
 
+    # Reasoning effort: CLI flag takes precedence, then settings.yaml, then default
+    if getattr(args, "reasoning_effort", None) is None:
+        raw = settings.get("reasoning_effort", "auto")
+        if raw not in _REASONING_EFFORT_VALUES:
+            raise ValueError(
+                f"Invalid reasoning_effort in settings.yaml: {raw!r}. "
+                f"Valid values: {', '.join(_REASONING_EFFORT_VALUES)}"
+            )
+        args.reasoning_effort = raw
+
     return args
 
 
@@ -128,6 +139,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
         agents_dir=args.agents_dir,
         memory=memory,
         disabled_builtin_tools=_parse_disabled_tools(args.disable_builtin_tools),
+        reasoning_effort=args.reasoning_effort,
     )
 
 
@@ -172,6 +184,13 @@ def main() -> None:
         metavar="TOOLS",
         help=f"Comma-separated built-in tool names to disable, or 'all'. Valid names: {', '.join(sorted(BUILTIN_TOOL_NAMES))}",
     )
+    run_p.add_argument(
+        "--reasoning-effort",
+        choices=_REASONING_EFFORT_VALUES,
+        default=None,
+        metavar="EFFORT",
+        help=f"Reasoning effort level ({'/'.join(_REASONING_EFFORT_VALUES)}, default: auto)",
+    )
 
     # ── legacy: no subcommand → behave as "run" ──────────────────────────────
     parser.add_argument("-f", "--file", default=None, metavar="FILE", help=argparse.SUPPRESS)
@@ -187,6 +206,7 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=_DEFAULT_MAX_TOKENS, metavar="N", help=argparse.SUPPRESS)
     parser.add_argument("--with-memory", action="store_true", default=False, help=argparse.SUPPRESS)
     parser.add_argument("--disable-builtin-tools", default=None, metavar="TOOLS", help=argparse.SUPPRESS)
+    parser.add_argument("--reasoning-effort", choices=_REASONING_EFFORT_VALUES, default=None, metavar="EFFORT", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
     _init_logging(args.debug)
