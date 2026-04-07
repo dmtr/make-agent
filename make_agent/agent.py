@@ -128,6 +128,11 @@ class Agent:
     def tool_names(self) -> list[str]:
         return [t["function"]["name"] for t in self._tools]
 
+    @property
+    def messages(self) -> list[dict]:
+        """Read-only view of the current conversation history."""
+        return list(self._messages)
+
     def _run_agent(self, mk_path: Path, prompt: str) -> str:
         """Instantiate a specialist agent in-process and return its response."""
         sub_disabled = self._disabled_builtin_tools | frozenset({"run_agent"})
