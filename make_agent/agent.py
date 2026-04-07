@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import any_llm
+from any_llm.types.completion import (
+    ChatCompletionMessageFunctionToolCall,
+    ChatCompletionMessageToolCall,
+    Function,
+)
 
 from make_agent.app_dirs import default_agents_dir
 from make_agent.builtin_tools import BUILTIN_SCHEMAS, FILE_TOOL_SCHEMAS, _RunAgent, get_builtin_tools, get_memory_schemas
@@ -85,6 +90,45 @@ def _completion_with_retry(
                 flush=True,
             )
             time.sleep(wait)
+
+
+def _parse_content_tool_calls(content: str) -> list[ChatCompletionMessageToolCall] | None:
+    """Parse tool calls embedded in message content (e.g. Gemma-style responses).
+
+    Some models encode tool calls as a JSON array in ``content`` instead of
+    populating the ``tool_calls`` field.  Each element is expected to have
+    ``type == "function"`` and a ``function`` object with ``name`` and
+    ``arguments``.  ``arguments`` may be a dict (Gemma) or a JSON string
+    (standard); both are normalised to a JSON string.
+
+    Returns a list of :class:`ChatCompletionMessageFunctionToolCall` objects,
+    or ``None`` if *content* does not match the expected format.
+    """
+    if not content or not content.strip().startswith("["):
+        return None
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, list):
+        return None
+    result: list[ChatCompletionMessageToolCall] = []
+    for item in parsed:
+        if not isinstance(item, dict) or item.get("type") != "function":
+            return None
+        func = item.get("function", {})
+        if "name" not in func:
+            return None
+        args = func.get("arguments", {})
+        args_str = json.dumps(args) if isinstance(args, dict) else args
+        result.append(
+            ChatCompletionMessageFunctionToolCall(
+                id=item.get("id", ""),
+                type="function",
+                function=Function(name=func["name"], arguments=args_str),
+            )
+        )
+    return result or None
 
 
 class Agent:
@@ -173,10 +217,11 @@ class Agent:
             msg = response.choices[0].message
             logger.debug("[model_response]\n%s", msg)
 
-            if msg.tool_calls:
+            tool_calls = msg.tool_calls or _parse_content_tool_calls(msg.content or "")
+            if tool_calls:
                 self._messages.append(msg.model_dump(exclude_none=True))
 
-                for tc in msg.tool_calls:
+                for tc in tool_calls:
                     target = tc.function.name
                     try:
                         arguments = json.loads(tc.function.arguments)
