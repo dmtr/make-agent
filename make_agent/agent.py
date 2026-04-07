@@ -171,6 +171,7 @@ class Agent:
                 self._reasoning_effort,
             )
             msg = response.choices[0].message
+            logger.debug("[model_response]\n%s", msg)
 
             if msg.tool_calls:
                 self._messages.append(msg.model_dump(exclude_none=True))
