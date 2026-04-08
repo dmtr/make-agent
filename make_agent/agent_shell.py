@@ -82,6 +82,18 @@ class MakeAgentShell(cmd.Cmd):
         if path:
             print(f"Conversation exported to {path}")
 
+    def do_stats(self, line: str) -> None:
+        """Print aggregated token usage stats for the current session."""
+        stats = self._agent_manager.get_token_stats(self._session_id)
+        if not stats:
+            print("No token usage stats available (memory not enabled or no LLM calls yet).")
+            return
+        print(f"Token usage for session {self._session_id}:")
+        print(f"  Model(s):      {', '.join(stats['models'])}")
+        print(f"  Input tokens:  {stats['input_tokens']}")
+        print(f"  Output tokens: {stats['output_tokens']}")
+        print(f"  Total tokens:  {stats['total_tokens']}")
+
 
 def run(
     makefile_path: Path,

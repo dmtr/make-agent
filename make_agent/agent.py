@@ -42,6 +42,7 @@ class AgentConfig(NamedTuple):
     debug: bool = False
     disabled_builtin_tools: frozenset[str] = frozenset()
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT
+    session_id: str | None = None
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -150,6 +151,7 @@ class Agent:
         self._max_tool_output = config.max_tool_output
         self._memory = memory
         self._reasoning_effort = config.reasoning_effort
+        self._session_id = config.session_id
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
         self._agents_dir = agents_dir
         self._disabled_builtin_tools = config.disabled_builtin_tools
@@ -193,6 +195,7 @@ class Agent:
             agents_dir=self._agents_dir,
             disabled_builtin_tools=sub_disabled,
             reasoning_effort=self._reasoning_effort,
+            session_id=self._session_id,
         )
         return Agent(sub_config, self._memory)(prompt)
 
@@ -221,6 +224,15 @@ class Agent:
             )
             msg = response.choices[0].message
             logger.debug("[model_response]\n%s", msg)
+
+            if self._memory is not None and response.usage is not None:
+                self._memory.record_token_usage(
+                    self._session_id or "",
+                    self._makefile_path.name,
+                    self._model,
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
+                )
 
             tool_calls = msg.tool_calls or _parse_content_tool_calls(msg.content or "")
             if tool_calls:
@@ -297,7 +309,7 @@ class AgentManager:
         if with_memory:
             memory = self.init_memory(session_id)
 
-        agent = Agent(config, memory)
+        agent = Agent(config._replace(session_id=session_id), memory)
         self._sessions[session_id] = agent
 
         return session_id
@@ -317,6 +329,13 @@ class AgentManager:
         if agent.messages:
             return export_conversation(agent.messages, agent.model)
         return None
+
+    def get_token_stats(self, session_id: str) -> dict:
+        """Return aggregated token usage for *session_id*, or an empty dict when unavailable."""
+        agent = self.get_agent(session_id)
+        if agent._memory is None:
+            return {}
+        return agent._memory.get_session_stats(session_id)
 
     def init_memory(self, session_id: str) -> Memory:
         db_path = project_dir() / "memory.db"

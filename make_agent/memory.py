@@ -7,6 +7,7 @@ Schema overview:
 - ``messages_fts``  — FTS5 content table over ``messages``
 - ``user_memory``   — view: messages WHERE sender = 'user'
 - ``agent_memory``  — view: messages WHERE sender = 'agent'
+- ``token_usage``   — per-LLM-call token counts (session_id, agent, model, input/output tokens)
 """
 
 from __future__ import annotations
@@ -21,6 +22,17 @@ _SCHEMA_STATEMENTS = [
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
         sender     TEXT NOT NULL CHECK(sender IN ('user', 'agent')),
         message    TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS token_usage (
+        id            INTEGER PRIMARY KEY,
+        created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+        session_id    TEXT NOT NULL,
+        agent         TEXT NOT NULL,
+        model         TEXT NOT NULL,
+        input_tokens  INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0
     )
     """,
     """
@@ -162,6 +174,52 @@ class Memory:
             return "No messages found."
         rows = list(reversed(rows))
         return "\n".join(f"[{row['created_at']}] {row['sender']}: {row['message']}" for row in rows)
+
+    def record_token_usage(
+        self,
+        session_id: str,
+        agent: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> None:
+        """Insert one row into ``token_usage`` for a single LLM API call."""
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO token_usage (session_id, agent, model, input_tokens, output_tokens)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (session_id, agent, model, input_tokens, output_tokens),
+        )
+        conn.commit()
+
+    def get_session_stats(self, session_id: str) -> dict:
+        """Return aggregated token usage totals for *session_id*.
+
+        Returns a dict with keys ``input_tokens``, ``output_tokens``,
+        ``total_tokens``, and ``models`` (list of distinct model names used),
+        or an empty dict when no rows exist for that session.
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens"
+            " FROM token_usage WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None or row["input_tokens"] is None:
+            return {}
+        models = [
+            r["model"]
+            for r in conn.execute(
+                "SELECT DISTINCT model FROM token_usage WHERE session_id = ? ORDER BY model",
+                (session_id,),
+            ).fetchall()
+        ]
+        return {
+            "input_tokens": row["input_tokens"],
+            "output_tokens": row["output_tokens"],
+            "total_tokens": row["input_tokens"] + row["output_tokens"],
+            "models": models,
+        }
 
     def close(self) -> None:
         """Close the underlying database connection."""
