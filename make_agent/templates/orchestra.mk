@@ -67,7 +67,7 @@ Always create a plan for completing the task and provide it to the user to confi
 ## Tool usage best practices
 
 - Before reading a file with read_file, use show-file or search-files to check it exists and gauge its size. Do not guess END_LINE — read in small chunks (30-50 lines).
-- For file edits, prefer write_file (full rewrite) over replace_lines when changing more than a few lines. replace_lines requires a tricky JSON format that is error-prone.
+- For file edits, prefer write_file (full rewrite) over replace_lines when changing more than a few lines.
 - If a tool call fails, do NOT retry with the same arguments. Analyse the error, then try a different approach (different tool, different arguments, or smaller steps).
 - Keep edits minimal — change only what is needed for the task.
 - If you are stuck after 2-3 failed attempts, explain the problem to the user and ask for guidance instead of retrying.

@@ -601,7 +601,6 @@ class TestWithMemoryFlag:
         finally:
             main_module.run = original
 
-        from make_agent.memory import Memory
         assert captured.get("with_memory") is True
 
 

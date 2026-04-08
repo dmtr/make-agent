@@ -7,7 +7,7 @@ from pathlib import Path
 
 from make_agent.agent import _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT
 from make_agent.agent_shell import run
-from make_agent.app_dirs import default_agents_dir, log_file, project_dir
+from make_agent.app_dirs import default_agents_dir, log_file
 from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
 from make_agent.settings import load_settings, run_setup_wizard
 

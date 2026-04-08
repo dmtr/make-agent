@@ -132,8 +132,8 @@ def write_file(FILE_PATH: str, CONTENT: str) -> str:
     return json.dumps({"ok": True, "lines_written": line_count, "path": FILE_PATH})
 
 
-def replace_lines(FILE_PATH: str, LINES: str) -> str:
-    """Replace content of specified lines. Empty content deletes the line."""
+def replace_lines(FILE_PATH: str, START_LINE: int, END_LINE: int, CONTENT: str) -> str:
+    """Replace lines START_LINE..END_LINE (inclusive) with CONTENT. Empty CONTENT deletes the range."""
     try:
         path = _resolve_and_validate(FILE_PATH)
     except ValueError as e:
@@ -149,40 +149,32 @@ def replace_lines(FILE_PATH: str, LINES: str) -> str:
     except ValueError as e:
         return json.dumps({"error": str(e)})
 
-    try:
-        replacements = _parse_lines_arg(LINES)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-
+    start = int(START_LINE)
+    end = int(END_LINE)
     total = len(lines)
 
-    for line_num, _ in replacements:
-        if line_num < 1 or line_num > total:
-            return json.dumps({"error": f"line {line_num} out of range, file has {total} lines"})
+    if start < 1:
+        return json.dumps({"error": f"START_LINE must be >= 1, got {start}"})
+    if end < start:
+        return json.dumps({"error": f"END_LINE ({end}) must be >= START_LINE ({start})"})
+    if start > total:
+        return json.dumps({"error": f"START_LINE ({start}) exceeds file length", "total_lines": total})
+    if end > total:
+        return json.dumps({"error": f"END_LINE ({end}) exceeds file length", "total_lines": total})
 
-    # Replace content, then remove lines with empty content (in reverse order)
-    lines_to_delete: list[int] = []
-    for line_num, content in replacements:
-        if content == "":
-            lines_to_delete.append(line_num)
-        else:
-            lines[line_num - 1] = content
+    # Parse CONTENT into replacement lines (strip one trailing newline if present)
+    if CONTENT.endswith("\n"):
+        CONTENT = CONTENT[:-1]
+    new_lines = CONTENT.split("\n") if CONTENT else []
 
-    # Delete in reverse order to preserve indices
-    for line_num in sorted(lines_to_delete, reverse=True):
-        del lines[line_num - 1]
+    lines[start - 1 : end] = new_lines
 
     _write_lines(path, lines)
 
-    # Return context window around affected range
-    if replacements:
-        min_line = min(r[0] for r in replacements)
-        max_line = max(r[0] for r in replacements) - len(lines_to_delete)
-        ctx_start = max(1, min_line - 3)
-        ctx_end = min(len(lines), max_line + 3)
-        return _format_result(lines, ctx_start, ctx_end)
-
-    return json.dumps([])
+    # Return context window around the affected region
+    ctx_start = max(1, start - 3)
+    ctx_end = min(len(lines), (start + max(0, len(new_lines) - 1)) + 3)
+    return _format_result(lines, ctx_start, ctx_end)
 
 
 def insert_lines(FILE_PATH: str, LINES: str) -> str:
@@ -292,9 +284,10 @@ FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "replace_lines",
             "description": (
-                "Replace content of specified lines in a file. "
-                "LINES is a JSON array of {line_number: new_content} objects. "
-                'Set content to "" to delete a line. '
+                "Replace a contiguous range of lines in a file with new content. "
+                "Lines START_LINE through END_LINE (inclusive) are replaced by CONTENT. "
+                "Set CONTENT to an empty string to delete the range. "
+                "CONTENT may span multiple lines (use \\n). "
                 "Returns the affected region after modification."
             ),
             "parameters": {
@@ -304,12 +297,20 @@ FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "File path relative to the working directory.",
                     },
-                    "LINES": {
+                    "START_LINE": {
+                        "type": "integer",
+                        "description": "First line of the range to replace (1-indexed).",
+                    },
+                    "END_LINE": {
+                        "type": "integer",
+                        "description": "Last line of the range to replace (1-indexed, inclusive).",
+                    },
+                    "CONTENT": {
                         "type": "string",
-                        "description": ('JSON array of objects, e.g. [{"5": "new line 5"}, {"6": "new line 6"}]. ' 'Use {"N": ""} to delete line N.'),
+                        "description": "Replacement text. Use \\n to separate multiple lines. Empty string deletes the range.",
                     },
                 },
-                "required": ["FILE_PATH", "LINES"],
+                "required": ["FILE_PATH", "START_LINE", "END_LINE", "CONTENT"],
             },
         },
     },
@@ -356,7 +357,7 @@ def get_file_tools(disabled: frozenset[str] = frozenset()) -> dict[str, Any]:
     tools: dict[str, Any] = {
         "read_file": lambda FILE_PATH, START_LINE, END_LINE, **_kw: read_file(FILE_PATH, START_LINE, END_LINE),
         "write_file": lambda FILE_PATH, CONTENT, **_kw: write_file(FILE_PATH, CONTENT),
-        "replace_lines": lambda FILE_PATH, LINES, **_kw: replace_lines(FILE_PATH, LINES),
+        "replace_lines": lambda FILE_PATH, START_LINE, END_LINE, CONTENT, **_kw: replace_lines(FILE_PATH, START_LINE, END_LINE, CONTENT),
         "insert_lines": lambda FILE_PATH, LINES, **_kw: insert_lines(FILE_PATH, LINES),
     }
     return {name: fn for name, fn in tools.items() if name not in disabled}

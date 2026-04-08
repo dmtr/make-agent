@@ -13,7 +13,6 @@ from make_agent.agent import (
     AgentConfig,
     AgentManager,
 )
-from make_agent.memory import Memory
 
 
 class MakeAgentShell(cmd.Cmd):

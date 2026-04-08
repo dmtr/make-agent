@@ -79,7 +79,7 @@ You have three built-in tools for editing files in the current directory. Use th
 
 - read_file — Read lines from a file
 - insert_lines - Insert new lines before specified positions in a file. 
-- replace_lines - Replace specific lines in a file with new content.
+- replace_lines - Replace a contiguous range of lines in a file with new content.
 
 endef
 

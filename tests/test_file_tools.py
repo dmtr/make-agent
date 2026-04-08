@@ -139,58 +139,72 @@ class TestReplaceLines:
     def test_single_line_replace(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "aaa\nbbb\nccc\n")
-        result = _result(replace_lines("test.txt", json.dumps([{"2": "BBB"}])))
+        result = _result(replace_lines("test.txt", 2, 2, "BBB"))
         assert isinstance(result, list)
         content = _read(tmp_path / "test.txt")
         assert content == "aaa\nBBB\nccc\n"
 
-    def test_multi_line_replace(self, tmp_path, monkeypatch):
+    def test_replace_range_same_size(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nb\nc\nd\ne\n")
-        replace_lines("test.txt", json.dumps([{"2": "B"}, {"4": "D"}]))
+        replace_lines("test.txt", 2, 3, "B\nC")
         content = _read(tmp_path / "test.txt")
-        assert content == "a\nB\nc\nD\ne\n"
+        assert content == "a\nB\nC\nd\ne\n"
 
-    def test_delete_line_via_empty_string(self, tmp_path, monkeypatch):
+    def test_replace_range_expand(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path / "test.txt", "a\nb\nc\n")
+        replace_lines("test.txt", 2, 2, "B\nB2\nB3")
+        content = _read(tmp_path / "test.txt")
+        assert content == "a\nB\nB2\nB3\nc\n"
+
+    def test_replace_range_shrink(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path / "test.txt", "a\nb\nc\nd\ne\n")
+        replace_lines("test.txt", 2, 4, "X")
+        content = _read(tmp_path / "test.txt")
+        assert content == "a\nX\ne\n"
+
+    def test_delete_range(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nb\nc\nd\n")
-        replace_lines("test.txt", json.dumps([{"2": ""}]))
+        replace_lines("test.txt", 2, 3, "")
         content = _read(tmp_path / "test.txt")
-        assert content == "a\nc\nd\n"
+        assert content == "a\nd\n"
 
-    def test_delete_multiple_lines(self, tmp_path, monkeypatch):
+    def test_content_with_trailing_newline(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        _write(tmp_path / "test.txt", "a\nb\nc\nd\ne\n")
-        replace_lines("test.txt", json.dumps([{"2": ""}, {"4": ""}]))
+        _write(tmp_path / "test.txt", "a\nb\nc\n")
+        replace_lines("test.txt", 2, 2, "BBB\n")
         content = _read(tmp_path / "test.txt")
-        assert content == "a\nc\ne\n"
+        assert content == "a\nBBB\nc\n"
 
-    def test_out_of_range_line(self, tmp_path, monkeypatch):
+    def test_out_of_range_start(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nb\n")
-        result = _result(replace_lines("test.txt", json.dumps([{"5": "x"}])))
+        result = _result(replace_lines("test.txt", 5, 5, "x"))
+        assert "error" in result
+
+    def test_end_before_start(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path / "test.txt", "a\nb\nc\n")
+        result = _result(replace_lines("test.txt", 3, 2, "x"))
         assert "error" in result
 
     def test_returns_context_window(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         lines = [f"line{i}" for i in range(1, 11)]
         _write(tmp_path / "test.txt", "\n".join(lines) + "\n")
-        result = _result(replace_lines("test.txt", json.dumps([{"5": "REPLACED"}])))
+        result = _result(replace_lines("test.txt", 5, 5, "REPLACED"))
         # Context is ±3 around line 5, so lines 2-8
         assert isinstance(result, list)
         line_nums = [int(list(r.keys())[0]) for r in result]
         assert min(line_nums) == 2
         assert max(line_nums) == 8
 
-    def test_invalid_json(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        _write(tmp_path / "test.txt", "a\n")
-        result = _result(replace_lines("test.txt", "not json"))
-        assert "error" in result
-
     def test_file_not_found(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = _result(replace_lines("nope.txt", json.dumps([{"1": "x"}])))
+        result = _result(replace_lines("nope.txt", 1, 1, "x"))
         assert "error" in result
 
 
