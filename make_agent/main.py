@@ -6,10 +6,9 @@ import sys
 from pathlib import Path
 
 from make_agent.agent import _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT
-from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
 from make_agent.agent_shell import run
 from make_agent.app_dirs import default_agents_dir, log_file, project_dir
-from make_agent.memory import Memory
+from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
 from make_agent.settings import load_settings, run_setup_wizard
 
 logger = logging.getLogger(__name__)
@@ -83,10 +82,7 @@ def _resolve_run_args(args: argparse.Namespace) -> argparse.Namespace:
     if getattr(args, "reasoning_effort", None) is None:
         raw = settings.get("reasoning_effort", "auto")
         if raw not in _REASONING_EFFORT_VALUES:
-            raise ValueError(
-                f"Invalid reasoning_effort in settings.yaml: {raw!r}. "
-                f"Valid values: {', '.join(_REASONING_EFFORT_VALUES)}"
-            )
+            raise ValueError(f"Invalid reasoning_effort in settings.yaml: {raw!r}. " f"Valid values: {', '.join(_REASONING_EFFORT_VALUES)}")
         args.reasoning_effort = raw
 
     return args
@@ -105,8 +101,7 @@ def _parse_disabled_tools(value: str | None) -> frozenset[str]:
     names = frozenset(n.strip() for n in value.split(",") if n.strip())
     unknown = names - BUILTIN_TOOL_NAMES
     if unknown:
-        sys.exit(f"make-agent: unknown built-in tool(s): {', '.join(sorted(unknown))}. "
-                 f"Valid names: {', '.join(sorted(BUILTIN_TOOL_NAMES))}")
+        sys.exit(f"make-agent: unknown built-in tool(s): {', '.join(sorted(unknown))}. " f"Valid names: {', '.join(sorted(BUILTIN_TOOL_NAMES))}")
     return names
 
 
@@ -123,11 +118,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
         except OSError as e:
             sys.exit(f"make-agent run: {e}")
 
-    memory: Memory | None = None
-    if args.with_memory:
-        db_path = project_dir() / "memory.db"
-        memory = Memory(db_path)
-
     run(
         makefile_path=Path(args.file),
         model=args.model,
@@ -137,7 +127,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
         max_tool_output=args.max_tool_output,
         max_tokens=args.max_tokens,
         agents_dir=args.agents_dir,
-        memory=memory,
+        with_memory=args.with_memory,
         disabled_builtin_tools=_parse_disabled_tools(args.disable_builtin_tools),
         reasoning_effort=args.reasoning_effort,
     )

@@ -10,10 +10,9 @@ from make_agent.agent import (
     _DEFAULT_MODEL,
     _DEFAULT_REASONING_EFFORT,
     _DEFAULT_TOOL_TIMEOUT,
-    Agent,
     AgentConfig,
+    AgentManager,
 )
-from make_agent.commands import export_conversation
 from make_agent.memory import Memory
 
 
@@ -23,9 +22,10 @@ class MakeAgentShell(cmd.Cmd):
     prompt = "make-agent> "
     intro = "Welcome to the Make Agent shell! Type your message and press Enter. Type '/exit' or '/quit' to leave."
 
-    def __init__(self, agent: Agent) -> None:
+    def __init__(self, agent_manager: AgentManager, session_id: str) -> None:
         super().__init__()
-        self._agent = agent
+        self._agent_manager = agent_manager
+        self._session_id = session_id
 
     def preloop(self) -> None:
         """Configure readline to treat '/' as part of a word so /cmd completions work."""
@@ -56,7 +56,7 @@ class MakeAgentShell(cmd.Cmd):
     def default(self, line: str) -> None:
         """Send *line* to the agent and print the reply."""
         try:
-            print(self._agent(line))
+            print(self._agent_manager.notify_agent(self._session_id, line))
         except Exception as e:
             print(f"Error: {e}")
 
@@ -78,11 +78,9 @@ class MakeAgentShell(cmd.Cmd):
 
     def do_export(self, line: str) -> None:
         """Export the conversation to a timestamped HTML file in the current directory."""
-        if not self._agent.messages:
-            print("Nothing to export yet.")
-            return
-        path = export_conversation(self._agent.messages, self._agent._model)
-        print(f"Exported to {path}")
+        path = self._agent_manager.export_conversation(self._session_id)
+        if path:
+            print(f"Conversation exported to {path}")
 
 
 def run(
@@ -94,7 +92,7 @@ def run(
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     agents_dir: str | None = None,
-    memory: Memory | None = None,
+    with_memory: bool = False,
     disabled_builtin_tools: frozenset[str] = frozenset(),
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
 ) -> None:
@@ -113,20 +111,20 @@ def run(
         max_tool_output=max_tool_output,
         max_tokens=max_tokens,
         agents_dir=agents_dir,
-        memory=memory,
         disabled_builtin_tools=disabled_builtin_tools,
         reasoning_effort=reasoning_effort,
     )
-    agent = Agent(agent_config)
-    print(f"Loaded {makefile_path}  |  tools: {agent.tool_names}")
+    agent_manager = AgentManager()
+    session_id = agent_manager.create_session(agent_config, with_memory=with_memory)
+    print(f"Loaded {makefile_path}")
 
     if prompt:
         print("Sending initial prompt...\n")
-        print(agent(prompt))
+        print(agent_manager.notify_agent(session_id, prompt))
         return
 
     print("Type your message. Prefix shell commands with /  (e.g. /exit, /help). Press Ctrl-D or Ctrl-C to exit.\n")
-    shell = MakeAgentShell(agent)
+    shell = MakeAgentShell(agent_manager, session_id)
     try:
         shell.cmdloop()
     except KeyboardInterrupt:

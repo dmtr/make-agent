@@ -1,5 +1,3 @@
-"""Interactive REPL agent loop for the make-agent."""
-
 from __future__ import annotations
 
 import json
@@ -7,6 +5,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Any, NamedTuple
+from uuid import uuid4
 
 import any_llm
 from any_llm.types.completion import (
@@ -15,8 +14,9 @@ from any_llm.types.completion import (
     Function,
 )
 
-from make_agent.app_dirs import default_agents_dir
+from make_agent.app_dirs import default_agents_dir, project_dir
 from make_agent.builtin_tools import BUILTIN_SCHEMAS, FILE_TOOL_SCHEMAS, _RunAgent, get_builtin_tools, get_memory_schemas
+from make_agent.commands import export_conversation
 from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, format_tool_result, run_tool
@@ -40,7 +40,6 @@ class AgentConfig(NamedTuple):
     max_tokens: int = _DEFAULT_MAX_TOKENS
     agents_dir: str | None = None
     debug: bool = False
-    memory: Memory | None = None
     disabled_builtin_tools: frozenset[str] = frozenset()
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT
 
@@ -140,7 +139,7 @@ class Agent:
         reply = agent("List the files in the current directory.")
     """
 
-    def __init__(self, config: AgentConfig) -> None:
+    def __init__(self, config: AgentConfig, memory: Memory | None) -> None:
         mf = parse_file(config.makefile_path)
         validate_or_raise(mf)
         self._model = config.model
@@ -149,14 +148,14 @@ class Agent:
         self._max_tokens = config.max_tokens
         self._tool_timeout = config.tool_timeout
         self._max_tool_output = config.max_tool_output
-        self._memory = config.memory
+        self._memory = memory
         self._reasoning_effort = config.reasoning_effort
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
         self._agents_dir = agents_dir
         self._disabled_builtin_tools = config.disabled_builtin_tools
-        self._builtins = get_builtin_tools(agents_dir, config.memory, config.disabled_builtin_tools, config.tool_timeout)
+        self._builtins = get_builtin_tools(agents_dir, memory, config.disabled_builtin_tools, config.tool_timeout)
         makefile_tools = build_tools(mf)
-        memory_schemas = get_memory_schemas() if config.memory is not None else []
+        memory_schemas = get_memory_schemas() if memory is not None else []
         active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
         active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in config.disabled_builtin_tools]
         active_file_schemas = [s for s in FILE_TOOL_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
@@ -177,6 +176,10 @@ class Agent:
         """Read-only view of the current conversation history."""
         return list(self._messages)
 
+    @property
+    def model(self) -> str:
+        return self._model
+
     def _run_agent(self, mk_path: Path, prompt: str) -> str:
         """Instantiate a specialist agent in-process and return its response."""
         sub_disabled = self._disabled_builtin_tools | frozenset({"run_agent"})
@@ -188,11 +191,13 @@ class Agent:
             max_tool_output=self._max_tool_output,
             max_tokens=self._max_tokens,
             agents_dir=self._agents_dir,
-            memory=self._memory,
             disabled_builtin_tools=sub_disabled,
             reasoning_effort=self._reasoning_effort,
         )
-        return Agent(sub_config)(prompt)
+        return Agent(sub_config, self._memory)(prompt)
+
+    def __repr__(self) -> str:
+        return f"Agent(model={self._model!r}, tools={self.tool_names!r})"
 
     def __call__(self, user_input: str) -> str:
         """Send *user_input* to the LLM and return the assistant's reply.
@@ -270,3 +275,49 @@ class Agent:
                 if self._memory is not None:
                     self._memory.store("agent", content)
                 return content
+
+
+class SessionNotFoundError(Exception):
+    pass
+
+
+class AgentManager:
+
+    def __init__(self):
+        self._sessions = {}
+
+    @staticmethod
+    def get_session_id() -> str:
+        return str(uuid4())
+
+    def create_session(self, config: AgentConfig, with_memory: bool = False) -> str:
+        session_id = self.get_session_id()
+
+        memory = None
+        if with_memory:
+            memory = self.init_memory(session_id)
+
+        agent = Agent(config, memory)
+        self._sessions[session_id] = agent
+
+        return session_id
+
+    def get_agent(self, session_id: str) -> Agent:
+        try:
+            return self._sessions[session_id]
+        except KeyError:
+            raise SessionNotFoundError(f"Session with id {session_id} not found.")
+
+    def notify_agent(self, session_id: str, message: str) -> str:
+        agent = self.get_agent(session_id)
+        return agent(message)
+
+    def export_conversation(self, session_id: str) -> Path | None:
+        agent = self.get_agent(session_id)
+        if agent.messages:
+            return export_conversation(agent.messages, agent.model)
+        return None
+
+    def init_memory(self, session_id: str) -> Memory:
+        db_path = project_dir() / "memory.db"
+        return Memory(db_path)
