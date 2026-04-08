@@ -439,15 +439,16 @@ class TestAgentAutoStorage:
     def _make_agent(self, tmp_path, mem):
         from make_agent.agent import Agent, AgentConfig
         mf_path = tmp_path / "Makefile"
-        mf_path.write_text("noop:\n\t@echo ok\n")
-        config = AgentConfig(makefile_path=mf_path, memory=mem)
-        return Agent(config)
+        config = AgentConfig(makefile_path=mf_path)
+        return Agent(config, mem)
+        return Agent(config, mem)
 
     def test_user_message_stored(self, tmp_path, mem):
         agent = self._make_agent(tmp_path, mem)
         fake_response = MagicMock()
         fake_response.choices[0].message.tool_calls = None
         fake_response.choices[0].message.content = "the reply"
+        fake_response.usage = None
 
         with patch("make_agent.agent._completion_with_retry", return_value=fake_response):
             agent("hello from user")
@@ -462,6 +463,7 @@ class TestAgentAutoStorage:
         fake_response = MagicMock()
         fake_response.choices[0].message.tool_calls = None
         fake_response.choices[0].message.content = "the reply"
+        fake_response.usage = None
 
         with patch("make_agent.agent._completion_with_retry", return_value=fake_response):
             agent("hello from user")
@@ -475,8 +477,8 @@ class TestAgentAutoStorage:
         from make_agent.agent import Agent, AgentConfig
         mf_path = tmp_path / "Makefile"
         mf_path.write_text("noop:\n\t@echo ok\n")
-        config = AgentConfig(makefile_path=mf_path, memory=None)
-        agent = Agent(config)
+        config = AgentConfig(makefile_path=mf_path)
+        agent = Agent(config, None)
 
         fake_response = MagicMock()
         fake_response.choices[0].message.tool_calls = None
@@ -525,9 +527,7 @@ class TestWithMemoryFlag:
         finally:
             main_module.run = original
 
-        assert captured.get("memory") is not None
-        from make_agent.memory import Memory
-        assert isinstance(captured["memory"], Memory)
+        assert captured.get("with_memory") is True
 
     def test_without_memory_flag_passes_none(self, tmp_path):
         import make_agent.main as main_module
@@ -563,7 +563,7 @@ class TestWithMemoryFlag:
         finally:
             main_module.run = original
 
-        assert captured.get("memory") is None
+        assert captured.get("with_memory") is False
 
     def test_settings_memory_true_enables_memory(self, tmp_path):
         import make_agent.main as main_module
@@ -602,7 +602,7 @@ class TestWithMemoryFlag:
             main_module.run = original
 
         from make_agent.memory import Memory
-        assert isinstance(captured.get("memory"), Memory)
+        assert captured.get("with_memory") is True
 
 
 # ── Token usage ───────────────────────────────────────────────────────────────

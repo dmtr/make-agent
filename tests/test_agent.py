@@ -133,12 +133,11 @@ class TestAgentValidation:
         mf = tmp_path / "Makefile"
         mf.write_text(content)
         return mf
-
     def test_valid_makefile_loads(self, tmp_path):
-        mf = self._write_makefile(tmp_path, ("# <tool>\n# Greet.\n# @param NAME string A name\n# </tool>\n" "greet:\n\t@echo $(NAME)\n"))
+        mf = self._write_makefile(tmp_path, ("# <tool>\n# Greet.\n# @param NAME string A name\n# </tool>\n" "greet:\n	@echo $(NAME)\n"))
         from make_agent.agent import Agent, AgentConfig
-
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"))
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
         assert "greet" in agent.tool_names
 
     def test_broken_recipe_raises_on_load(self, tmp_path):
@@ -147,7 +146,7 @@ class TestAgentValidation:
         from make_agent.agent import Agent, AgentConfig
 
         with pytest.raises(ValueError, match="FILE"):
-            Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"))
+            Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
 
     def test_error_message_names_tool_and_param(self, tmp_path):
         mf = self._write_makefile(tmp_path, ("# <tool>\n# Do X.\n# @param QUERY string Search term\n# </tool>\n" "search:\n\t@grep foo .\n"))
@@ -155,7 +154,7 @@ class TestAgentValidation:
         from make_agent.agent import Agent, AgentConfig
 
         with pytest.raises(ValueError) as exc_info:
-            Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"))
+            Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
         assert "search" in str(exc_info.value)
         assert "QUERY" in str(exc_info.value)
 
@@ -169,7 +168,7 @@ class TestRunAgentInProcess:
 
         mf = tmp_path / "Makefile"
         mf.write_text(content)
-        return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=agents_dir or str(tmp_path)))
+        return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=agents_dir or str(tmp_path)), None)
 
     def test_run_agent_disabled_for_sub_agent(self, tmp_path):
         """Sub-agents must not have run_agent available (prevents infinite loops)."""
@@ -178,7 +177,7 @@ class TestRunAgentInProcess:
         (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
         mf = tmp_path / "Makefile"
         mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)))
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
 
         # Build sub-config as _run_agent would and verify run_agent is disabled
         sub_disabled = agent._disabled_builtin_tools | frozenset({"run_agent"})  # noqa: SLF001
@@ -190,7 +189,7 @@ class TestRunAgentInProcess:
         (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
         mf = tmp_path / "Makefile"
         mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)))
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
         assert agent._model == "openai/gpt-4o-mini"  # noqa: SLF001
 
     def test_run_agent_dispatched_via_call(self, tmp_path):
@@ -202,7 +201,7 @@ class TestRunAgentInProcess:
         (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
         mf = tmp_path / "Makefile"
         mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)))
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
 
         # Patch _run_agent to return a known string without hitting the LLM
         with patch.object(agent, "_run_agent", return_value="specialist done") as mock_run:
