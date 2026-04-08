@@ -27,6 +27,7 @@ _DEFAULT_TOOL_TIMEOUT = 600  # seconds
 _DEFAULT_MAX_TOOL_OUTPUT = 20000  # characters; 0 = unlimited
 _DEFAULT_MAX_TOKENS = 4096
 _DEFAULT_REASONING_EFFORT = "auto"
+_MAX_REPEATED_FAILURES = 3
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,10 @@ class Agent:
         if self._memory is not None:
             self._memory.store("user", user_input)
 
+        # Track consecutive identical failing tool calls to detect loops.
+        last_fail_key: str | None = None
+        consecutive_failures = 0
+
         while True:
             response = _completion_with_retry(
                 self._model,
@@ -280,6 +285,31 @@ class Agent:
                             "content": output,
                         }
                     )
+
+                    # Detect repeated identical failing tool calls.
+                    is_error = '"error"' in output or '"stderr"' in output
+                    call_key = f"{target}:{tc.function.arguments}"
+                    if is_error and call_key == last_fail_key:
+                        consecutive_failures += 1
+                    elif is_error:
+                        last_fail_key = call_key
+                        consecutive_failures = 1
+                    else:
+                        last_fail_key = None
+                        consecutive_failures = 0
+
+                if consecutive_failures >= _MAX_REPEATED_FAILURES:
+                    hint = (
+                        "You have repeated the same failing tool call "
+                        f"{consecutive_failures} times. The arguments appear to be "
+                        "incorrect. Try a different approach: use a simpler tool "
+                        "(e.g. write_file instead of replace_lines), break the "
+                        "task into smaller steps, or ask the user for help."
+                    )
+                    logger.debug("[repeated_failure_hint] %s", hint)
+                    self._messages.append({"role": "system", "content": hint})
+                    last_fail_key = None
+                    consecutive_failures = 0
             else:
                 content = msg.content or ""
                 self._messages.append({"role": "assistant", "content": content})

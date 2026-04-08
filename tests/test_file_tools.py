@@ -12,6 +12,7 @@ from make_agent.builtin_tools.file_tools import (
     insert_lines,
     read_file,
     replace_lines,
+    write_file,
 )
 
 
@@ -258,20 +259,68 @@ class TestInsertLines:
         assert "error" in result
 
 
+class TestWriteFile:
+    def test_create_new_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = _result(write_file("new.txt", "hello\nworld\n"))
+        assert result["ok"] is True
+        assert result["lines_written"] == 2
+        assert _read(tmp_path / "new.txt") == "hello\nworld\n"
+
+    def test_overwrite_existing_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path / "test.txt", "old content\n")
+        result = _result(write_file("test.txt", "new content\n"))
+        assert result["ok"] is True
+        assert _read(tmp_path / "test.txt") == "new content\n"
+
+    def test_create_in_subdirectory(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = _result(write_file("sub/dir/file.txt", "nested\n"))
+        assert result["ok"] is True
+        assert _read(tmp_path / "sub" / "dir" / "file.txt") == "nested\n"
+
+    def test_empty_content(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = _result(write_file("empty.txt", ""))
+        assert result["ok"] is True
+        assert result["lines_written"] == 0
+        assert _read(tmp_path / "empty.txt") == ""
+
+    def test_rejects_directory_path(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "adir").mkdir()
+        result = _result(write_file("adir", "content"))
+        assert "error" in result
+
+    def test_rejects_path_traversal(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = _result(write_file("../escape.txt", "bad"))
+        assert "error" in result
+        assert "escapes working directory" in result["error"]
+
+    def test_content_without_trailing_newline(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = _result(write_file("notrail.txt", "no newline"))
+        assert result["ok"] is True
+        assert result["lines_written"] == 1
+        assert _read(tmp_path / "notrail.txt") == "no newline"
+
+
 class TestSchemas:
     def test_schema_count(self):
-        assert len(FILE_TOOL_SCHEMAS) == 3
+        assert len(FILE_TOOL_SCHEMAS) == 4
 
     def test_schema_names(self):
         names = {s["function"]["name"] for s in FILE_TOOL_SCHEMAS}
-        assert names == {"read_file", "replace_lines", "insert_lines"}
+        assert names == {"read_file", "write_file", "replace_lines", "insert_lines"}
 
     def test_tool_names_frozenset(self):
-        assert FILE_TOOL_NAMES == frozenset({"read_file", "replace_lines", "insert_lines"})
+        assert FILE_TOOL_NAMES == frozenset({"read_file", "write_file", "replace_lines", "insert_lines"})
 
     def test_get_file_tools_returns_all(self):
         tools = get_file_tools()
-        assert set(tools.keys()) == {"read_file", "replace_lines", "insert_lines"}
+        assert set(tools.keys()) == {"read_file", "write_file", "replace_lines", "insert_lines"}
 
     def test_get_file_tools_respects_disabled(self):
         tools = get_file_tools(disabled=frozenset({"read_file"}))

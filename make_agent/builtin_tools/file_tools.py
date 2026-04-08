@@ -1,4 +1,4 @@
-"""Built-in file editing tools: read_file, replace_lines, insert_lines.
+"""Built-in file editing tools: read_file, write_file, replace_lines, insert_lines.
 
 These tools give every agent structured, line-level file access with
 path sandboxing (all paths must resolve within the working directory).
@@ -106,6 +106,30 @@ def read_file(FILE_PATH: str, START_LINE: int, END_LINE: int) -> str:
         return json.dumps({"error": f"END_LINE ({end}) exceeds file length", "total_lines": total})
 
     return _format_result(lines, start, end)
+
+
+def write_file(FILE_PATH: str, CONTENT: str) -> str:
+    """Write full content to a file, creating it if necessary.
+
+    This is a simpler alternative to ``replace_lines`` for when the LLM
+    wants to rewrite the whole file or create a new one.
+    """
+    try:
+        path = _resolve_and_validate(FILE_PATH)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+    if path.is_dir():
+        return json.dumps({"error": f"path is a directory: {FILE_PATH}"})
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(CONTENT, encoding="utf-8")
+    except OSError as e:
+        return json.dumps({"error": str(e)})
+
+    line_count = CONTENT.count("\n") + (0 if CONTENT.endswith("\n") or not CONTENT else 1)
+    return json.dumps({"ok": True, "lines_written": line_count, "path": FILE_PATH})
 
 
 def replace_lines(FILE_PATH: str, LINES: str) -> str:
@@ -240,6 +264,32 @@ FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "write_file",
+            "description": (
+                "Write full content to a file, creating it if it does not exist. "
+                "Overwrites the entire file. Use this instead of replace_lines when "
+                "rewriting a whole file or creating a new file. "
+                "Returns {ok: true, lines_written: N}."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "FILE_PATH": {
+                        "type": "string",
+                        "description": "File path relative to the working directory.",
+                    },
+                    "CONTENT": {
+                        "type": "string",
+                        "description": "The full text content to write to the file.",
+                    },
+                },
+                "required": ["FILE_PATH", "CONTENT"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "replace_lines",
             "description": (
                 "Replace content of specified lines in a file. "
@@ -294,6 +344,7 @@ FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
 FILE_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "read_file",
+        "write_file",
         "replace_lines",
         "insert_lines",
     }
@@ -304,6 +355,7 @@ def get_file_tools(disabled: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Return a name → callable mapping for file editing tools."""
     tools: dict[str, Any] = {
         "read_file": lambda FILE_PATH, START_LINE, END_LINE, **_kw: read_file(FILE_PATH, START_LINE, END_LINE),
+        "write_file": lambda FILE_PATH, CONTENT, **_kw: write_file(FILE_PATH, CONTENT),
         "replace_lines": lambda FILE_PATH, LINES, **_kw: replace_lines(FILE_PATH, LINES),
         "insert_lines": lambda FILE_PATH, LINES, **_kw: insert_lines(FILE_PATH, LINES),
     }

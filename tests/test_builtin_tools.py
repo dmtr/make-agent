@@ -211,6 +211,7 @@ def test_get_builtin_tools_returns_all_four():
         "create_agent",
         "run_agent",
         "read_file",
+        "write_file",
         "replace_lines",
         "insert_lines",
     }

@@ -30,6 +30,7 @@ from make_agent.builtin_tools.file_tools import (
     insert_lines,
     read_file,
     replace_lines,
+    write_file,
 )
 from make_agent.builtin_tools.memory_tools import MEMORY_SCHEMAS, get_memory_schemas
 
@@ -95,4 +96,5 @@ __all__ = [
     "replace_lines",
     "run_agent",
     "validate_agent",
+    "write_file",
 ]

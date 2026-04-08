@@ -64,6 +64,14 @@ Always delegate work to specialist agents rather than attempting tasks directly.
 Always check if a suitable specialist exists before creating a new one.
 Always create a plan for completing the task and provide it to the user to confirm before executing any steps. The plan should include which agents you intend to use and how.
 
+## Tool usage best practices
+
+- Before reading a file with read_file, use show-file or search-files to check it exists and gauge its size. Do not guess END_LINE — read in small chunks (30-50 lines).
+- For file edits, prefer write_file (full rewrite) over replace_lines when changing more than a few lines. replace_lines requires a tricky JSON format that is error-prone.
+- If a tool call fails, do NOT retry with the same arguments. Analyse the error, then try a different approach (different tool, different arguments, or smaller steps).
+- Keep edits minimal — change only what is needed for the task.
+- If you are stuck after 2-3 failed attempts, explain the problem to the user and ask for guidance instead of retrying.
+
 ## Memory tools (available when --with-memory is enabled)
 
 - get_recent_messages(limit, from_date, to_date) — fetch the N most recent messages; use this first to orient yourself at the start of a session
@@ -78,7 +86,7 @@ FTS5 tips:
 - If a search returns nothing, retry with broader or alternative keywords
 endef
 
-.PHONY: current-dir os-info current-date
+.PHONY: current-dir os-info current-date search-files show-file
 
 # <tool>
 # Return the current working directory path.
@@ -97,3 +105,17 @@ os-info:
 # </tool>
 current-date:
 	@date
+
+# <tool>
+# Search for a text pattern in files recursively. Returns matching lines with file paths and line numbers.
+# @param PATTERN string The text or regex pattern to search for
+# </tool>
+search-files:
+	@grep -rn "$(PATTERN)" . --include='*.py' --include='*.mk' --include='*.yaml' --include='*.yml' --include='*.md' --include='*.txt' --include='*.json' --include='*.toml' --include='*.cfg' --include='*.sh' 2>/dev/null || echo "No matches found for: $(PATTERN)"
+
+# <tool>
+# Display the full contents of a file.
+# @param FILE string Path to the file to display
+# </tool>
+show-file:
+	@cat "$(FILE)" 2>/dev/null || echo "ERROR: file not found: $(FILE)"
