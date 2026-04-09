@@ -439,8 +439,8 @@ class TestAgentAutoStorage:
     def _make_agent(self, tmp_path, mem):
         from make_agent.agent import Agent, AgentConfig
         mf_path = tmp_path / "Makefile"
+        mf_path.write_text("noop:\n\t@echo ok\n")
         config = AgentConfig(makefile_path=mf_path)
-        return Agent(config, mem)
         return Agent(config, mem)
 
     def test_user_message_stored(self, tmp_path, mem):
