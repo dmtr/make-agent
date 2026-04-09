@@ -88,6 +88,7 @@ class Rule:
 @dataclass
 class Makefile:
     system_prompt: str | None = None
+    description: str | None = None
     variables: dict[str, Variable] = field(default_factory=dict)
     rules: list[Rule] = field(default_factory=list)
     default_target: str | None = None  # first non-special target
@@ -172,6 +173,8 @@ def parse(text: str) -> Makefile:
                 result.variables[define_name] = Variable(name=define_name, value=value, flavor="define")
                 if define_name == "SYSTEM_PROMPT":
                     result.system_prompt = value.strip() or None
+                if define_name == "DESCRIPTION":
+                    result.description = value.strip() or None
                 state = _State.NORMAL
             else:
                 define_lines.append(line)

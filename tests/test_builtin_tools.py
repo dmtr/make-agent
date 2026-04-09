@@ -7,7 +7,7 @@ import textwrap
 import pytest
 from make_agent.builtin_tools import (
     BUILTIN_SCHEMAS,
-    _agent_summary,
+    _agent_description,
     _RunAgent,
     _valid_agent_name,
     create_agent,
@@ -30,7 +30,7 @@ def test_valid_agent_name_rejects_invalid(name):
     assert _valid_agent_name(name) is False
 
 
-# ── _agent_summary ────────────────────────────────────────────────────────────
+# ── _agent_description ───────────────────────────────────────────────────────
 
 _AGENT_MK = """\
 define SYSTEM_PROMPT
@@ -56,50 +56,24 @@ write-file:
 """
 
 
-def test_agent_summary_includes_system_prompt(tmp_path):
+def test_agent_description_returns_description(tmp_path):
+    mk = tmp_path / "agent.mk"
+    mk.write_text("define DESCRIPTION\nA file specialist.\nendef\n")
+    result = _agent_description(mk)
+    assert "A file specialist." in result
+
+
+def test_agent_description_no_description(tmp_path):
     mk = tmp_path / "agent.mk"
     mk.write_text(_AGENT_MK)
-    summary = _agent_summary(mk)
-    assert "You are a file specialist." in summary
+    result = _agent_description(mk)
+    assert "(no description)" in result
 
 
-def test_agent_summary_includes_tool_names(tmp_path):
-    mk = tmp_path / "agent.mk"
-    mk.write_text(_AGENT_MK)
-    summary = _agent_summary(mk)
-    assert "read-file" in summary
-    assert "write-file" in summary
-
-
-def test_agent_summary_includes_tool_descriptions(tmp_path):
-    mk = tmp_path / "agent.mk"
-    mk.write_text(_AGENT_MK)
-    summary = _agent_summary(mk)
-    assert "Read the contents of a file." in summary
-    assert "Write content to a file." in summary
-
-
-def test_agent_summary_includes_param_names(tmp_path):
-    mk = tmp_path / "agent.mk"
-    mk.write_text(_AGENT_MK)
-    summary = _agent_summary(mk)
-    assert "PATH" in summary
-    assert "CONTENT" in summary
-
-
-def test_agent_summary_no_tools(tmp_path):
-    mk = tmp_path / "agent.mk"
-    mk.write_text("define SYSTEM_PROMPT\nJust a prompt.\nendef\n")
-    summary = _agent_summary(mk)
-    assert "Just a prompt." in summary
-    assert "tools:" not in summary
-
-
-def test_agent_summary_parse_error(tmp_path):
+def test_agent_description_parse_error(tmp_path):
     mk = tmp_path / "bad.mk"
     mk.write_text("")
-    result = _agent_summary(mk)
-    # Should not raise; returns a fallback string
+    result = _agent_description(mk)
     assert isinstance(result, str)
 
 
@@ -117,18 +91,18 @@ def test_list_agent_empty_dir(tmp_path):
 
 
 def test_list_agent_returns_agents(tmp_path):
-    (tmp_path / "search.mk").write_text("define SYSTEM_PROMPT\nYou are a search specialist.\nendef\n")
-    (tmp_path / "writer.mk").write_text("define SYSTEM_PROMPT\nYou are a writer.\nendef\n")
+    (tmp_path / "search.mk").write_text("define DESCRIPTION\nSearches files by pattern.\nendef\n")
+    (tmp_path / "writer.mk").write_text("define DESCRIPTION\nWrites and edits files.\nendef\n")
     result = list_agent(str(tmp_path))
     assert "search:" in result
-    assert "You are a search specialist." in result
+    assert "Searches files by pattern." in result
     assert "writer:" in result
-    assert "You are a writer." in result
+    assert "Writes and edits files." in result
 
 
 def test_list_agent_sorted(tmp_path):
-    (tmp_path / "zzz.mk").write_text("define SYSTEM_PROMPT\nZ agent.\nendef\n")
-    (tmp_path / "aaa.mk").write_text("define SYSTEM_PROMPT\nA agent.\nendef\n")
+    (tmp_path / "zzz.mk").write_text("define DESCRIPTION\nZ agent.\nendef\n")
+    (tmp_path / "aaa.mk").write_text("define DESCRIPTION\nA agent.\nendef\n")
     result = list_agent(str(tmp_path))
     assert result.index("aaa:") < result.index("zzz:")
 
@@ -181,18 +155,20 @@ def test_validate_agent_reports_errors(tmp_path):
 
 
 def test_create_agent_writes_file(tmp_path):
-    result = create_agent("myagent", _AGENT_MK, str(tmp_path))
+    result = create_agent("myagent", _AGENT_MK, "A file management agent.", str(tmp_path))
     assert result.startswith("Created agent 'myagent'")
-    assert (tmp_path / "myagent.mk").read_text() == _AGENT_MK
+    written = (tmp_path / "myagent.mk").read_text()
+    assert "define DESCRIPTION" in written
+    assert "A file management agent." in written
 
 
 def test_create_agent_reports_tool_count(tmp_path):
-    result = create_agent("myagent", _AGENT_MK, str(tmp_path))
+    result = create_agent("myagent", _AGENT_MK, "A file management agent.", str(tmp_path))
     assert "2 tool(s)" in result
 
 
 def test_create_agent_invalid_name(tmp_path):
-    result = create_agent("../evil", _AGENT_MK, str(tmp_path))
+    result = create_agent("../evil", _AGENT_MK, "Evil agent.", str(tmp_path))
     assert result.startswith("Error")
 
 
@@ -213,7 +189,7 @@ def test_create_agent_validation_error(tmp_path):
         \t@echo hello
     """
     )
-    result = create_agent("bad", bad_mk, str(tmp_path))
+    result = create_agent("bad", bad_mk, "Bad agent.", str(tmp_path))
     assert "Validation errors" in result
     assert "UNUSED" in result
     assert not (tmp_path / "bad.mk").exists()
@@ -221,7 +197,7 @@ def test_create_agent_validation_error(tmp_path):
 
 def test_get_builtin_tools_create_agent_callable(tmp_path):
     tools = get_builtin_tools(str(tmp_path))
-    result = tools["create_agent"](name="myagent", makefile=_AGENT_MK)
+    result = tools["create_agent"](name="myagent", description="A file agent.", makefile=_AGENT_MK)
     assert result.startswith("Created agent 'myagent'")
 
 
@@ -246,7 +222,7 @@ def test_builtin_schemas_required_params():
     by_name = {s["function"]["name"]: s["function"] for s in BUILTIN_SCHEMAS}
     assert by_name["list_agent"]["parameters"]["required"] == []
     assert by_name["validate_agent"]["parameters"]["required"] == ["name"]
-    assert set(by_name["create_agent"]["parameters"]["required"]) == {"name", "makefile"}
+    assert set(by_name["create_agent"]["parameters"]["required"]) == {"name", "description", "makefile"}
     assert set(by_name["run_agent"]["parameters"]["required"]) == {"name", "prompt"}
 
 

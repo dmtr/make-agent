@@ -15,7 +15,7 @@ from typing import Any
 
 from make_agent.builtin_tools.agent_tools import (
     AGENT_SCHEMAS,
-    _agent_summary,
+    _agent_description,
     _RunAgent,
     _valid_agent_name,
     create_agent,
@@ -63,7 +63,7 @@ def get_builtin_tools(agents_dir: str, memory: Any = None, disabled: frozenset[s
     tools: dict[str, Any] = {
         "list_agent": lambda **_kw: list_agent(agents_dir),
         "validate_agent": lambda name, **_kw: validate_agent(name, agents_dir),
-        "create_agent": lambda name, makefile, **_kw: create_agent(name, makefile, agents_dir),
+        "create_agent": lambda name, description, makefile, **_kw: create_agent(name, makefile, description, agents_dir),
         "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir),
     }
     if memory is not None:
@@ -84,7 +84,7 @@ __all__ = [
     "FILE_TOOL_SCHEMAS",
     "MEMORY_SCHEMAS",
     "_RunAgent",
-    "_agent_summary",
+    "_agent_description",
     "_valid_agent_name",
     "create_agent",
     "get_builtin_tools",

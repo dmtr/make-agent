@@ -15,45 +15,27 @@ def _valid_agent_name(name: str) -> bool:
     return bool(_VALID_AGENT_NAME_RE.fullmatch(name))
 
 
-def _agent_summary(mk_path: Path) -> str:
-    """Return a multi-line summary of an agent: system prompt + tool list."""
+def _agent_description(mk_path: Path) -> str:
+    """Return the agent's description, or a fallback if absent."""
     try:
         mf = parse_file(mk_path)
     except Exception:
         return "  (could not parse)"
 
-    lines: list[str] = []
-
-    if mf.system_prompt:
-        # First non-empty line of the system prompt as the headline.
-        for line in mf.system_prompt.splitlines():
-            if line.strip():
-                lines.append(f"  {line.strip()}")
-                break
-    else:
-        lines.append("  (no description)")
-
-    tools = [r for r in mf.rules if r.description is not None]
-    if tools:
-        lines.append("  tools:")
-        for rule in tools:
-            desc = rule.description.splitlines()[0].strip() if rule.description else ""
-            params = ", ".join(p.name for p in rule.params)
-            param_str = f"({params})" if params else "()"
-            lines.append(f"    - {rule.target}{param_str}: {desc}")
-
-    return "\n".join(lines)
+    if mf.description:
+        return f"  {mf.description}"
+    return "  (no description)"
 
 
 def list_agent(agents_dir: str) -> str:
-    """List all available specialist agents with their system prompt and tools."""
+    """List all available specialist agents with their descriptions."""
     path = Path(agents_dir)
     if not path.exists():
         return "No agents found (directory does not exist)"
     mk_files = sorted(path.glob("*.mk"))
     if not mk_files:
         return "No agents found"
-    entries = [f"{mk.stem}:\n{_agent_summary(mk)}" for mk in mk_files]
+    entries = [f"{mk.stem}:\n{_agent_description(mk)}" for mk in mk_files]
     return "\n\n".join(entries)
 
 
@@ -87,10 +69,12 @@ def _write_output_no_symlink(output_path: Path, content: str) -> None:
     output_path.write_text(content, encoding="utf-8")
 
 
-def create_agent(name: str, makefile: str, agents_dir: str) -> str:
+def create_agent(name: str, makefile: str, description: str, agents_dir: str) -> str:
     """Create a new specialist agent from a raw Makefile string."""
     if not _valid_agent_name(name):
         return f"Error: invalid agent name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
+
+    makefile = f"define DESCRIPTION\n{description}\nendef\n\n" + makefile
 
     try:
         mf = parse(makefile)
@@ -137,7 +121,7 @@ AGENT_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_agent",
-            "description": ("List all available specialist agents in the library. " "Returns each agent name and a short description of its purpose."),
+            "description": ("List all available specialist agents in the library. " "Returns each agent name and its description."),
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -188,6 +172,10 @@ AGENT_SCHEMAS: list[dict[str, Any]] = [
                             "The agent name (without .mk extension, e.g. 'file-search'). " "Use letters, numbers, hyphens, underscores, and dots only."
                         ),
                     },
+                    "description": {
+                        "type": "string",
+                        "description": "A short human-readable description of what this agent does. Saved as a DESCRIPTION variable in the Makefile.",
+                    },
                     "makefile": {
                         "type": "string",
                         "description": (
@@ -197,7 +185,7 @@ AGENT_SCHEMAS: list[dict[str, Any]] = [
                         ),
                     },
                 },
-                "required": ["name", "makefile"],
+                "required": ["name", "description", "makefile"],
             },
         },
     },
