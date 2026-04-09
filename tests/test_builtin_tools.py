@@ -10,6 +10,7 @@ from make_agent.builtin_tools import (
     _agent_summary,
     _RunAgent,
     _valid_agent_name,
+    create_agent,
     get_builtin_tools,
     list_agent,
     run_agent,
@@ -176,6 +177,54 @@ def test_validate_agent_reports_errors(tmp_path):
     assert "UNUSED" in result
 
 
+# ── create_agent ─────────────────────────────────────────────────────────────
+
+
+def test_create_agent_writes_file(tmp_path):
+    result = create_agent("myagent", _AGENT_MK, str(tmp_path))
+    assert result.startswith("Created agent 'myagent'")
+    assert (tmp_path / "myagent.mk").read_text() == _AGENT_MK
+
+
+def test_create_agent_reports_tool_count(tmp_path):
+    result = create_agent("myagent", _AGENT_MK, str(tmp_path))
+    assert "2 tool(s)" in result
+
+
+def test_create_agent_invalid_name(tmp_path):
+    result = create_agent("../evil", _AGENT_MK, str(tmp_path))
+    assert result.startswith("Error")
+
+
+def test_create_agent_validation_error(tmp_path):
+    bad_mk = textwrap.dedent(
+        """\
+        define SYSTEM_PROMPT
+        Bad agent.
+        endef
+
+        .PHONY: do-thing
+
+        # <tool>
+        # Do something.
+        # @param UNUSED string Not referenced
+        # </tool>
+        do-thing:
+        \t@echo hello
+    """
+    )
+    result = create_agent("bad", bad_mk, str(tmp_path))
+    assert "Validation errors" in result
+    assert "UNUSED" in result
+    assert not (tmp_path / "bad.mk").exists()
+
+
+def test_get_builtin_tools_create_agent_callable(tmp_path):
+    tools = get_builtin_tools(str(tmp_path))
+    result = tools["create_agent"](name="myagent", makefile=_AGENT_MK)
+    assert result.startswith("Created agent 'myagent'")
+
+
 # ── BUILTIN_SCHEMAS ───────────────────────────────────────────────────────────
 
 
@@ -197,6 +246,7 @@ def test_builtin_schemas_required_params():
     by_name = {s["function"]["name"]: s["function"] for s in BUILTIN_SCHEMAS}
     assert by_name["list_agent"]["parameters"]["required"] == []
     assert by_name["validate_agent"]["parameters"]["required"] == ["name"]
+    assert set(by_name["create_agent"]["parameters"]["required"]) == {"name", "makefile"}
     assert set(by_name["run_agent"]["parameters"]["required"]) == {"name", "prompt"}
 
 

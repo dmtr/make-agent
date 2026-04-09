@@ -63,7 +63,7 @@ def get_builtin_tools(agents_dir: str, memory: Any = None, disabled: frozenset[s
     tools: dict[str, Any] = {
         "list_agent": lambda **_kw: list_agent(agents_dir),
         "validate_agent": lambda name, **_kw: validate_agent(name, agents_dir),
-        "create_agent": lambda name, spec, **_kw: create_agent(name, spec, agents_dir),
+        "create_agent": lambda name, makefile, **_kw: create_agent(name, makefile, agents_dir),
         "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir),
     }
     if memory is not None:

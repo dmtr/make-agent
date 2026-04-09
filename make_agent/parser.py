@@ -154,7 +154,7 @@ def parse(text: str) -> Makefile:
             in_define = True
         elif in_define:
             logical_lines.append(raw)
-            if stripped_raw == "endef":
+            if raw.startswith("endef") and raw.strip() == "endef":
                 in_define = False
         elif raw.endswith("\\"):
             buf += raw[:-1] + " "
@@ -167,7 +167,7 @@ def parse(text: str) -> Makefile:
     for line in logical_lines:
         # ── Inside a define block ────────────────────────────────────────────
         if state == _State.DEFINE:
-            if line.strip() == "endef":
+            if line.startswith("endef") and line.strip() == "endef":
                 value = "\n".join(define_lines)
                 result.variables[define_name] = Variable(name=define_name, value=value, flavor="define")
                 if define_name == "SYSTEM_PROMPT":

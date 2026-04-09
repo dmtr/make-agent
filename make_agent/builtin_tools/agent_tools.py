@@ -6,9 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, NamedTuple
 
-import yaml
-from make_agent.create_agent import _write_output_no_symlink, render
-from make_agent.parser import parse_file, validate
+from make_agent.parser import parse, parse_file, validate
 
 _VALID_AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -81,34 +79,37 @@ def validate_agent(name: str, agents_dir: str) -> str:
     return f"OK — {mk_path} ({tool_count} tool(s) valid)"
 
 
-def create_agent(name: str, spec: str, agents_dir: str) -> str:
-    """Create a new specialist agent Makefile from a YAML spec string."""
+def _write_output_no_symlink(output_path: Path, content: str) -> None:
+    """Write *content* to *output_path* while refusing symlink destinations."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.is_symlink():
+        raise ValueError(f"refusing to overwrite symlink: {output_path}")
+    output_path.write_text(content, encoding="utf-8")
+
+
+def create_agent(name: str, makefile: str, agents_dir: str) -> str:
+    """Create a new specialist agent from a raw Makefile string."""
     if not _valid_agent_name(name):
         return f"Error: invalid agent name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
 
     try:
-        parsed_spec = yaml.safe_load(spec)
-    except yaml.YAMLError as e:
-        return f"Error: invalid YAML spec: {e}"
+        mf = parse(makefile)
+    except Exception as e:
+        return f"Error: could not parse Makefile: {e}"
 
-    try:
-        makefile_content = render(parsed_spec)
-    except KeyError as e:
-        return f"Error: missing required field in spec: {e}"
-    except TypeError as e:
-        return f"Error: invalid spec structure: {e}"
-    except ValueError as e:
-        return f"Error: {e}"
+    errors = validate(mf)
+    if errors:
+        return "Validation errors:\n" + "\n".join(f"  - {e}" for e in errors)
 
     mk_path = Path(agents_dir) / f"{name}.mk"
     try:
-        _write_output_no_symlink(mk_path, makefile_content)
+        _write_output_no_symlink(mk_path, makefile)
     except OSError as e:
         return f"Error: could not write agent file: {e}"
     except ValueError as e:
         return f"Error: {e}"
 
-    tool_count = sum(1 for t in parsed_spec.get("tools", []))
+    tool_count = sum(1 for r in mf.rules if r.description is not None)
     return f"Created agent '{name}' at {mk_path} ({tool_count} tool(s))"
 
 
@@ -173,8 +174,9 @@ AGENT_SCHEMAS: list[dict[str, Any]] = [
             "name": "create_agent",
             "description": (
                 "Create a new specialist agent by writing a Makefile to the agents library. "
-                "Accepts a YAML spec with a system_prompt and a list of tools (each with a "
-                "name, description, optional params, and recipe). "
+                "Accepts a raw Makefile string with a define SYSTEM_PROMPT block and tool targets "
+                "annotated with # <tool> comment blocks. "
+                "Validates the Makefile before writing. "
                 "Returns 'Created agent ...' on success or an error message."
             ),
             "parameters": {
@@ -186,17 +188,16 @@ AGENT_SCHEMAS: list[dict[str, Any]] = [
                             "The agent name (without .mk extension, e.g. 'file-search'). " "Use letters, numbers, hyphens, underscores, and dots only."
                         ),
                     },
-                    "spec": {
+                    "makefile": {
                         "type": "string",
                         "description": (
-                            "YAML string defining the agent. Required fields: "
-                            "'system_prompt' (string) and 'tools' (list). "
-                            "Each tool needs 'name', 'description', 'recipe' (list of shell commands), "
-                            "and optional 'params' (list of {name, type, description})."
+                            "Raw Makefile content for the agent. Must include a "
+                            "'define SYSTEM_PROMPT ... endef' block and one or more tool targets "
+                            "preceded by '# <tool> ... # </tool>' comment blocks."
                         ),
                     },
                 },
-                "required": ["name", "spec"],
+                "required": ["name", "makefile"],
             },
         },
     },

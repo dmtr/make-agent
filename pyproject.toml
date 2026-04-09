@@ -34,7 +34,6 @@ dev = [
 
 [project.scripts]
 make_agent = "make_agent.main:main"
-make-agent-create = "make_agent.create_agent:main"
 
 [build-system]
 requires = ["setuptools"]

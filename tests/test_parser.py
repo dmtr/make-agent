@@ -496,3 +496,35 @@ class TestValidate:
     def test_define_does_not_create_rule(self):
         mf = parse("define SYSTEM_PROMPT\nHi.\nendef\nbuild:")
         assert len(mf.rules) == 1
+
+    def test_indented_endef_does_not_terminate_define_block(self):
+        # An indented `endef` (e.g. inside a system-prompt example) must NOT
+        # end the outer define block — only a column-0 `endef` terminates it.
+        mk = (
+            "define SYSTEM_PROMPT\n"
+            "Use this format:\n"
+            "  define SYSTEM_PROMPT\n"
+            "  You are ...\n"
+            "  endef\n"          # indented — must be ignored
+            "  # <tool>\n"       # must be ignored (still inside define block)
+            "  # @param X string desc\n"
+            "  # </tool>\n"
+            "  tool:\n"
+            "\t@echo $(X)\n"
+            "endef\n"            # column-0 — terminates the block
+            ".PHONY: real-tool\n"
+            "# <tool>\n"
+            "# Real tool.\n"
+            "# @param Y string desc\n"
+            "# </tool>\n"
+            "real-tool:\n"
+            "\t@echo $(Y)\n"
+        )
+        mf = parse(mk)
+        # System prompt captures everything up to the column-0 endef
+        assert "Use this format:" in mf.system_prompt
+        assert "  endef" in mf.system_prompt
+        # Only one tool rule — the real one, not the example
+        tool_rules = [r for r in mf.rules if r.description is not None]
+        assert len(tool_rules) == 1
+        assert tool_rules[0].target == "real-tool"
