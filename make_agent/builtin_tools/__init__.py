@@ -53,7 +53,7 @@ BUILTIN_TOOL_NAMES: frozenset[str] = (
 BUILTIN_SCHEMAS: list[dict[str, Any]] = AGENT_SCHEMAS
 
 
-def get_builtin_tools(agents_dir: str, memory: Any = None, disabled: frozenset[str] = frozenset(), tool_timeout: int = 600) -> dict[str, Any]:
+def get_builtin_tools(agents_dir: str, memory: Any = None, disabled: frozenset[str] = frozenset(), tool_timeout: int = 600, current_agent: str | None = None) -> dict[str, Any]:
     """Return a name → callable mapping for all built-in tools.
 
     Each callable accepts only the LLM-provided arguments; ``agents_dir``
@@ -61,7 +61,7 @@ def get_builtin_tools(agents_dir: str, memory: Any = None, disabled: frozenset[s
     *disabled* are omitted.
     """
     tools: dict[str, Any] = {
-        "list_agent": lambda **_kw: list_agent(agents_dir),
+        "list_agent": lambda **_kw: list_agent(agents_dir, current_agent),
         "validate_agent": lambda name, **_kw: validate_agent(name, agents_dir),
         "create_agent": lambda name, description, makefile, **_kw: create_agent(name, makefile, description, agents_dir),
         "run_agent": lambda name, prompt, **_kw: run_agent(name, prompt, agents_dir),

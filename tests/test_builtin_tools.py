@@ -107,6 +107,20 @@ def test_list_agent_sorted(tmp_path):
     assert result.index("aaa:") < result.index("zzz:")
 
 
+def test_list_agent_excludes_current_agent(tmp_path):
+    (tmp_path / "me.mk").write_text("define DESCRIPTION\nSelf.\nendef\n")
+    (tmp_path / "other.mk").write_text("define DESCRIPTION\nOther.\nendef\n")
+    result = list_agent(str(tmp_path), current_agent="me")
+    assert "me:" not in result
+    assert "other:" in result
+
+
+def test_list_agent_no_agents_when_only_self(tmp_path):
+    (tmp_path / "me.mk").write_text("define DESCRIPTION\nSelf.\nendef\n")
+    result = list_agent(str(tmp_path), current_agent="me")
+    assert "No agents found" in result
+
+
 # ── validate_agent ────────────────────────────────────────────────────────────
 
 

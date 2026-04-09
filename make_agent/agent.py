@@ -156,7 +156,7 @@ class Agent:
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
         self._agents_dir = agents_dir
         self._disabled_builtin_tools = config.disabled_builtin_tools
-        self._builtins = get_builtin_tools(agents_dir, memory, config.disabled_builtin_tools, config.tool_timeout)
+        self._builtins = get_builtin_tools(agents_dir, memory, config.disabled_builtin_tools, config.tool_timeout, config.makefile_path.stem)
         makefile_tools = build_tools(mf)
         memory_schemas = get_memory_schemas() if memory is not None else []
         active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]

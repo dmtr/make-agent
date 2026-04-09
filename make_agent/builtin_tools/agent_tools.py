@@ -27,12 +27,12 @@ def _agent_description(mk_path: Path) -> str:
     return "  (no description)"
 
 
-def list_agent(agents_dir: str) -> str:
+def list_agent(agents_dir: str, current_agent: str | None = None) -> str:
     """List all available specialist agents with their descriptions."""
     path = Path(agents_dir)
     if not path.exists():
         return "No agents found (directory does not exist)"
-    mk_files = sorted(path.glob("*.mk"))
+    mk_files = sorted(p for p in path.glob("*.mk") if p.stem != current_agent)
     if not mk_files:
         return "No agents found"
     entries = [f"{mk.stem}:\n{_agent_description(mk)}" for mk in mk_files]
