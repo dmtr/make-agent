@@ -7,12 +7,11 @@ import sqlite3
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from make_agent.memory import Memory
 from make_agent.builtin_tools import get_builtin_tools, get_memory_schemas
-
+from make_agent.memory import Memory
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def mem(tmp_path):
@@ -23,6 +22,7 @@ def mem(tmp_path):
 
 
 # ── Schema & initialisation ───────────────────────────────────────────────────
+
 
 class TestMemorySchema:
     def test_db_file_created_on_first_use(self, tmp_path):
@@ -80,6 +80,7 @@ class TestMemorySchema:
 
 # ── store() ───────────────────────────────────────────────────────────────────
 
+
 class TestMemoryStore:
     def test_store_user_message(self, mem):
         mem.store("user", "hello world")
@@ -119,6 +120,7 @@ class TestMemoryStore:
 
 # ── Views ─────────────────────────────────────────────────────────────────────
 
+
 class TestMemoryViews:
     def test_user_memory_filters_user(self, mem):
         mem.store("user", "user msg")
@@ -138,6 +140,7 @@ class TestMemoryViews:
 
 
 # ── FTS5 triggers ─────────────────────────────────────────────────────────────
+
 
 class TestFTSTriggers:
     def test_insert_trigger_indexes_message(self, mem):
@@ -166,17 +169,14 @@ class TestFTSTriggers:
         row_id = conn.execute("SELECT id FROM messages").fetchone()[0]
         conn.execute("UPDATE messages SET message = 'new phrase bbb' WHERE id = ?", (row_id,))
         conn.commit()
-        old_hits = conn.execute(
-            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("aaa",)
-        ).fetchall()
-        new_hits = conn.execute(
-            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("bbb",)
-        ).fetchall()
+        old_hits = conn.execute("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("aaa",)).fetchall()
+        new_hits = conn.execute("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("bbb",)).fetchall()
         assert len(old_hits) == 0
         assert len(new_hits) == 1
 
 
 # ── search_user / search_agent ────────────────────────────────────────────────
+
 
 class TestMemorySearch:
     def test_search_user_finds_match(self, mem):
@@ -270,6 +270,7 @@ class TestMemorySearch:
 
 # ── recent() ──────────────────────────────────────────────────────────────────
 
+
 class TestMemoryRecent:
     def test_returns_messages_in_chronological_order(self, mem):
         mem.store("user", "first")
@@ -343,12 +344,14 @@ class TestMemoryRecent:
 
     def test_date_range_and_limit_combined(self, mem):
         conn = mem._get_conn()
-        for i, date in enumerate([
-            "2026-02-01T00:00:00Z",
-            "2026-02-02T00:00:00Z",
-            "2026-02-03T00:00:00Z",
-            "2026-02-04T00:00:00Z",
-        ]):
+        for i, date in enumerate(
+            [
+                "2026-02-01T00:00:00Z",
+                "2026-02-02T00:00:00Z",
+                "2026-02-03T00:00:00Z",
+                "2026-02-04T00:00:00Z",
+            ]
+        ):
             conn.execute(
                 "INSERT INTO messages (created_at, sender, message) VALUES (?, ?, ?)",
                 (date, "user", f"feb msg {i}"),
@@ -364,6 +367,7 @@ class TestMemoryRecent:
 
 
 # ── Built-in tools integration ────────────────────────────────────────────────
+
 
 class TestMemoryBuiltinTools:
     def test_memory_schemas_returned(self):
@@ -433,11 +437,13 @@ class TestMemoryBuiltinTools:
 
 # ── Agent auto-storage ────────────────────────────────────────────────────────
 
+
 class TestAgentAutoStorage:
     """Verify Agent.__call__ writes to memory automatically."""
 
     def _make_agent(self, tmp_path, mem):
         from make_agent.agent import Agent, AgentConfig
+
         mf_path = tmp_path / "Makefile"
         mf_path.write_text("noop:\n\t@echo ok\n")
         config = AgentConfig(makefile_path=mf_path)
@@ -475,6 +481,7 @@ class TestAgentAutoStorage:
 
     def test_no_storage_without_memory(self, tmp_path):
         from make_agent.agent import Agent, AgentConfig
+
         mf_path = tmp_path / "Makefile"
         mf_path.write_text("noop:\n\t@echo ok\n")
         config = AgentConfig(makefile_path=mf_path)
@@ -490,6 +497,7 @@ class TestAgentAutoStorage:
 
 
 # ── CLI flag wiring ───────────────────────────────────────────────────────────
+
 
 class TestWithMemoryFlag:
     def test_with_memory_flag_creates_memory_instance(self, tmp_path):
@@ -522,7 +530,7 @@ class TestWithMemoryFlag:
         original = main_module.run
         main_module.run = _fake_run
         try:
-            with patch("make_agent.main.project_dir", return_value=tmp_path):
+            with patch("make_agent.agent.project_dir", return_value=tmp_path):
                 main_module._cmd_run(args)
         finally:
             main_module.run = original
@@ -595,8 +603,10 @@ class TestWithMemoryFlag:
         original = main_module.run
         main_module.run = _fake_run
         try:
-            with patch("make_agent.main.load_settings", return_value={"model": "x", "memory": True}), \
-                 patch("make_agent.main.project_dir", return_value=tmp_path):
+            with (
+                patch("make_agent.main.load_settings", return_value={"model": "x", "memory": True}),
+                patch("make_agent.agent.project_dir", return_value=tmp_path),
+            ):
                 main_module._cmd_run(args)
         finally:
             main_module.run = original
@@ -605,6 +615,7 @@ class TestWithMemoryFlag:
 
 
 # ── Token usage ───────────────────────────────────────────────────────────────
+
 
 class TestTokenUsage:
     def test_token_usage_table_columns(self, mem):
