@@ -53,27 +53,6 @@ def _format_result(lines: list[str], start: int, end: int) -> str:
     return json.dumps(result)
 
 
-def _parse_lines_arg(lines_json: str) -> list[tuple[int, str]]:
-    """Parse the LINES JSON array into a sorted list of (line_number, content) tuples."""
-    try:
-        items = json.loads(lines_json)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"invalid JSON in LINES: {e}")
-    if not isinstance(items, list):
-        raise ValueError("LINES must be a JSON array")
-    result = []
-    for item in items:
-        if not isinstance(item, dict) or len(item) != 1:
-            raise ValueError(f"each element must be a single-key object, got: {item}")
-        for k, v in item.items():
-            try:
-                line_num = int(k)
-            except ValueError:
-                raise ValueError(f"line number must be an integer, got: {k}")
-            result.append((line_num, str(v)))
-    return sorted(result, key=lambda x: x[0])
-
-
 def read_file(FILE_PATH: str, START_LINE: int, END_LINE: int) -> str:
     """Read lines from a file, returning a JSON array of {line_number: content}."""
     try:
@@ -177,8 +156,8 @@ def replace_lines(FILE_PATH: str, START_LINE: int, END_LINE: int, CONTENT: str) 
     return _format_result(lines, ctx_start, ctx_end)
 
 
-def insert_lines(FILE_PATH: str, LINES: str) -> str:
-    """Insert new lines before specified positions. Existing lines shift down."""
+def insert_lines(FILE_PATH: str, START_LINE: int, CONTENT: str) -> str:
+    """Insert CONTENT before START_LINE. Existing lines shift down. Use START_LINE = total_lines + 1 to append."""
     try:
         path = _resolve_and_validate(FILE_PATH)
     except ValueError as e:
@@ -194,33 +173,23 @@ def insert_lines(FILE_PATH: str, LINES: str) -> str:
     except ValueError as e:
         return json.dumps({"error": str(e)})
 
-    try:
-        insertions = _parse_lines_arg(LINES)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-
+    start = int(START_LINE)
     total = len(lines)
 
-    for line_num, _ in insertions:
-        if line_num < 1 or line_num > total + 1:
-            return json.dumps({"error": f"line {line_num} out of range, valid range is 1-{total + 1}"})
+    if start < 1 or start > total + 1:
+        return json.dumps({"error": f"START_LINE ({start}) out of range, valid range is 1-{total + 1}"})
 
-    # Insert in forward order (sorted ascending) so that each line number
-    # refers to the position in the current state of the file.
-    for line_num, content in insertions:
-        lines.insert(line_num - 1, content)
+    if CONTENT.endswith("\n"):
+        CONTENT = CONTENT[:-1]
+    new_lines = CONTENT.split("\n") if CONTENT else []
+
+    lines[start - 1 : start - 1] = new_lines
 
     _write_lines(path, lines)
 
-    # Return context window around affected range
-    if insertions:
-        min_line = min(r[0] for r in insertions)
-        max_line = max(r[0] for r in insertions) + len(insertions) - 1
-        ctx_start = max(1, min_line - 3)
-        ctx_end = min(len(lines), max_line + 3)
-        return _format_result(lines, ctx_start, ctx_end)
-
-    return json.dumps([])
+    ctx_start = max(1, start - 3)
+    ctx_end = min(len(lines), (start + max(0, len(new_lines) - 1)) + 3)
+    return _format_result(lines, ctx_start, ctx_end)
 
 
 FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -319,9 +288,10 @@ FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "insert_lines",
             "description": (
-                "Insert new lines before specified positions in a file. "
-                "Existing lines shift down. Use line_number = total_lines + 1 to append. "
-                "LINES is a JSON array of {line_number: content} objects. "
+                "Insert new content before START_LINE in a file. "
+                "Existing lines at and after START_LINE shift down. "
+                "Use START_LINE = total_lines + 1 to append at the end. "
+                "CONTENT may span multiple lines (use \\n). "
                 "Returns the affected region after modification."
             ),
             "parameters": {
@@ -331,12 +301,16 @@ FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "File path relative to the working directory.",
                     },
-                    "LINES": {
+                    "START_LINE": {
+                        "type": "integer",
+                        "description": "Line number before which to insert (1-indexed). Use total_lines + 1 to append.",
+                    },
+                    "CONTENT": {
                         "type": "string",
-                        "description": ('JSON array of objects, e.g. [{"3": "new line before 3"}, {"4": "another line"}].'),
+                        "description": "Text to insert. Use \\n to separate multiple lines.",
                     },
                 },
-                "required": ["FILE_PATH", "LINES"],
+                "required": ["FILE_PATH", "START_LINE", "CONTENT"],
             },
         },
     },
@@ -358,6 +332,6 @@ def get_file_tools(disabled: frozenset[str] = frozenset()) -> dict[str, Any]:
         "read_file": lambda FILE_PATH, START_LINE, END_LINE, **_kw: read_file(FILE_PATH, START_LINE, END_LINE),
         "write_file": lambda FILE_PATH, CONTENT, **_kw: write_file(FILE_PATH, CONTENT),
         "replace_lines": lambda FILE_PATH, START_LINE, END_LINE, CONTENT, **_kw: replace_lines(FILE_PATH, START_LINE, END_LINE, CONTENT),
-        "insert_lines": lambda FILE_PATH, LINES, **_kw: insert_lines(FILE_PATH, LINES),
+        "insert_lines": lambda FILE_PATH, START_LINE, CONTENT, **_kw: insert_lines(FILE_PATH, START_LINE, CONTENT),
     }
     return {name: fn for name, fn in tools.items() if name not in disabled}

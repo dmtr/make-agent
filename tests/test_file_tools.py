@@ -212,48 +212,48 @@ class TestInsertLines:
     def test_insert_at_beginning(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "b\nc\n")
-        insert_lines("test.txt", json.dumps([{"1": "a"}]))
+        insert_lines("test.txt", 1, "a")
         content = _read(tmp_path / "test.txt")
         assert content == "a\nb\nc\n"
 
     def test_insert_in_middle(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nc\n")
-        insert_lines("test.txt", json.dumps([{"2": "b"}]))
+        insert_lines("test.txt", 2, "b")
         content = _read(tmp_path / "test.txt")
         assert content == "a\nb\nc\n"
 
     def test_append_at_end(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nb\n")
-        insert_lines("test.txt", json.dumps([{"3": "c"}]))
+        insert_lines("test.txt", 3, "c")
         content = _read(tmp_path / "test.txt")
         assert content == "a\nb\nc\n"
 
     def test_insert_multiple_lines(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nd\n")
-        insert_lines("test.txt", json.dumps([{"2": "b"}, {"3": "c"}]))
+        insert_lines("test.txt", 2, "b\nc")
         content = _read(tmp_path / "test.txt")
         assert content == "a\nb\nc\nd\n"
 
     def test_shift_existing_lines(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "1\n2\n3\n")
-        insert_lines("test.txt", json.dumps([{"2": "NEW"}]))
+        insert_lines("test.txt", 2, "NEW")
         content = _read(tmp_path / "test.txt")
         assert content == "1\nNEW\n2\n3\n"
 
     def test_out_of_range(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nb\n")
-        result = _result(insert_lines("test.txt", json.dumps([{"5": "x"}])))
+        result = _result(insert_lines("test.txt", 5, "x"))
         assert "error" in result
 
     def test_insert_into_empty_file(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "")
-        insert_lines("test.txt", json.dumps([{"1": "first"}]))
+        insert_lines("test.txt", 1, "first")
         content = _read(tmp_path / "test.txt")
         assert content == "first\n"
 
@@ -261,7 +261,7 @@ class TestInsertLines:
         monkeypatch.chdir(tmp_path)
         lines = [f"line{i}" for i in range(1, 11)]
         _write(tmp_path / "test.txt", "\n".join(lines) + "\n")
-        result = _result(insert_lines("test.txt", json.dumps([{"5": "NEW"}])))
+        result = _result(insert_lines("test.txt", 5, "NEW"))
         assert isinstance(result, list)
         # Should contain lines around the insertion point
         contents = [list(r.values())[0] for r in result]
@@ -269,7 +269,7 @@ class TestInsertLines:
 
     def test_file_not_found(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = _result(insert_lines("nope.txt", json.dumps([{"1": "x"}])))
+        result = _result(insert_lines("nope.txt", 1, "x"))
         assert "error" in result
 
 
