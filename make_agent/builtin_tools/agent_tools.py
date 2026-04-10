@@ -54,10 +54,12 @@ def validate_agent(name: str, agents_dir: str) -> str:
         return f"Error: could not read {mk_path}: {e}"
 
     errors = validate(mf)
+    tool_count = sum(1 for r in mf.rules if r.params or r.description)
+    if not tool_count:
+        errors = ["No tools defined: at least one rule must have a # <tool> annotation block."] + errors
     if errors:
         return "Validation errors:\n" + "\n".join(f"  - {e}" for e in errors)
 
-    tool_count = sum(1 for r in mf.rules if r.params or r.description)
     return f"OK — {mk_path} ({tool_count} tool(s) valid)"
 
 

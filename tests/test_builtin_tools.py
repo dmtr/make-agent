@@ -165,7 +165,23 @@ def test_validate_agent_reports_errors(tmp_path):
     assert "UNUSED" in result
 
 
-# ── create_agent ─────────────────────────────────────────────────────────────
+def test_validate_agent_no_tools(tmp_path):
+    # Makefile has a rule but no # <tool> annotations
+    no_tools_mk = textwrap.dedent(
+        """\
+        define SYSTEM_PROMPT
+        I do things.
+        endef
+
+        search:
+        \t@echo searching
+    """
+    )
+    (tmp_path / "notool.mk").write_text(no_tools_mk)
+    result = validate_agent("notool", str(tmp_path))
+    assert "Validation errors" in result
+    assert "No tools defined" in result
+
 
 
 def test_create_agent_writes_file(tmp_path):
