@@ -15,7 +15,7 @@ from any_llm.types.completion import (
 )
 
 from make_agent.app_dirs import default_agents_dir, project_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, FILE_TOOL_SCHEMAS, _RunAgent, get_builtin_tools, get_memory_schemas
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, BUILTIN_TOOL_NAMES, FILE_TOOL_SCHEMAS, _RunAgent, get_builtin_tools, get_memory_schemas
 from make_agent.commands import export_conversation
 from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
@@ -132,6 +132,26 @@ def _parse_content_tool_calls(content: str) -> list[ChatCompletionMessageToolCal
     return result or None
 
 
+def _parse_disabled_builtins(value: str | None) -> frozenset[str]:
+    """Parse a DISABLED_BUILTINS Makefile variable value into a frozenset of tool names.
+
+    Accepts ``"all"`` or a comma-separated list of known built-in tool names.
+    Raises ``ValueError`` on unknown names.
+    """
+    if not value or not value.strip():
+        return frozenset()
+    if value.strip().lower() == "all":
+        return BUILTIN_TOOL_NAMES
+    names = frozenset(n.strip() for n in value.split(",") if n.strip())
+    unknown = names - BUILTIN_TOOL_NAMES
+    if unknown:
+        raise ValueError(
+            f"DISABLED_BUILTINS: unknown built-in tool(s): {', '.join(sorted(unknown))}. "
+            f"Valid names: {', '.join(sorted(BUILTIN_TOOL_NAMES))}"
+        )
+    return names
+
+
 class Agent:
     """LLM agent that maintains conversation history and dispatches tool calls.
 
@@ -144,6 +164,10 @@ class Agent:
     def __init__(self, config: AgentConfig, memory: Memory | None) -> None:
         mf = parse_file(config.makefile_path)
         validate_or_raise(mf)
+        makefile_disabled = _parse_disabled_builtins(
+            mf.variables["DISABLED_BUILTINS"].value if "DISABLED_BUILTINS" in mf.variables else None
+        )
+        disabled_builtin_tools = config.disabled_builtin_tools | makefile_disabled
         self._model = config.model
         self._makefile_path = config.makefile_path
         self._max_retries = config.max_retries
@@ -155,13 +179,13 @@ class Agent:
         self._session_id = config.session_id
         agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
         self._agents_dir = agents_dir
-        self._disabled_builtin_tools = config.disabled_builtin_tools
-        self._builtins = get_builtin_tools(agents_dir, memory, config.disabled_builtin_tools, config.tool_timeout, config.makefile_path.stem)
+        self._disabled_builtin_tools = disabled_builtin_tools
+        self._builtins = get_builtin_tools(agents_dir, memory, disabled_builtin_tools, config.tool_timeout, config.makefile_path.stem)
         makefile_tools = build_tools(mf)
         memory_schemas = get_memory_schemas() if memory is not None else []
-        active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
-        active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in config.disabled_builtin_tools]
-        active_file_schemas = [s for s in FILE_TOOL_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
+        active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in disabled_builtin_tools]
+        active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in disabled_builtin_tools]
+        active_file_schemas = [s for s in FILE_TOOL_SCHEMAS if s["function"]["name"] not in disabled_builtin_tools]
         self._static_schemas = active_builtin_schemas + active_memory_schemas + active_file_schemas
         self._tools = self._static_schemas + makefile_tools
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}

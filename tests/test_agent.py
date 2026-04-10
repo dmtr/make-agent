@@ -159,6 +159,64 @@ class TestAgentValidation:
         assert "QUERY" in str(exc_info.value)
 
 
+# ── DISABLED_BUILTINS Makefile variable ───────────────────────────────────────
+
+
+class TestDisabledBuiltins:
+    def _make_agent(self, tmp_path, content: str):
+        from make_agent.agent import Agent, AgentConfig
+
+        mf = tmp_path / "Makefile"
+        mf.write_text(content)
+        return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
+
+    def test_single_tool_disabled_via_makefile(self, tmp_path):
+        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = run_agent\n")
+        assert "run_agent" not in agent.tool_names
+
+    def test_multiple_tools_disabled_via_makefile(self, tmp_path):
+        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = run_agent,read_file\n")
+        assert "run_agent" not in agent.tool_names
+        assert "read_file" not in agent.tool_names
+
+    def test_all_disables_everything(self, tmp_path):
+        from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
+
+        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = all\n")
+        for name in BUILTIN_TOOL_NAMES:
+            assert name not in agent.tool_names
+
+    def test_unknown_tool_raises_value_error(self, tmp_path):
+        import pytest
+
+        with pytest.raises(ValueError, match="DISABLED_BUILTINS"):
+            self._make_agent(tmp_path, "DISABLED_BUILTINS = no_such_tool\n")
+
+    def test_makefile_and_cli_flags_are_merged(self, tmp_path):
+        from make_agent.agent import Agent, AgentConfig
+
+        mf = tmp_path / "Makefile"
+        mf.write_text("DISABLED_BUILTINS = run_agent\n")
+        agent = Agent(
+            AgentConfig(
+                makefile_path=mf,
+                model="openai/gpt-4o-mini",
+                agents_dir=str(tmp_path),
+                disabled_builtin_tools=frozenset({"read_file"}),
+            ),
+            None,
+        )
+        assert "run_agent" not in agent.tool_names
+        assert "read_file" not in agent.tool_names
+
+    def test_empty_disabled_builtins_is_no_op(self, tmp_path):
+        from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
+
+        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS =\n")
+        builtin_names_present = [n for n in agent.tool_names if n in BUILTIN_TOOL_NAMES]
+        assert len(builtin_names_present) > 0
+
+
 # ── run_agent in-process dispatch ─────────────────────────────────────────────
 
 

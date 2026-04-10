@@ -2,6 +2,11 @@ define SYSTEM_PROMPT
 You are a file explorer agent. You help users navigate and search file systems. Use the provided tools to list directories, find files by name or extension, and search file contents with grep. Always report errors by echoing a message starting with ERROR:. If you are unsure about how to complete a task, ask for help rather than making assumptions.
 endef
 
+define  DISABLED_BUILTINS
+all
+endef
+
+
 .PHONY: list_files search_by_name search_by_extension grep_in_files
 
 # <tool>

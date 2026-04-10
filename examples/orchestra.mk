@@ -43,6 +43,10 @@ Always create a plan for completing the task and provide it to the user to confi
 
 endef
 
+define  DISABLED_BUILTINS
+write_file,replace_lines,insert_lines
+endef
+
 .PHONY: current-dir os-info current-date search-files show-file
 
 # <tool>
