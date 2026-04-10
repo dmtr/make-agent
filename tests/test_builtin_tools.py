@@ -52,7 +52,7 @@ read-file:
 # @param CONTENT string The content to write
 # </tool>
 write-file:
-\t@cat "$(CONTENT_FILE)" > "$(PATH)"
+\t@printf '%s' "$$CONTENT" > "$(PATH)"
 """
 
 

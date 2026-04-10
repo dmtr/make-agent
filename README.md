@@ -104,12 +104,14 @@ greet:
 - `define SYSTEM_PROMPT ... endef` sets the system prompt passed to the model. The content is raw text — no `#` prefix needed. `endef` must be on its own line with no indentation.
 - `# <tool> ... # </tool>` marks the following target as an LLM-callable tool. Lines starting with `# @param NAME type description` declare parameters (JSON Schema primitives: `string`, `number`, `integer`, `boolean`). All other lines form the tool description.
 
-### Parameters and `$(PARAM_FILE)`
+### Parameters and `$$PARAM`
 
-Every declared parameter automatically gets two Make variables injected at call time:
+Every declared parameter is injected as an environment variable.  Recipes
+access it with shell syntax — `$$PARAM` in a Make recipe becomes `$PARAM` for
+the shell:
 
-- `$(PARAM)` — the value as a Make variable with shell-escaped value. Convenient for single-line values.
-- `$(PARAM_FILE)` — path to a temp file containing the full, unescaped value. Use this for multiline content or when the value might contain shell metacharacters.
+- `$$PARAM` — canonical form, works for both single-line and multiline values.
+- `$(PARAM)` — also works for simple single-line values (Make auto-imports env vars).
 
 ```makefile
 # <tool>
@@ -118,7 +120,7 @@ Every declared parameter automatically gets two Make variables injected at call 
 # @param CONTENT string Content to write (may be multiline)
 # </tool>
 write-file:
-	@cat "$(CONTENT_FILE)" > "$(FILE_PATH)"
+	@printf '%s' "$$CONTENT" > "$$FILE_PATH"
 ```
 
 Targets without a `# <tool>` block are invisible to the model.

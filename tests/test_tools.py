@@ -177,49 +177,39 @@ def test_run_tool_rejects_invalid_argument_name(tmp_path):
 
 # ── params.mk injection ───────────────────────────────────────────────────────
 
-def test_run_tool_dollar_in_value_preserved(tmp_path):
-    """$ signs in single-line values must survive Make and shell expansion.
 
-    params.mk stores ``SPEC = result: $$(MAKE_VAR)`` so Make expands
-    ``$(SPEC)`` to ``result: $(MAKE_VAR)``.  Single-quoting in the recipe
-    prevents the shell from further expanding it.
-    """
+def test_run_tool_param_accessible_via_shell_var(tmp_path):
+    """Single-line params are accessible as $$PARAM (shell env var) in recipes."""
     mf = _write_makefile(
         tmp_path,
         """\
-        MAKE_VAR = EXPANDED
-        .PHONY: echo-spec
-        echo-spec:
-        \t@printf '%s\\n' '$(SPEC)'
+        .PHONY: greet
+        greet:
+        \t@printf '%s' "$$NAME"
     """,
     )
-    result = json.loads(run_tool("echo-spec", {"SPEC": "result: $(MAKE_VAR)"}, mf))
-    assert "$(MAKE_VAR)" in result["stdout"]
-    assert "EXPANDED" not in result["stdout"]
+    result = json.loads(run_tool("greet", {"NAME": "Alice"}, mf))
+    assert "Alice" in result["stdout"]
 
 
 def test_run_tool_multiline_value(tmp_path):
-    """Multiline values are written to a temp file; PARAM_FILE reaches recipe."""
+    """Multiline values are available as $$PARAM via the env var mechanism."""
     out = tmp_path / "out.txt"
     mf = _write_makefile(
         tmp_path,
         f"""\
         .PHONY: write-file
         write-file:
-        \t@cat "$(CONTENT_FILE)" > "{out}"
+        \t@printf '%s' "$$CONTENT" > "{out}"
     """,
     )
-    multiline = "line one\nline two\nhas quotes and $VARS"
+    multiline = "line one\nline two\nline three"
     run_tool("write-file", {"CONTENT": multiline}, mf)
     assert out.read_text() == multiline
 
 
-def test_run_tool_params_mk_and_file_cleaned_up(tmp_path):
-    """All temp files (params.mk and PARAM_FILE) are removed after the call."""
-    import glob as glob_mod
-
-    before_mk = set(glob_mod.glob("/tmp/make-agent-params-*"))
-    before_content = set(glob_mod.glob("/tmp/make-agent-X-*"))
+def test_run_tool_no_temp_files_created(tmp_path):
+    """No temporary files are ever created — all params go via env vars."""
     mf = _write_makefile(
         tmp_path,
         """\
@@ -228,51 +218,38 @@ def test_run_tool_params_mk_and_file_cleaned_up(tmp_path):
         \t@true
     """,
     )
-    run_tool("noop", {"X": "hello"}, mf)
-    after_mk = set(glob_mod.glob("/tmp/make-agent-params-*"))
-    after_content = set(glob_mod.glob("/tmp/make-agent-X-*"))
-    assert after_mk == before_mk
-    assert after_content == before_content
+    before = set(tmp_path.iterdir())
+    run_tool("noop", {"X": "hello\nworld"}, mf)
+    after = set(tmp_path.iterdir())
+    assert after == before
 
 
-def test_run_tool_file_var_always_available(tmp_path):
-    """$(PARAM_FILE) is always provided, even for single-line values."""
+def test_run_tool_endef_in_multiline_value(tmp_path):
+    """A multiline value containing a bare 'endef' line is passed correctly."""
     out = tmp_path / "out.txt"
     mf = _write_makefile(
         tmp_path,
         f"""\
-        .PHONY: save
-        save:
-        \t@cat "$(MSG_FILE)" > "{out}"
+        .PHONY: write-file
+        write-file:
+        \t@printf '%s' "$$CONTENT" > "{out}"
     """,
     )
-    run_tool("save", {"MSG": "hello world"}, mf)
-    assert "hello world" in out.read_text()
-
-
-def test_run_tool_no_params_no_temp_files(tmp_path):
-    """When there are no arguments, no temp files are created."""
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: hello
-        hello:
-        \t@echo hi
-    """,
-    )
-    result = json.loads(run_tool("hello", {}, mf))
-    assert "hi" in result["stdout"]
+    value = "before\nendef\nafter"
+    run_tool("write-file", {"CONTENT": value}, mf)
+    assert "before" in out.read_text()
+    assert "after" in out.read_text()
 
 
 def test_run_tool_quotes_in_value(tmp_path):
-    """Values with double quotes are passed safely via the PARAM_FILE temp file."""
+    """Values with double quotes are passed correctly via env vars."""
     out = tmp_path / "out.txt"
     mf = _write_makefile(
         tmp_path,
         f"""\
         .PHONY: show
         show:
-        \t@cat "$(MSG_FILE)" > "{out}"
+        \t@printf '%s' "$$MSG" > "{out}"
     """,
     )
     run_tool("show", {"MSG": 'say "hello"'}, mf)
@@ -280,6 +257,7 @@ def test_run_tool_quotes_in_value(tmp_path):
 
 
 # ── format_tool_result ────────────────────────────────────────────────────────
+
 
 def test_format_tool_result_success():
     result = json.loads(format_tool_result("hello\n", "", 0))
@@ -330,4 +308,3 @@ def test_run_tool_truncates_output(tmp_path):
     result = json.loads(run_tool("big", {}, mf, max_output=100))
     assert len(result["stdout"]) == 100
     assert result["omitted_chars"] > 0
-

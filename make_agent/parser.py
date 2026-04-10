@@ -322,10 +322,7 @@ _RECIPE_VAR_RE = re.compile(r"\$\((?:value\s+)?([^)]+)\)|\$\{(?:value\s+)?([^}]+
 def validate(makefile: Makefile) -> list[str]:
     """Check that every ``@param NAME`` is referenced in the rule's recipe body.
 
-    Accepts ``$(NAME)``, ``${NAME}``, ``$$NAME``, or ``$(NAME_FILE)`` /
-    ``${NAME_FILE}`` / ``$$NAME_FILE`` as valid references.  The ``_FILE``
-    form is always available at runtime (a temp file is written for every
-    parameter) so either convention is valid in a recipe.
+    Accepts ``$(NAME)``, ``${NAME}``, or ``$$NAME`` as valid references.
 
     Returns a list of human-readable error strings (empty list means valid).
     """
@@ -336,13 +333,12 @@ def validate(makefile: Makefile) -> list[str]:
         recipe_text = "\n".join(rule.recipes)
         used_vars = {m.group(1) or m.group(2) or m.group(3) for m in _RECIPE_VAR_RE.finditer(recipe_text)}
         for param in rule.params:
-            file_var = f"{param.name}_FILE"
-            if param.name not in used_vars and file_var not in used_vars:
+            if param.name not in used_vars:
                 errors.append(
                     f"Tool '{rule.target}': @param {param.name} declared but never "
                     f"referenced in recipe.\n"
-                    f"  Expected $({param.name}), ${{{param.name}}}, $${param.name}, "
-                    f"or $({file_var}) in the recipe body."
+                    f"  Expected $({param.name}), ${{{param.name}}}, or $${param.name} "
+                    f"in the recipe body."
                 )
     return errors
 

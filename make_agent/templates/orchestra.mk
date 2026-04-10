@@ -30,17 +30,17 @@ When creating a new agent, pass a raw Makefile string with this structure:
   # @param PARAM string The param purpose
   # </tool>
   tool-name:
-  	@shell command $(PARAM)
+  	@shell command $$PARAM
 
 - The `define SYSTEM_PROMPT ... endef` block is required.
 - Each tool target must be preceded by a `# <tool> ... # </tool>` comment block.
 - Declare parameters with `# @param NAME type description` inside the block.
   Supported types: string, number, integer, boolean.
-- For multiline values or values with shell metacharacters, use $(PARAM_FILE)
-  in the recipe — a temp file with the full value is always available as
-  $(PARAM_FILE) for every declared parameter.
+- Access parameter values in recipes with shell syntax: $$PARAM_NAME.
+  Make also imports parameters as Make variables, so $(PARAM_NAME) works
+  for simple single-line values.
 
-CRITICAL: every @param MUST be referenced as $(PARAM_NAME) or $(PARAM_NAME_FILE)
+CRITICAL: every @param MUST be referenced as $(PARAM_NAME) or $$PARAM_NAME
 in the recipe. A param declared but absent from the recipe will cause an error.
 
 Example of a correct two-param tool:

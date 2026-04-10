@@ -37,7 +37,7 @@ When creating a new agent, pass a raw Makefile string with this structure:
 - Declare parameters with `# @param NAME type description` inside the block.
   Supported types: string, number, integer, boolean.
 
-CRITICAL: every @param MUST be referenced as $(PARAM_NAME) in the recipe. A param declared but absent from the recipe will cause an error.
+CRITICAL: every @param MUST be referenced as $(PARAM_NAME) or $$PARAM_NAME in the recipe. A param declared but absent from the recipe will cause an error.
 
 Always create a plan for completing the task and provide it to the user to confirm before executing any steps. The plan should include which agents you intend to use and how.
 

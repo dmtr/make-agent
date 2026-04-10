@@ -396,16 +396,15 @@ class TestValidate:
         errors = validate(mf)
         assert "$(DIR)" in errors[0]
         assert "${DIR}" in errors[0]
-        assert "$(DIR_FILE)" in errors[0]
+        assert "$$DIR" in errors[0]
+        assert "DIR_FILE" not in errors[0]
 
-    def test_file_var_ref_is_valid(self):
-        """$(PARAM_FILE) satisfies any param (multiline-safe temp file form)."""
+    def test_file_var_ref_is_not_valid(self):
+        """$(PARAM_FILE) is no longer a supported reference form."""
         mf = parse(self._tool("CONTENT", '@cat "$(CONTENT_FILE)"'))
-        assert validate(mf) == []
-
-    def test_file_var_brace_ref_is_valid(self):
-        mf = parse(self._tool("CONTENT", '@cat "${CONTENT_FILE}"'))
-        assert validate(mf) == []
+        errors = validate(mf)
+        assert len(errors) == 1
+        assert "CONTENT" in errors[0]
 
     def test_multiple_params_all_missing(self):
         text = (
