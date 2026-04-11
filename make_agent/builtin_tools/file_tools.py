@@ -56,11 +56,18 @@ def _apply_unified_diff(lines: list[str], diff: str) -> list[str] | str:
 
     Returns the updated line list, or an ``"error: …"`` string on failure.
 
-    Hunk header semantics follow ``diff -u``:
+    Lenient parsing for LLM-generated diffs:
+
+    - Context lines missing their leading space are accepted as context.
+    - Hunk header line counts are informational only; the body is the
+      source of truth (LLMs often get counts wrong).
+    - When the old context does not match at the stated line number the file
+      is scanned for the correct location, tolerating off-by-N line numbers
+      in the header.
+
+    Header semantics that are still honoured:
     - ``@@ -old_start[,old_count] +new_start[,new_count] @@``
-    - Omitted count means 1; ``-0,0`` / ``+0,0`` means 0 lines (pure insert/delete).
-    - For a pure insertion (old_count == 0) the splice point is *after*
-      line ``old_start`` (i.e. ``result[old_start:old_start]``).
+    - ``-N,0`` signals a pure insertion (splice *after* line ``old_start``).
     """
     if not diff.strip():
         return "error: DIFF is empty"
@@ -70,7 +77,7 @@ def _apply_unified_diff(lines: list[str], diff: str) -> list[str] | str:
     while i < len(raw) and not _HUNK_HEADER_RE.match(raw[i]):
         i += 1
 
-    hunks: list[tuple[int, int, list[str], list[str]]] = []
+    hunks: list[tuple[int, bool, list[str], list[str]]] = []
 
     while i < len(raw):
         m = _HUNK_HEADER_RE.match(raw[i])
@@ -79,8 +86,7 @@ def _apply_unified_diff(lines: list[str], diff: str) -> list[str] | str:
             continue
 
         old_start = int(m.group(1))
-        old_count = int(m.group(2)) if m.group(2) is not None else 1
-        new_count = int(m.group(4)) if m.group(4) is not None else 1
+        old_count_header = int(m.group(2)) if m.group(2) is not None else 1
         i += 1
 
         old_body: list[str] = []
@@ -101,34 +107,47 @@ def _apply_unified_diff(lines: list[str], diff: str) -> list[str] | str:
             elif body.startswith("+"):
                 new_body.append(body[1:])
             else:
-                return f"error: unexpected diff line: {body!r}"
+                # Bare lines treated as context — LLMs sometimes omit the space.
+                old_body.append(body)
+                new_body.append(body)
             i += 1
 
-        if len(old_body) != old_count:
-            return (
-                f"error: hunk old-count mismatch at line {old_start}: "
-                f"header says {old_count}, body has {len(old_body)}"
-            )
-        if len(new_body) != new_count:
-            return (
-                f"error: hunk new-count mismatch at line {old_start}: "
-                f"header says {new_count}, body has {len(new_body)}"
-            )
-
-        hunks.append((old_start, old_count, old_body, new_body))
+        hunks.append((old_start, old_count_header == 0, old_body, new_body))
 
     if not hunks:
         return "error: no hunks found in diff"
 
     result = list(lines)
-    for old_start, old_count, old_body, new_body in reversed(hunks):
-        start_idx = old_start if old_count == 0 else old_start - 1
-        actual = result[start_idx : start_idx + old_count]
-        if actual != old_body:
-            return (
-                f"error: patch context mismatch at line {old_start}: "
-                f"expected {old_body!r}, found {actual!r}"
-            )
+    for old_start, is_insertion, old_body, new_body in reversed(hunks):
+        old_count = len(old_body)
+        if is_insertion:
+            start_idx = old_start
+            if start_idx > len(result):
+                return (
+                    f"error: insertion point {old_start} exceeds file length "
+                    f"({len(result)} lines)"
+                )
+        else:
+            start_idx = old_start - 1
+            if old_count > 0:
+                actual = result[start_idx : start_idx + old_count]
+                if actual != old_body:
+                    # Scan the whole file for the context block.
+                    found = next(
+                        (
+                            j
+                            for j in range(len(result) - old_count + 1)
+                            if result[j : j + old_count] == old_body
+                        ),
+                        None,
+                    )
+                    if found is None:
+                        return (
+                            f"error: patch context mismatch at line {old_start}: "
+                            f"expected {old_body!r}, found {actual!r}"
+                        )
+                    start_idx = found
+
         result[start_idx : start_idx + old_count] = new_body
 
     return result

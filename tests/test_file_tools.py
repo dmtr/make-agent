@@ -196,10 +196,34 @@ class TestPatchFile:
         assert "escapes working directory" in result
 
     def test_rejects_malformed_hunk_body_line(self, tmp_path, monkeypatch):
+        """A bare line that doesn't exist in the file should still produce an error."""
         monkeypatch.chdir(tmp_path)
+        _write(tmp_path / "test.txt", "a\nb\n")
+        # "x malformed line" has no +/-/space prefix — treated as context,
+        # but it won't be found in the file so we get context mismatch.
         result = patch_file("test.txt", "@@ -1 +1 @@\nx malformed line\n")
         assert "error" in result
-        assert "unexpected diff line" in result
+
+    def test_fuzzy_match_wrong_line_number(self, tmp_path, monkeypatch):
+        """patch_file should apply when header line numbers are off but context matches."""
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path / "test.txt", "a\nb\nc\n")
+        # Header claims to start at line 99 — wrong, but the context body matches
+        # line 2 in the file, so fuzzy search should find and apply it.
+        diff = "@@ -99 +99 @@\n-b\n+B\n"
+        result = patch_file("test.txt", diff)
+        assert result == "Changes accepted."
+        assert _read(tmp_path / "test.txt") == "a\nB\nc\n"
+
+    def test_bare_context_line_without_space(self, tmp_path, monkeypatch):
+        """A context line missing its leading space should still be accepted."""
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path / "test.txt", "a\nb\nc\n")
+        # The ` a` context line has no space prefix — should be tolerated.
+        diff = "@@ -1,2 +1,2 @@\na\n-b\n+B\n"
+        result = patch_file("test.txt", diff)
+        assert result == "Changes accepted."
+        assert _read(tmp_path / "test.txt") == "a\nB\nc\n"
 
     def test_rejects_stale_patch(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
