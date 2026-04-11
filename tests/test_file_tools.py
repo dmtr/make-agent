@@ -22,13 +22,10 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _numbered(content: str) -> list[str]:
-    lines = content.splitlines()
-    return [f"{i}. {line}\n" for i, line in enumerate(lines, start=1)]
-
-
 def _patch(old: str, new: str, context: int = 3) -> str:
-    return "".join(unified_diff(_numbered(old), _numbered(new), fromfile="a", tofile="b", n=context))
+    old_lines = [l + "\n" for l in old.splitlines()] if old.strip() else []
+    new_lines = [l + "\n" for l in new.splitlines()] if new.strip() else []
+    return "".join(unified_diff(old_lines, new_lines, fromfile="a", tofile="b", n=context))
 
 
 class TestPathSandboxing:
@@ -62,7 +59,7 @@ class TestPathSandboxing:
         sub.mkdir()
         _write(sub / "hello.txt", "hello\n")
         result = read_file("sub/hello.txt", 1, 1)
-        assert result == "1. hello"
+        assert result == "hello"
 
 
 class TestReadFile:
@@ -70,25 +67,25 @@ class TestReadFile:
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "line1\nline2\nline3\n")
         result = read_file("test.txt", 1, 3)
-        assert result == "1. line1\n2. line2\n3. line3"
+        assert result == "line1\nline2\nline3"
 
     def test_partial_range(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nb\nc\nd\ne\n")
         result = read_file("test.txt", 2, 4)
-        assert result == "2. b\n3. c\n4. d"
+        assert result == "b\nc\nd"
 
     def test_single_line(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "only\n")
         result = read_file("test.txt", 1, 1)
-        assert result == "1. only"
+        assert result == "only"
 
     def test_blank_line_in_file(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\n\nc\n")
         result = read_file("test.txt", 1, 3)
-        assert result == "1. a\n2. \n3. c"
+        assert result == "a\n\nc"
 
     def test_start_exceeds_file_length(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -171,10 +168,11 @@ class TestPatchFile:
         assert result == "Changes accepted."
         assert _read(tmp_path / "sub" / "dir" / "file.txt") == "nested\n"
 
-    def test_patch_from_partial_read_range(self, tmp_path, monkeypatch):
+    def test_partial_hunk_no_context(self, tmp_path, monkeypatch):
+        """A diff with 0 context lines still correctly targets absolute line positions."""
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nb\nc\nd\n")
-        diff = "".join(unified_diff(["2. b\n", "3. c\n"], ["2. B\n", "3. C\n"], n=1))
+        diff = _patch("a\nb\nc\nd\n", "a\nB\nC\nd\n", context=0)
         result = patch_file("test.txt", diff)
         assert result == "Changes accepted."
         assert _read(tmp_path / "test.txt") == "a\nB\nC\nd\n"
@@ -197,11 +195,11 @@ class TestPatchFile:
         assert "error" in result
         assert "escapes working directory" in result
 
-    def test_invalid_patch_line(self, tmp_path, monkeypatch):
+    def test_rejects_malformed_hunk_body_line(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = patch_file("test.txt", "@@ -1 +1 @@\n-no numbers here\n+still bad\n")
+        result = patch_file("test.txt", "@@ -1 +1 @@\nx malformed line\n")
         assert "error" in result
-        assert "invalid numbered patch line" in result
+        assert "unexpected diff line" in result
 
     def test_rejects_stale_patch(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -216,9 +214,8 @@ class TestPatchFile:
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "alpha\nbeta\ngamma\n")
         content = read_file("test.txt", 2, 2)
-        assert content == "2. beta"
-        modified = content.replace("beta", "BETA")
-        diff = "".join(unified_diff([content + "\n"], [modified + "\n"], n=1))
+        assert content == "beta"
+        diff = "@@ -2 +2 @@\n-beta\n+BETA\n"
         result = patch_file("test.txt", diff)
         assert result == "Changes accepted."
         assert _read(tmp_path / "test.txt") == "alpha\nBETA\ngamma\n"
