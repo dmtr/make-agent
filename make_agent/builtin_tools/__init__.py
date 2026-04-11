@@ -27,8 +27,8 @@ from make_agent.builtin_tools.file_tools import (
     FILE_TOOL_NAMES,
     FILE_TOOL_SCHEMAS,
     get_file_tools,
+    patch_file,
     read_file,
-    write_file,
 )
 from make_agent.builtin_tools.memory_tools import MEMORY_SCHEMAS, get_memory_schemas
 
@@ -89,8 +89,8 @@ __all__ = [
     "get_file_tools",
     "get_memory_schemas",
     "list_agent",
+    "patch_file",
     "read_file",
     "run_agent",
     "validate_agent",
-    "write_file",
 ]

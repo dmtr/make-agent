@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from difflib import unified_diff
 from pathlib import Path
 
 from make_agent.builtin_tools.file_tools import (
     FILE_TOOL_NAMES,
     FILE_TOOL_SCHEMAS,
     get_file_tools,
+    patch_file,
     read_file,
-    write_file,
 )
 
 
@@ -19,6 +20,15 @@ def _write(path: Path, content: str) -> None:
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _numbered(content: str) -> list[str]:
+    lines = content.splitlines()
+    return [f"{i}. {line}\n" for i, line in enumerate(lines, start=1)]
+
+
+def _patch(old: str, new: str, context: int = 3) -> str:
+    return "".join(unified_diff(_numbered(old), _numbered(new), fromfile="a", tofile="b", n=context))
 
 
 class TestPathSandboxing:
@@ -127,78 +137,89 @@ class TestReadFile:
         assert "total_lines: 0" in result
 
 
-class TestWriteFile:
+class TestPatchFile:
     def test_create_new_file(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = write_file("new.txt", "1. hello\n2. world")
+        result = patch_file("new.txt", _patch("", "hello\nworld\n"))
         assert result == "Changes accepted."
         assert _read(tmp_path / "new.txt") == "hello\nworld\n"
 
-    def test_partial_update(self, tmp_path, monkeypatch):
+    def test_replace_existing_lines(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nb\nc\nd\ne\n")
-        result = write_file("test.txt", "2. BBB\n4. DDD")
+        result = patch_file("test.txt", _patch("a\nb\nc\nd\ne\n", "a\nBBB\nc\nDDD\ne\n"))
         assert result == "Changes accepted."
         assert _read(tmp_path / "test.txt") == "a\nBBB\nc\nDDD\ne\n"
 
-    def test_append_line(self, tmp_path, monkeypatch):
+    def test_insert_line(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "a\nb\n")
-        result = write_file("test.txt", "3. c")
+        result = patch_file("test.txt", _patch("a\nb\n", "a\nx\nb\n"))
         assert result == "Changes accepted."
-        assert _read(tmp_path / "test.txt") == "a\nb\nc\n"
+        assert _read(tmp_path / "test.txt") == "a\nx\nb\n"
 
-    def test_overwrite_whole_file(self, tmp_path, monkeypatch):
+    def test_delete_line(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        _write(tmp_path / "test.txt", "old\n")
-        result = write_file("test.txt", "1. new")
+        _write(tmp_path / "test.txt", "a\nb\nc\n")
+        result = patch_file("test.txt", _patch("a\nb\nc\n", "a\nc\n"))
         assert result == "Changes accepted."
-        assert _read(tmp_path / "test.txt") == "new\n"
+        assert _read(tmp_path / "test.txt") == "a\nc\n"
 
     def test_create_in_subdirectory(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = write_file("sub/dir/file.txt", "1. nested")
+        result = patch_file("sub/dir/file.txt", _patch("", "nested\n"))
         assert result == "Changes accepted."
         assert _read(tmp_path / "sub" / "dir" / "file.txt") == "nested\n"
 
-    def test_empty_content_creates_empty_file(self, tmp_path, monkeypatch):
+    def test_patch_from_partial_read_range(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = write_file("empty.txt", "")
+        _write(tmp_path / "test.txt", "a\nb\nc\nd\n")
+        diff = "".join(unified_diff(["2. b\n", "3. c\n"], ["2. B\n", "3. C\n"], n=1))
+        result = patch_file("test.txt", diff)
         assert result == "Changes accepted."
-        assert _read(tmp_path / "empty.txt") == ""
+        assert _read(tmp_path / "test.txt") == "a\nB\nC\nd\n"
 
-    def test_empty_content_truncates_existing_file(self, tmp_path, monkeypatch):
+    def test_rejects_empty_diff(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "content\n")
-        result = write_file("test.txt", "")
-        assert result == "Changes accepted."
-        assert _read(tmp_path / "test.txt") == ""
+        result = patch_file("test.txt", "")
+        assert "error" in result
 
     def test_rejects_directory_path(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "adir").mkdir()
-        result = write_file("adir", "1. content")
+        result = patch_file("adir", _patch("", "content\n"))
         assert "error" in result
 
     def test_rejects_path_traversal(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = write_file("../escape.txt", "1. bad")
+        result = patch_file("../escape.txt", _patch("", "bad\n"))
         assert "error" in result
         assert "escapes working directory" in result
 
-    def test_invalid_line_format(self, tmp_path, monkeypatch):
+    def test_invalid_patch_line(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = write_file("test.txt", "no numbers here")
+        result = patch_file("test.txt", "@@ -1 +1 @@\n-no numbers here\n+still bad\n")
         assert "error" in result
-        assert "invalid line format" in result
+        assert "invalid numbered patch line" in result
 
-    def test_roundtrip_read_write(self, tmp_path, monkeypatch):
+    def test_rejects_stale_patch(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path / "test.txt", "a\nb\nc\n")
+        diff = _patch("a\nb\nc\n", "a\nB\nc\n")
+        _write(tmp_path / "test.txt", "a\nchanged\nc\n")
+        result = patch_file("test.txt", diff)
+        assert "error" in result
+        assert "context mismatch" in result
+
+    def test_roundtrip_read_patch(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path / "test.txt", "alpha\nbeta\ngamma\n")
         content = read_file("test.txt", 2, 2)
         assert content == "2. beta"
         modified = content.replace("beta", "BETA")
-        result = write_file("test.txt", modified)
+        diff = "".join(unified_diff([content + "\n"], [modified + "\n"], n=1))
+        result = patch_file("test.txt", diff)
         assert result == "Changes accepted."
         assert _read(tmp_path / "test.txt") == "alpha\nBETA\ngamma\n"
 
@@ -209,16 +230,16 @@ class TestSchemas:
 
     def test_schema_names(self):
         names = {s["function"]["name"] for s in FILE_TOOL_SCHEMAS}
-        assert names == {"read_file", "write_file"}
+        assert names == {"read_file", "patch_file"}
 
     def test_tool_names_frozenset(self):
-        assert FILE_TOOL_NAMES == frozenset({"read_file", "write_file"})
+        assert FILE_TOOL_NAMES == frozenset({"read_file", "patch_file"})
 
     def test_get_file_tools_returns_all(self):
         tools = get_file_tools()
-        assert set(tools.keys()) == {"read_file", "write_file"}
+        assert set(tools.keys()) == {"read_file", "patch_file"}
 
     def test_get_file_tools_respects_disabled(self):
         tools = get_file_tools(disabled=frozenset({"read_file"}))
         assert "read_file" not in tools
-        assert "write_file" in tools
+        assert "patch_file" in tools
