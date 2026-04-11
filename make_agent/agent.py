@@ -326,8 +326,8 @@ class Agent:
                     hint = (
                         "You have repeated the same failing tool call "
                         f"{consecutive_failures} times. The arguments appear to be "
-                        "incorrect. Try a different approach: use a simpler tool "
-                        "(e.g. write_file instead of replace_lines), break the "
+                        "incorrect. Try a different approach: use write_file to "
+                        "rewrite the affected lines, break the "
                         "task into smaller steps, or ask the user for help."
                     )
                     logger.debug("[repeated_failure_hint] %s", hint)

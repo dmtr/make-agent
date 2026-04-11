@@ -1,13 +1,22 @@
-"""Built-in file editing tools: read_file, write_file, replace_lines, insert_lines.
+"""Built-in file editing tools: read_file, write_file.
 
 These tools give every agent structured, line-level file access with
 path sandboxing (all paths must resolve within the working directory).
+
+Both tools use the same numbered-line format:
+
+    1. First line of the file
+    2. Second line of the file
+    ...
+
+``read_file`` returns this format. ``write_file`` accepts it and performs
+a partial update, replacing only the line numbers present in CONTENT.
 """
 
 from __future__ import annotations
 
-import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +24,7 @@ from typing import Any
 def _resolve_and_validate(file_path: str) -> Path:
     """Resolve *file_path* against cwd and verify it stays within the subtree.
 
-    Raises ``ValueError`` on traversal attempts or missing files.
+    Raises ``ValueError`` on traversal attempts.
     """
     cwd = Path(os.getcwd()).resolve()
     resolved = (cwd / file_path).resolve()
@@ -45,151 +54,120 @@ def _write_lines(path: Path, lines: list[str]) -> None:
     path.write_text("\n".join(lines) + "\n" if lines else "", encoding="utf-8")
 
 
-def _format_result(lines: list[str], start: int, end: int) -> str:
-    """Format lines[start-1 .. end-1] (1-indexed, inclusive) as JSON array."""
+_NUMBERED_LINE_RE = re.compile(r"^(\d+)\. (.*)$")
+
+
+def _format_numbered_lines(lines: list[str], start: int, end: int) -> str:
+    """Return lines[start-1..end-1] (1-indexed, inclusive) in numbered format."""
     result = []
     for i in range(max(start, 1), min(end, len(lines)) + 1):
-        result.append({str(i): lines[i - 1]})
-    return json.dumps(result)
+        result.append(f"{i}. {lines[i - 1]}")
+    return "\n".join(result)
+
+
+def _parse_numbered_lines(content: str) -> list[tuple[int, str]] | str:
+    """Parse numbered-line format into a list of (line_num, text) pairs.
+
+    Returns an error string if any line does not match the expected format.
+    """
+    result = []
+    for raw in content.splitlines():
+        m = _NUMBERED_LINE_RE.match(raw)
+        if not m:
+            return f"error: invalid line format: {raw!r} (expected 'N. content')"
+        result.append((int(m.group(1)), m.group(2)))
+    return result
 
 
 def read_file(FILE_PATH: str, START_LINE: int, END_LINE: int) -> str:
-    """Read lines from a file, returning a JSON array of {line_number: content}."""
-    try:
-        path = _resolve_and_validate(FILE_PATH)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
+    """Read lines from a file, returning them in numbered format.
 
-    if not path.exists():
-        return json.dumps({"error": f"file not found: {FILE_PATH}"})
-    if not path.is_file():
-        return json.dumps({"error": f"not a file: {FILE_PATH}"})
-
-    try:
-        lines = _read_lines(path)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-
-    total = len(lines)
-
-    start = int(START_LINE)
-    end = int(END_LINE)
-
-    if start < 1:
-        return json.dumps({"error": f"START_LINE must be >= 1, got {start}"})
-    if end < start:
-        return json.dumps({"error": f"END_LINE ({end}) must be >= START_LINE ({start})"})
-    if start > total:
-        return json.dumps({"error": f"START_LINE ({start}) exceeds file length", "total_lines": total})
-    if end > total:
-        return json.dumps({"error": f"END_LINE ({end}) exceeds file length", "total_lines": total})
-
-    return _format_result(lines, start, end)
-
-
-def write_file(FILE_PATH: str, CONTENT: str) -> str:
-    """Write full content to a file, creating it if necessary.
-
-    This is a simpler alternative to ``replace_lines`` for when the LLM
-    wants to rewrite the whole file or create a new one.
+    Each output line looks like ``N. content``.  On error a plain-text
+    ``error: …`` message is returned instead.
     """
     try:
         path = _resolve_and_validate(FILE_PATH)
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return f"error: {e}"
+
+    if not path.exists():
+        return f"error: file not found: {FILE_PATH}"
+    if not path.is_file():
+        return f"error: not a file: {FILE_PATH}"
+
+    try:
+        lines = _read_lines(path)
+    except ValueError as e:
+        return f"error: {e}"
+
+    total = len(lines)
+    start = int(START_LINE)
+    end = int(END_LINE)
+
+    if start < 1:
+        return f"error: START_LINE must be >= 1, got {start}"
+    if end < start:
+        return f"error: END_LINE ({end}) must be >= START_LINE ({start})"
+    if start > total:
+        return f"error: START_LINE ({start}) exceeds file length (total_lines: {total})"
+    if end > total:
+        return f"error: END_LINE ({end}) exceeds file length (total_lines: {total})"
+
+    return _format_numbered_lines(lines, start, end)
+
+
+def write_file(FILE_PATH: str, CONTENT: str) -> str:
+    """Update a file using numbered-line content.
+
+    CONTENT must use the same ``N. text`` format returned by ``read_file``.
+    Only the line numbers present in CONTENT are modified; all other lines
+    are preserved.  Pass an empty string to create or truncate to an empty
+    file.  The file (and any parent directories) are created if needed.
+
+    Returns ``"Changes accepted."`` on success, or a plain-text
+    ``error: …`` message on failure.
+    """
+    try:
+        path = _resolve_and_validate(FILE_PATH)
+    except ValueError as e:
+        return f"error: {e}"
 
     if path.is_dir():
-        return json.dumps({"error": f"path is a directory: {FILE_PATH}"})
+        return f"error: path is a directory: {FILE_PATH}"
+
+    if not CONTENT.strip():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+        except OSError as e:
+            return f"error: {e}"
+        return "Changes accepted."
+
+    parsed = _parse_numbered_lines(CONTENT)
+    if isinstance(parsed, str):
+        return parsed
+
+    lines: list[str] = []
+    if path.exists() and path.is_file():
+        try:
+            lines = _read_lines(path)
+        except ValueError as e:
+            return f"error: {e}"
+
+    for line_num, text in parsed:
+        if line_num < 1:
+            return f"error: line number must be >= 1, got {line_num}"
+        while len(lines) < line_num:
+            lines.append("")
+        lines[line_num - 1] = text
 
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(CONTENT, encoding="utf-8")
+        _write_lines(path, lines)
     except OSError as e:
-        return json.dumps({"error": str(e)})
+        return f"error: {e}"
 
-    line_count = CONTENT.count("\n") + (0 if CONTENT.endswith("\n") or not CONTENT else 1)
-    return json.dumps({"ok": True, "lines_written": line_count, "path": FILE_PATH})
-
-
-def replace_lines(FILE_PATH: str, START_LINE: int, END_LINE: int, CONTENT: str) -> str:
-    """Replace lines START_LINE..END_LINE (inclusive) with CONTENT. Empty CONTENT deletes the range."""
-    try:
-        path = _resolve_and_validate(FILE_PATH)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-
-    if not path.exists():
-        return json.dumps({"error": f"file not found: {FILE_PATH}"})
-    if not path.is_file():
-        return json.dumps({"error": f"not a file: {FILE_PATH}"})
-
-    try:
-        lines = _read_lines(path)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-
-    start = int(START_LINE)
-    end = int(END_LINE)
-    total = len(lines)
-
-    if start < 1:
-        return json.dumps({"error": f"START_LINE must be >= 1, got {start}"})
-    if end < start:
-        return json.dumps({"error": f"END_LINE ({end}) must be >= START_LINE ({start})"})
-    if start > total:
-        return json.dumps({"error": f"START_LINE ({start}) exceeds file length", "total_lines": total})
-    if end > total:
-        return json.dumps({"error": f"END_LINE ({end}) exceeds file length", "total_lines": total})
-
-    # Parse CONTENT into replacement lines (strip one trailing newline if present)
-    if CONTENT.endswith("\n"):
-        CONTENT = CONTENT[:-1]
-    new_lines = CONTENT.split("\n") if CONTENT else []
-
-    lines[start - 1 : end] = new_lines
-
-    _write_lines(path, lines)
-
-    # Return context window around the affected region
-    ctx_start = max(1, start - 3)
-    ctx_end = min(len(lines), (start + max(0, len(new_lines) - 1)) + 3)
-    return _format_result(lines, ctx_start, ctx_end)
-
-
-def insert_lines(FILE_PATH: str, START_LINE: int, CONTENT: str) -> str:
-    """Insert CONTENT before START_LINE. Existing lines shift down. Use START_LINE = total_lines + 1 to append."""
-    try:
-        path = _resolve_and_validate(FILE_PATH)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-
-    if not path.exists():
-        return json.dumps({"error": f"file not found: {FILE_PATH}"})
-    if not path.is_file():
-        return json.dumps({"error": f"not a file: {FILE_PATH}"})
-
-    try:
-        lines = _read_lines(path)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-
-    start = int(START_LINE)
-    total = len(lines)
-
-    if start < 1 or start > total + 1:
-        return json.dumps({"error": f"START_LINE ({start}) out of range, valid range is 1-{total + 1}"})
-
-    if CONTENT.endswith("\n"):
-        CONTENT = CONTENT[:-1]
-    new_lines = CONTENT.split("\n") if CONTENT else []
-
-    lines[start - 1 : start - 1] = new_lines
-
-    _write_lines(path, lines)
-
-    ctx_start = max(1, start - 3)
-    ctx_end = min(len(lines), (start + max(0, len(new_lines) - 1)) + 3)
-    return _format_result(lines, ctx_start, ctx_end)
+    return "Changes accepted."
 
 
 FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -198,9 +176,10 @@ FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "read_file",
             "description": (
-                "Read lines from a file. Returns a JSON array of "
-                "{line_number: content} objects. Both START_LINE and END_LINE are required — "
-                "the tool will not read the entire file automatically."
+                "Read a range of lines from a file. "
+                "Returns a multiline string where every line is prefixed with its "
+                "1-indexed line number: '1. first line', '2. second line', etc. "
+                "Both START_LINE and END_LINE are required."
             ),
             "parameters": {
                 "type": "object",
@@ -227,10 +206,12 @@ FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "write_file",
             "description": (
-                "Write full content to a file, creating it if it does not exist. "
-                "Overwrites the entire file. Use this instead of replace_lines when "
-                "rewriting a whole file or creating a new file. "
-                "Returns {ok: true, lines_written: N}."
+                "Write lines to a file using the same numbered format as read_file "
+                "('1. content', '2. content', …). Only the line numbers present in "
+                "CONTENT are updated; all other lines are left unchanged. "
+                "Pass an empty string to create or truncate to an empty file. "
+                "Parent directories are created automatically. "
+                "Returns 'Changes accepted.' on success."
             ),
             "parameters": {
                 "type": "object",
@@ -241,89 +222,19 @@ FILE_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     },
                     "CONTENT": {
                         "type": "string",
-                        "description": "The full text content to write to the file.",
+                        "description": (
+                            "Lines to write in numbered format: '1. first line\\n2. second line\\n…'. "
+                            "Pass an empty string to write an empty file."
+                        ),
                     },
                 },
                 "required": ["FILE_PATH", "CONTENT"],
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "replace_lines",
-            "description": (
-                "Replace a contiguous range of lines in a file with new content. "
-                "Lines START_LINE through END_LINE (inclusive) are replaced by CONTENT. "
-                "Set CONTENT to an empty string to delete the range. "
-                "CONTENT may span multiple lines (use \\n). "
-                "Returns the affected region after modification."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "FILE_PATH": {
-                        "type": "string",
-                        "description": "File path relative to the working directory.",
-                    },
-                    "START_LINE": {
-                        "type": "integer",
-                        "description": "First line of the range to replace (1-indexed).",
-                    },
-                    "END_LINE": {
-                        "type": "integer",
-                        "description": "Last line of the range to replace (1-indexed, inclusive).",
-                    },
-                    "CONTENT": {
-                        "type": "string",
-                        "description": "Replacement text. Use \\n to separate multiple lines. Empty string deletes the range.",
-                    },
-                },
-                "required": ["FILE_PATH", "START_LINE", "END_LINE", "CONTENT"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "insert_lines",
-            "description": (
-                "Insert new content before START_LINE in a file. "
-                "Existing lines at and after START_LINE shift down. "
-                "Use START_LINE = total_lines + 1 to append at the end. "
-                "CONTENT may span multiple lines (use \\n). "
-                "Returns the affected region after modification."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "FILE_PATH": {
-                        "type": "string",
-                        "description": "File path relative to the working directory.",
-                    },
-                    "START_LINE": {
-                        "type": "integer",
-                        "description": "Line number before which to insert (1-indexed). Use total_lines + 1 to append.",
-                    },
-                    "CONTENT": {
-                        "type": "string",
-                        "description": "Text to insert. Use \\n to separate multiple lines.",
-                    },
-                },
-                "required": ["FILE_PATH", "START_LINE", "CONTENT"],
-            },
-        },
-    },
 ]
 
-FILE_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "read_file",
-        "write_file",
-        "replace_lines",
-        "insert_lines",
-    }
-)
+FILE_TOOL_NAMES: frozenset[str] = frozenset({"read_file", "write_file"})
 
 
 def get_file_tools(disabled: frozenset[str] = frozenset()) -> dict[str, Any]:
@@ -331,7 +242,5 @@ def get_file_tools(disabled: frozenset[str] = frozenset()) -> dict[str, Any]:
     tools: dict[str, Any] = {
         "read_file": lambda FILE_PATH, START_LINE, END_LINE, **_kw: read_file(FILE_PATH, START_LINE, END_LINE),
         "write_file": lambda FILE_PATH, CONTENT, **_kw: write_file(FILE_PATH, CONTENT),
-        "replace_lines": lambda FILE_PATH, START_LINE, END_LINE, CONTENT, **_kw: replace_lines(FILE_PATH, START_LINE, END_LINE, CONTENT),
-        "insert_lines": lambda FILE_PATH, START_LINE, CONTENT, **_kw: insert_lines(FILE_PATH, START_LINE, CONTENT),
     }
     return {name: fn for name, fn in tools.items() if name not in disabled}
