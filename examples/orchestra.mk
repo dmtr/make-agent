@@ -44,7 +44,7 @@ Always create a plan for completing the task and provide it to the user to confi
 endef
 
 define  DISABLED_BUILTINS
-write_file,replace_lines,insert_lines
+read_file,patch_file
 endef
 
 .PHONY: current-dir os-info current-date search-files show-file
@@ -66,3 +66,11 @@ os-info:
 # </tool>
 current-date:
 	@date
+
+# <tool>
+# Search for files matching a pattern in a directory.
+# @param DIR string Directory to search (use . for the current directory)
+# @param PATTERN string Filename pattern to search for (e.g., *.txt)
+# </tool>
+grep-files:
+	@find "$$DIR" -type f -name "$$PATTERN"
