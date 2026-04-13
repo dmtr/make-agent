@@ -30,7 +30,7 @@ ANTHROPIC_API_KEY=<key> uv run make_agent [run] [-f FILE] [--model MODEL] [--pro
 - `--max-tokens N` — max tokens in the model response (default: 4096)
 - `--max-retries N` — max retry attempts on rate limit errors (default: 5)
 - `--tool-timeout SECONDS` — timeout for each tool subprocess (default: 600)
-- `--debug` — write all messages to `~/.make-agent/<project>/logs/make-agent.log`
+- `--loglevel LEVEL` — set logging level to DEBUG, INFO, WARNING, ERROR, or CRITICAL (default: INFO)
 
 Without `--prompt`, the agent starts an interactive REPL. Type `exit`, `quit`, or press Ctrl-D to leave.
 
@@ -59,7 +59,7 @@ All per-project data is stored under `~/.make-agent/`:
     ├── memory.db            # conversation history (when memory is enabled)
     ├── agents/              # specialist agent .mk files
     └── logs/
-        └── make-agent.log   # debug log (written when --debug is set)
+        └── make-agent.log   # log file (written when loglevel is DEBUG or higher)
 ```
 
 The **project slug** is the absolute path of the working directory with the leading `/` stripped and remaining `/` replaced by `_`.

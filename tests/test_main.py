@@ -33,7 +33,7 @@ class TestRunPromptInput:
             model="model-x",
             prompt=None,
             prompt_file=str(prompt_file),
-            debug=False,
+            loglevel="INFO",
             max_retries=5,
             tool_timeout=600,
             max_tool_output=20000,

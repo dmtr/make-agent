@@ -17,8 +17,9 @@ _DEFAULT_MAKEFILE = "Makefile"
 _REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "auto")
 
 
-def _init_logging(debug: bool) -> None:
-    logging.basicConfig(filename=log_file(), level=logging.DEBUG if debug else logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+def _init_logging(loglevel: str) -> None:
+    level = getattr(logging, loglevel.upper(), logging.INFO)
+    logging.basicConfig(filename=log_file(), level=level, format="%(asctime)s %(levelname)s %(message)s")
 
 
 def _find_makefile(name: str = _DEFAULT_MAKEFILE) -> str | None:
@@ -147,7 +148,7 @@ def main() -> None:
     run_prompt_g = run_p.add_mutually_exclusive_group()
     run_prompt_g.add_argument("--prompt", default=None, metavar="PROMPT", help="Skip interactive mode and send this prompt to the model")
     run_prompt_g.add_argument("--prompt-file", default=None, metavar="FILE", help="Skip interactive mode and read the prompt from FILE")
-    run_p.add_argument("--debug", action="store_true", default=False, help="Log all messages to make-agent.log")
+    run_p.add_argument("--loglevel", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO", metavar="LEVEL", help="Set logging level (default: INFO)")
     run_p.add_argument("--max-retries", type=int, default=5, metavar="N", help="Max retry attempts on rate limit (default: 5)")
     run_p.add_argument("--tool-timeout", type=int, default=600, metavar="SECONDS", help="Timeout in seconds for each tool call (default: 600)")
     run_p.add_argument("--agents-dir", default=None, metavar="DIR", help="Directory for specialist agent .mk files (default: ~/.make-agent/<project>/agents/)")
@@ -188,7 +189,7 @@ def main() -> None:
     legacy_prompt_g = parser.add_mutually_exclusive_group()
     legacy_prompt_g.add_argument("--prompt", default=None, metavar="PROMPT", help=argparse.SUPPRESS)
     legacy_prompt_g.add_argument("--prompt-file", default=None, metavar="FILE", help=argparse.SUPPRESS)
-    parser.add_argument("--debug", action="store_true", default=False, help=argparse.SUPPRESS)
+    parser.add_argument("--loglevel", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO", metavar="LEVEL", help=argparse.SUPPRESS)
     parser.add_argument("--max-retries", type=int, default=5, metavar="N", help=argparse.SUPPRESS)
     parser.add_argument("--tool-timeout", type=int, default=600, metavar="SECONDS", help=argparse.SUPPRESS)
     parser.add_argument("--agents-dir", default=None, metavar="DIR", help=argparse.SUPPRESS)
@@ -199,7 +200,7 @@ def main() -> None:
     parser.add_argument("--reasoning-effort", choices=_REASONING_EFFORT_VALUES, default=None, metavar="EFFORT", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
-    _init_logging(args.debug)
+    _init_logging(args.loglevel)
     _cmd_run(args)
 
 
