@@ -40,7 +40,6 @@ class AgentConfig(NamedTuple):
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT
     max_tokens: int = _DEFAULT_MAX_TOKENS
     agents_dir: str | None = None
-    debug: bool = False
     disabled_builtin_tools: frozenset[str] = frozenset()
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT
     session_id: str | None = None
