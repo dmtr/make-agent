@@ -266,8 +266,6 @@ def test_get_builtin_tools_returns_all_four():
         "validate_agent",
         "create_agent",
         "run_agent",
-        "patch_file",
-        "read_file",
     }
 
 

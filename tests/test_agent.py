@@ -175,9 +175,9 @@ class TestDisabledBuiltins:
         assert "run_agent" not in agent.tool_names
 
     def test_multiple_tools_disabled_via_makefile(self, tmp_path):
-        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = run_agent,read_file\n")
+        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = run_agent,validate_agent\n")
         assert "run_agent" not in agent.tool_names
-        assert "read_file" not in agent.tool_names
+        assert "validate_agent" not in agent.tool_names
 
     def test_all_disables_everything(self, tmp_path):
         from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
@@ -202,12 +202,12 @@ class TestDisabledBuiltins:
                 makefile_path=mf,
                 model="openai/gpt-4o-mini",
                 agents_dir=str(tmp_path),
-                disabled_builtin_tools=frozenset({"read_file"}),
+                disabled_builtin_tools=frozenset({"validate_agent"}),
             ),
             None,
         )
         assert "run_agent" not in agent.tool_names
-        assert "read_file" not in agent.tool_names
+        assert "validate_agent" not in agent.tool_names
 
     def test_empty_disabled_builtins_is_no_op(self, tmp_path):
         from make_agent.builtin_tools import BUILTIN_TOOL_NAMES

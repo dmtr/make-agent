@@ -15,7 +15,7 @@ from any_llm.types.completion import (
 )
 
 from make_agent.app_dirs import default_agents_dir, project_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, BUILTIN_TOOL_NAMES, FILE_TOOL_SCHEMAS, _RunAgent, get_builtin_tools, get_memory_schemas
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, BUILTIN_TOOL_NAMES, _RunAgent, get_builtin_tools, get_memory_schemas
 from make_agent.commands import export_conversation
 from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
@@ -179,8 +179,7 @@ class Agent:
         memory_schemas = get_memory_schemas() if memory is not None else []
         active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in disabled_builtin_tools]
         active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in disabled_builtin_tools]
-        active_file_schemas = [s for s in FILE_TOOL_SCHEMAS if s["function"]["name"] not in disabled_builtin_tools]
-        self._static_schemas = active_builtin_schemas + active_memory_schemas + active_file_schemas
+        self._static_schemas = active_builtin_schemas + active_memory_schemas
         self._tools = self._static_schemas + makefile_tools
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
@@ -321,8 +320,7 @@ class Agent:
                     hint = (
                         "You have repeated the same failing tool call "
                         f"{consecutive_failures} times. The arguments appear to be "
-                        "incorrect. Try a different approach: use patch_file to "
-                        "rewrite the affected lines, break the "
+                        "incorrect. Try a different approach: rewrite the affected lines, break the "
                         "task into smaller steps, or ask the user for help."
                     )
                     logger.warning("[repeated_failure_hint] %s", hint)
