@@ -144,10 +144,7 @@ def _parse_disabled_builtins(value: str | None) -> frozenset[str]:
     names = frozenset(n.strip() for n in value.split(",") if n.strip())
     unknown = names - BUILTIN_TOOL_NAMES
     if unknown:
-        raise ValueError(
-            f"DISABLED_BUILTINS: unknown built-in tool(s): {', '.join(sorted(unknown))}. "
-            f"Valid names: {', '.join(sorted(BUILTIN_TOOL_NAMES))}"
-        )
+        raise ValueError(f"DISABLED_BUILTINS: unknown built-in tool(s): {', '.join(sorted(unknown))}. " f"Valid names: {', '.join(sorted(BUILTIN_TOOL_NAMES))}")
     return names
 
 
@@ -163,9 +160,7 @@ class Agent:
     def __init__(self, config: AgentConfig, memory: Memory | None) -> None:
         mf = parse_file(config.makefile_path)
         validate_or_raise(mf)
-        makefile_disabled = _parse_disabled_builtins(
-            mf.variables["DISABLED_BUILTINS"].value if "DISABLED_BUILTINS" in mf.variables else None
-        )
+        makefile_disabled = _parse_disabled_builtins(mf.variables["DISABLED_BUILTINS"].value if "DISABLED_BUILTINS" in mf.variables else None)
         disabled_builtin_tools = config.disabled_builtin_tools | makefile_disabled
         self._model = config.model
         self._makefile_path = config.makefile_path
@@ -272,7 +267,7 @@ class Agent:
                         arguments = json.loads(tc.function.arguments)
                     except json.JSONDecodeError as e:
                         output = format_tool_result("", f"malformed JSON arguments: {e}", None)
-                        logger.debug("[tool_result] %s -> %s", target, output)
+                        logger.error("[tool_result] %s -> %s", target, output)
                         self._messages.append({"role": "tool", "tool_call_id": tc.id, "content": output})
                         continue
 
@@ -299,7 +294,8 @@ class Agent:
                     except Exception as e:
                         logger.error("unexpected error when running tool %s: %s", target, e)
                         output = format_tool_result("", f"unexpected error: {e}", None)
-                    logger.debug("[tool_result] %s -> %s", target, output)
+
+                    logger.info("[tool_result] %s -> %s", target, output)
 
                     self._messages.append(
                         {
@@ -329,7 +325,7 @@ class Agent:
                         "rewrite the affected lines, break the "
                         "task into smaller steps, or ask the user for help."
                     )
-                    logger.debug("[repeated_failure_hint] %s", hint)
+                    logger.warning("[repeated_failure_hint] %s", hint)
                     self._messages.append({"role": "system", "content": hint})
                     last_fail_key = None
                     consecutive_failures = 0

@@ -121,7 +121,7 @@ def run_tool(
     logger.debug(f"running tool with command: {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout)
-        logger.debug(f"result of '{' '.join(cmd)}': exit {result.returncode}, stdout: {result.stdout!r}, stderr: {result.stderr!r}")
+        logger.info(f"result of '{' '.join(cmd)}': exit {result.returncode}, stdout: {result.stdout!r}, stderr: {result.stderr!r}")
     except subprocess.TimeoutExpired:
         logger.error("tool '%s' exceeded %ds timeout", target, timeout)
         return format_tool_result("", f"tool '{target}' exceeded {timeout}s limit", None)
