@@ -175,6 +175,21 @@ def test_run_tool_rejects_invalid_argument_name(tmp_path):
     assert "not a valid make variable name" in result["stderr"]
 
 
+def test_run_tool_rejects_system_env_var_override(tmp_path):
+    """Arguments must not be allowed to shadow existing environment variables."""
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: noop
+        noop:
+        \t@true
+    """,
+    )
+    result = json.loads(run_tool("noop", {"PATH": "/evil/bin"}, mf))
+    assert result["exit_code"] is None
+    assert "shadows the system environment variable" in result["stderr"]
+
+
 # ── params.mk injection ───────────────────────────────────────────────────────
 
 

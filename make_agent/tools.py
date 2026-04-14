@@ -115,6 +115,8 @@ def run_tool(
     for k in arguments:
         if not _is_valid_make_var_name(k):
             return format_tool_result("", f"{k!r} is not a valid make variable name", None)
+        if k in os.environ:
+            return format_tool_result("", f"argument {k!r} shadows the system environment variable {k!r}", None)
 
     env = {**os.environ, **{k: str(v) for k, v in arguments.items()}}
     cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target]
