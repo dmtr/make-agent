@@ -76,7 +76,7 @@ def create_agent(name: str, makefile: str, description: str, agents_dir: str) ->
     if not _valid_agent_name(name):
         return f"Error: invalid agent name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
 
-    makefile = f"define DESCRIPTION\n{description}\nendef\n\n" + makefile
+    makefile = f"define  DISABLED_BUILTINS\nall\nendef\n\ndefine DESCRIPTION\n{description}\nendef\n\n" + makefile
 
     try:
         mf = parse(makefile)

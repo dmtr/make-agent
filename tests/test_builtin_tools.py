@@ -190,6 +190,15 @@ def test_create_agent_writes_file(tmp_path):
     written = (tmp_path / "myagent.mk").read_text()
     assert "define DESCRIPTION" in written
     assert "A file management agent." in written
+    assert "DISABLED_BUILTINS" in written
+    assert written.startswith("define  DISABLED_BUILTINS")
+
+
+def test_create_agent_disables_builtins_first(tmp_path):
+    result = create_agent("myagent", _AGENT_MK, "desc", str(tmp_path))
+    assert result.startswith("Created agent 'myagent'")
+    written = (tmp_path / "myagent.mk").read_text()
+    assert written.startswith("define  DISABLED_BUILTINS\nall\nendef")
 
 
 def test_create_agent_reports_tool_count(tmp_path):
