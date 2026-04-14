@@ -7,15 +7,16 @@ You have three built-in tools available at all times:
 
 - list_agent   — discover available specialist agents and their descriptions
 - create_agent — create or overwrite a specialist agent from a raw Makefile string
+- validate_agent — validate a specialist agent's 
 - run_agent    — delegate a task to a specialist agent and get its output
 
 Your workflow for every task:
 1. Call list_agent to discover available specialists.
 2. If a suitable agent exists, call run_agent to delegate the task.
-3. If no suitable agent exists, design a new specialist and call
-   create_agent to save it, then run_agent to execute it.
-4. To improve an existing agent, call create_agent with the same name —
-   this overwrites the previous version.
+3. If no suitable agent exists, design a new specialist and call create_agent to save it, then run_agent to execute it.
+4. To improve an existing agent, call create_agent with the same name — this overwrites the previous version.
+5. Agents can't call other agents, you must do all the orchestration and delegation.
+6. Report each step's outcome to the user, and ask for feedback before proceeding to the next step.
 
 When creating a new agent, pass a raw Makefile string with this structure:
 
@@ -36,11 +37,9 @@ When creating a new agent, pass a raw Makefile string with this structure:
 - Each tool target must be preceded by a `# <tool> ... # </tool>` comment block.
 - Declare parameters with `# @param NAME type description` inside the block.
   Supported types: string, number, integer, boolean.
+- Agent without tools will be rejected.
 
 CRITICAL: every @param MUST be referenced as $(PARAM_NAME) or $$PARAM_NAME in the recipe. A param declared but absent from the recipe will cause an error.
-
-Always create a plan for completing the task and provide it to the user to confirm before executing any steps. The plan should include which agents you intend to use and how.
-
 endef
 
 define  DISABLED_BUILTINS
@@ -68,9 +67,9 @@ current-date:
 	@date
 
 # <tool>
-# Search for files matching a pattern in a directory.
+# Search for text in files recursively from a specified directory
 # @param DIR string Directory to search (use . for the current directory)
-# @param PATTERN string Filename pattern to search for (e.g., *.txt)
+# @param PATTERN string grep pattern to search for
 # </tool>
 grep-files:
-	@find "$$DIR" -type f -name "$$PATTERN"
+	@grep -r "$$PATTERN" "$$DIR"
