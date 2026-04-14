@@ -42,10 +42,6 @@ When creating a new agent, pass a raw Makefile string with this structure:
 CRITICAL: every @param MUST be referenced as $(PARAM_NAME) or $$PARAM_NAME in the recipe. A param declared but absent from the recipe will cause an error.
 endef
 
-define  DISABLED_BUILTINS
-read_file,patch_file
-endef
-
 .PHONY: current-dir os-info current-date search-files show-file
 
 # <tool>
