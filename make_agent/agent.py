@@ -21,20 +21,19 @@ from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
 from make_agent.tools import build_tools, format_tool_result, run_tool
 
-_DEFAULT_MODEL = "anthropic/claude-haiku-4-5-20251001"
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
-_DEFAULT_MAX_TOOL_OUTPUT = 20000  # characters; 0 = unlimited
+_DEFAULT_MAX_TOOL_OUTPUT = 8000  # characters; 0 = unlimited
 _DEFAULT_MAX_TOKENS = 4096
 _DEFAULT_REASONING_EFFORT = "auto"
-_MAX_REPEATED_FAILURES = 3
+_MAX_REPEATED_FAILURES = 5
 
 logger = logging.getLogger(__name__)
 
 
 class AgentConfig(NamedTuple):
     makefile_path: Path
-    model: str = _DEFAULT_MODEL
+    model: str
     max_retries: int = _DEFAULT_MAX_RETRIES
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT
@@ -92,6 +91,26 @@ def _completion_with_retry(
             time.sleep(wait)
 
 
+def _parse_item(doc: Any) -> ChatCompletionMessageToolCall | None:
+    result: list[ChatCompletionMessageToolCall] = []
+    for item in doc:
+        if not isinstance(item, dict) or item.get("type") != "function":
+            return None
+        func = item.get("function", {})
+        if "name" not in func:
+            return None
+        args = func.get("arguments", {})
+        args_str = json.dumps(args) if isinstance(args, dict) else args
+        result.append(
+            ChatCompletionMessageFunctionToolCall(
+                id=item.get("id", ""),
+                type="function",
+                function=Function(name=func["name"], arguments=args_str),
+            )
+        )
+    return result
+
+
 def _parse_content_tool_calls(content: str) -> list[ChatCompletionMessageToolCall] | None:
     """Parse tool calls embedded in message content (e.g. Gemma-style responses).
 
@@ -110,25 +129,11 @@ def _parse_content_tool_calls(content: str) -> list[ChatCompletionMessageToolCal
         parsed = json.loads(content)
     except json.JSONDecodeError:
         return None
-    if not isinstance(parsed, list):
-        return None
-    result: list[ChatCompletionMessageToolCall] = []
-    for item in parsed:
-        if not isinstance(item, dict) or item.get("type") != "function":
-            return None
-        func = item.get("function", {})
-        if "name" not in func:
-            return None
-        args = func.get("arguments", {})
-        args_str = json.dumps(args) if isinstance(args, dict) else args
-        result.append(
-            ChatCompletionMessageFunctionToolCall(
-                id=item.get("id", ""),
-                type="function",
-                function=Function(name=func["name"], arguments=args_str),
-            )
-        )
-    return result or None
+
+    if isinstance(parsed, list):
+        return _parse_item(parsed)
+
+    return None
 
 
 def _parse_disabled_builtins(value: str | None) -> frozenset[str]:
@@ -153,7 +158,8 @@ class Agent:
 
     Call the instance with a user message to get the assistant's reply::
 
-        agent = Agent(Path("Makefile"), model="anthropic/claude-haiku-4-5-20251001")
+        config = AgentConfig(makefile_path=Path("Makefile"), model="anthropic/claude-haiku-4-5-20251001", session_id="example")
+        agent = Agent(config, memory=None)
         reply = agent("List the files in the current directory.")
     """
 
@@ -300,12 +306,12 @@ class Agent:
                         {
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": output,
+                            "content": json.dumps(output),
                         }
                     )
 
                     # Detect repeated identical failing tool calls.
-                    is_error = '"error"' in output or '"stderr"' in output
+                    is_error = output.startswith("ERROR:")
                     call_key = f"{target}:{tc.function.arguments}"
                     if is_error and call_key == last_fail_key:
                         consecutive_failures += 1

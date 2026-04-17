@@ -44,8 +44,7 @@ def _is_valid_make_var_name(name: str) -> bool:
 
 
 def format_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> str:
-    """Serialise tool output as a JSON string for the LLM.
-
+    """
     *max_output* limits how many characters of *stdout* and *stderr* are kept
     (each stream capped independently).  When a stream is longer, the excess is
     dropped and an ``omitted_chars`` key is added so the LLM knows it received
@@ -58,10 +57,27 @@ def format_tool_result(stdout: str, stderr: str, exit_code: int | None, max_outp
     if max_output > 0 and len(stderr) > max_output:
         omitted += len(stderr) - max_output
         stderr = stderr[:max_output]
-    result: dict[str, Any] = {"stdout": stdout, "stderr": stderr, "exit_code": exit_code}
-    if omitted:
-        result["omitted_chars"] = omitted
-    return json.dumps(result)
+
+    result = []
+    is_error = (exit_code != 0 if exit_code is not None else True) or bool(stderr.strip())
+    is_stdout_empty = stdout.strip() == ""
+
+    if is_error and is_stdout_empty:
+        result.append(f"ERROR: {stderr.strip()}")
+
+    if is_error and not is_stdout_empty:
+        result.append(f"ERROR: {stdout.strip()}")
+
+    if not is_error and not is_stdout_empty:
+        result.append(stdout.strip())
+
+    if not is_error and is_stdout_empty:
+        result.append("OK. Execution succeeded with no output.")
+
+    if omitted > 0:
+        result.append(f"(Output was truncated, {omitted} characters omitted)")
+
+    return "\n".join(result)
 
 
 def _param_schema(p: Param) -> dict[str, str]:

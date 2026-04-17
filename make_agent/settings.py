@@ -18,7 +18,6 @@ import yaml
 
 from make_agent.app_dirs import default_agents_dir, settings_file
 
-_DEFAULT_MODEL = "anthropic/claude-haiku-4-5-20251001"
 _DEFAULT_MAKEFILE = "Makefile"
 _ORCHESTRA_TEMPLATE = Path(__file__).parent / "templates" / "orchestra.mk"
 
@@ -81,8 +80,10 @@ def run_setup_wizard() -> dict[str, Any]:
                 break
             print(f"  Please enter a number between 1 and {len(existing_agents)}.")
 
-    raw_model = input(f"  Model [{_DEFAULT_MODEL}]: ").strip()
-    model = raw_model or _DEFAULT_MODEL
+    raw_model = input("  Model (required): ").strip()
+    if not raw_model:
+        raise ValueError("Model is required.")
+    model = raw_model
 
     settings: dict[str, Any] = {"makefile": makefile, "model": model}
     save_settings(settings)

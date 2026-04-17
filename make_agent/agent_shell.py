@@ -7,7 +7,6 @@ from make_agent.agent import (
     _DEFAULT_MAX_RETRIES,
     _DEFAULT_MAX_TOKENS,
     _DEFAULT_MAX_TOOL_OUTPUT,
-    _DEFAULT_MODEL,
     _DEFAULT_REASONING_EFFORT,
     _DEFAULT_TOOL_TIMEOUT,
     AgentConfig,
@@ -96,7 +95,7 @@ class MakeAgentShell(cmd.Cmd):
 
 def run(
     makefile_path: Path,
-    model: str = _DEFAULT_MODEL,
+    model: str,
     prompt: Optional[str] = None,
     max_retries: int = _DEFAULT_MAX_RETRIES,
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
