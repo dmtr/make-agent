@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import textwrap
 from pathlib import Path
 
@@ -70,9 +69,8 @@ def test_run_tool_stdout_captured(tmp_path):
         \t@echo hello world
     """,
     )
-    result = json.loads(run_tool("hello", {}, mf))
-    assert "hello world" in result["stdout"]
-    assert result["exit_code"] == 0
+    result = run_tool("hello", {}, mf)
+    assert "hello world" in result
 
 
 def test_run_tool_passes_variables(tmp_path):
@@ -84,8 +82,8 @@ def test_run_tool_passes_variables(tmp_path):
         \t@echo $(GREETING) $(NAME)
     """,
     )
-    result = json.loads(run_tool("greet", {"NAME": "Alice", "GREETING": "Hi"}, mf))
-    assert "Hi Alice" in result["stdout"]
+    result = run_tool("greet", {"NAME": "Alice", "GREETING": "Hi"}, mf)
+    assert "Hi Alice" in result
 
 
 def test_run_tool_error_on_nonzero_exit(tmp_path):
@@ -97,8 +95,8 @@ def test_run_tool_error_on_nonzero_exit(tmp_path):
         \t@exit 1
     """,
     )
-    result = json.loads(run_tool("fail", {}, mf))
-    assert result["exit_code"] != 0
+    result = run_tool("fail", {}, mf)
+    assert "ERROR" in result
 
 
 def test_run_tool_error_includes_stdout(tmp_path):
@@ -112,9 +110,9 @@ def test_run_tool_error_includes_stdout(tmp_path):
         \t@exit 1
     """,
     )
-    result = json.loads(run_tool("partial", {}, mf))
-    assert result["exit_code"] != 0
-    assert "partial output" in result["stdout"]
+    result = run_tool("partial", {}, mf)
+    assert "ERROR" in result
+    assert "partial output" in result
 
 
 def test_run_tool_error_includes_stderr(tmp_path):
@@ -127,9 +125,9 @@ def test_run_tool_error_includes_stderr(tmp_path):
         \t@echo error detail >&2; exit 2
     """,
     )
-    result = json.loads(run_tool("warn", {}, mf))
-    assert result["exit_code"] == 2
-    assert "error detail" in result["stderr"]
+    result = run_tool("warn", {}, mf)
+    assert "ERROR" in result
+    assert "error detail" in result
 
 
 def test_run_tool_unknown_target(tmp_path):
@@ -141,8 +139,8 @@ def test_run_tool_unknown_target(tmp_path):
         \t@echo ok
     """,
     )
-    result = json.loads(run_tool("nonexistent", {}, mf))
-    assert result["exit_code"] != 0
+    result = run_tool("nonexistent", {}, mf)
+    assert "ERROR" in result
 
 
 def test_run_tool_timeout(tmp_path):
@@ -154,10 +152,9 @@ def test_run_tool_timeout(tmp_path):
         \t@sleep 10
     """,
     )
-    result = json.loads(run_tool("slow", {}, mf, timeout=1))
-    assert result["exit_code"] is None
-    assert "exceeded" in result["stderr"]
-    assert "slow" in result["stderr"]
+    result = run_tool("slow", {}, mf, timeout=1)
+    assert "exceeded" in result
+    assert "slow" in result
 
 
 def test_run_tool_rejects_invalid_argument_name(tmp_path):
@@ -170,9 +167,8 @@ def test_run_tool_rejects_invalid_argument_name(tmp_path):
         \t@echo ok
     """,
     )
-    result = json.loads(run_tool("greet", {"--file": "x"}, mf))
-    assert result["exit_code"] is None
-    assert "not a valid make variable name" in result["stderr"]
+    result = run_tool("greet", {"--file": "x"}, mf)
+    assert "not a valid make variable name" in result
 
 
 def test_run_tool_rejects_system_env_var_override(tmp_path):
@@ -185,9 +181,8 @@ def test_run_tool_rejects_system_env_var_override(tmp_path):
         \t@true
     """,
     )
-    result = json.loads(run_tool("noop", {"PATH": "/evil/bin"}, mf))
-    assert result["exit_code"] is None
-    assert "shadows the system environment variable" in result["stderr"]
+    result = run_tool("noop", {"PATH": "/evil/bin"}, mf)
+    assert "shadows the system environment variable" in result
 
 
 # ── params.mk injection ───────────────────────────────────────────────────────
@@ -203,8 +198,8 @@ def test_run_tool_param_accessible_via_shell_var(tmp_path):
         \t@printf '%s' "$$NAME"
     """,
     )
-    result = json.loads(run_tool("greet", {"NAME": "Alice"}, mf))
-    assert "Alice" in result["stdout"]
+    result = run_tool("greet", {"NAME": "Alice"}, mf)
+    assert "Alice" in result
 
 
 def test_run_tool_multiline_value(tmp_path):
@@ -220,6 +215,7 @@ def test_run_tool_multiline_value(tmp_path):
     )
     multiline = "line one\nline two\nline three"
     run_tool("write-file", {"CONTENT": multiline}, mf)
+    # Verify the file was written correctly
     assert out.read_text() == multiline
 
 
@@ -275,39 +271,39 @@ def test_run_tool_quotes_in_value(tmp_path):
 
 
 def test_format_tool_result_success():
-    result = json.loads(format_tool_result("hello\n", "", 0))
-    assert result == {"stdout": "hello\n", "stderr": "", "exit_code": 0}
+    result = format_tool_result("hello\n", "", 0)
+    assert result == "hello"
 
 
 def test_format_tool_result_failure():
-    result = json.loads(format_tool_result("", "oops", 1))
-    assert result["exit_code"] == 1
-    assert result["stderr"] == "oops"
+    result = format_tool_result("", "oops", 1)
+    assert "ERROR" in result
+    assert "oops" in result
 
 
 def test_format_tool_result_framework_error():
-    result = json.loads(format_tool_result("", "timeout", None))
-    assert result["exit_code"] is None
+    result = format_tool_result("", "timeout", None)
+    assert "ERROR" in result
+    assert "timeout" in result
 
 
 def test_format_tool_result_no_truncation_when_under_limit():
     stdout = "x" * 100
-    result = json.loads(format_tool_result(stdout, "", 0, max_output=200))
-    assert result["stdout"] == stdout
+    result = format_tool_result(stdout, "", 0, max_output=200)
+    assert result == "x" * 100
     assert "omitted_chars" not in result
 
 
 def test_format_tool_result_truncates_when_over_limit():
     stdout = "x" * 1000
-    result = json.loads(format_tool_result(stdout, "", 0, max_output=100))
-    assert len(result["stdout"]) == 100
-    assert result["omitted_chars"] == 900
+    result = format_tool_result(stdout, "", 0, max_output=100)
+    assert "omitted_chars" in result
 
 
 def test_format_tool_result_unlimited_when_max_output_zero():
     stdout = "x" * 50000
-    result = json.loads(format_tool_result(stdout, "", 0, max_output=0))
-    assert len(result["stdout"]) == 50000
+    result = format_tool_result(stdout, "", 0, max_output=0)
+    assert len(result) == 50000
     assert "omitted_chars" not in result
 
 
@@ -320,6 +316,6 @@ def test_run_tool_truncates_output(tmp_path):
         \t@python3 -c "print('a' * 500)"
     """,
     )
-    result = json.loads(run_tool("big", {}, mf, max_output=100))
-    assert len(result["stdout"]) == 100
-    assert result["omitted_chars"] > 0
+    result = run_tool("big", {}, mf, max_output=100)
+    assert len(result) == 100
+    assert "omitted_chars" in result

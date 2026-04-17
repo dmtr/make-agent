@@ -23,7 +23,7 @@ from make_agent.tools import build_tools, format_tool_result, run_tool
 
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
-_DEFAULT_MAX_TOOL_OUTPUT = 8000  # characters; 0 = unlimited
+_DEFAULT_MAX_TOOL_OUTPUT = 16000  # characters; 0 = unlimited
 _DEFAULT_MAX_TOKENS = 4096
 _DEFAULT_REASONING_EFFORT = "auto"
 _MAX_REPEATED_FAILURES = 5
@@ -306,7 +306,7 @@ class Agent:
                         {
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": json.dumps(output),
+                            "content": output,
                         }
                     )
 
