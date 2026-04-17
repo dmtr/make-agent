@@ -446,7 +446,7 @@ class TestAgentAutoStorage:
 
         mf_path = tmp_path / "Makefile"
         mf_path.write_text("noop:\n\t@echo ok\n")
-        config = AgentConfig(makefile_path=mf_path)
+        config = AgentConfig(makefile_path=mf_path, model="openai/gpt-4o-mini")
         return Agent(config, mem)
 
     def test_user_message_stored(self, tmp_path, mem):
@@ -484,7 +484,7 @@ class TestAgentAutoStorage:
 
         mf_path = tmp_path / "Makefile"
         mf_path.write_text("noop:\n\t@echo ok\n")
-        config = AgentConfig(makefile_path=mf_path)
+        config = AgentConfig(makefile_path=mf_path, model="openai/gpt-4o-mini")
         agent = Agent(config, None)
 
         fake_response = MagicMock()
