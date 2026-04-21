@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 
 from make_agent.parser import parse
-from make_agent.tools import build_tools, format_tool_result, run_tool
+from make_agent.tools import build_tools, get_tool_result, run_tool
 
 
 def test_build_tools_no_tool_rules():
@@ -96,7 +96,7 @@ def test_run_tool_error_on_nonzero_exit(tmp_path):
     """,
     )
     result = run_tool("fail", {}, mf)
-    assert "ERROR" in result
+    assert "ERROR" in result.output
 
 
 def test_run_tool_error_includes_stdout(tmp_path):
@@ -111,8 +111,8 @@ def test_run_tool_error_includes_stdout(tmp_path):
     """,
     )
     result = run_tool("partial", {}, mf)
-    assert "ERROR" in result
-    assert "partial output" in result
+    assert "ERROR" in result.output
+    assert "partial output" in result.output
 
 
 def test_run_tool_error_includes_stderr(tmp_path):
@@ -126,8 +126,8 @@ def test_run_tool_error_includes_stderr(tmp_path):
     """,
     )
     result = run_tool("warn", {}, mf)
-    assert "ERROR" in result
-    assert "error detail" in result
+    assert "ERROR" in result.output
+    assert "error detail" in result.output
 
 
 def test_run_tool_unknown_target(tmp_path):
@@ -140,7 +140,7 @@ def test_run_tool_unknown_target(tmp_path):
     """,
     )
     result = run_tool("nonexistent", {}, mf)
-    assert "ERROR" in result
+    assert "ERROR" in result.output
 
 
 def test_run_tool_timeout(tmp_path):
@@ -153,8 +153,8 @@ def test_run_tool_timeout(tmp_path):
     """,
     )
     result = run_tool("slow", {}, mf, timeout=1)
-    assert "exceeded" in result
-    assert "slow" in result
+    assert "exceeded" in result.output
+    assert "slow" in result.output
 
 
 def test_run_tool_rejects_invalid_argument_name(tmp_path):
@@ -168,7 +168,7 @@ def test_run_tool_rejects_invalid_argument_name(tmp_path):
     """,
     )
     result = run_tool("greet", {"--file": "x"}, mf)
-    assert "not a valid make variable name" in result
+    assert "not a valid make variable name" in result.output
 
 
 def test_run_tool_rejects_system_env_var_override(tmp_path):
@@ -182,7 +182,7 @@ def test_run_tool_rejects_system_env_var_override(tmp_path):
     """,
     )
     result = run_tool("noop", {"PATH": "/evil/bin"}, mf)
-    assert "shadows the system environment variable" in result
+    assert "shadows the system environment variable" in result.output
 
 
 # ── params.mk injection ───────────────────────────────────────────────────────
@@ -270,6 +270,20 @@ def test_run_tool_quotes_in_value(tmp_path):
 # ── format_tool_result ────────────────────────────────────────────────────────
 
 
+def format_tool_result(
+    stdout: str,
+    stderr: str,
+    exit_code: int | None,
+    max_output: int = 0,
+) -> str:
+    """Return the formatted output string for a tool execution.
+
+    This is a thin wrapper around :func:`get_tool_result` that returns
+    only the ``output`` portion of the :class:`ToolExecutionResult` tuple.
+    """
+    return get_tool_result(stdout, stderr, exit_code, max_output).output
+
+
 def test_format_tool_result_success():
     result = format_tool_result("hello\n", "", 0)
     assert result == "hello"
@@ -317,5 +331,5 @@ def test_run_tool_truncates_output(tmp_path):
     """,
     )
     result = run_tool("big", {}, mf, max_output=100)
-    assert len(result) == 100
-    assert "omitted_chars" in result
+    assert len(result.output) == 100
+    assert "omitted_chars" in result.output

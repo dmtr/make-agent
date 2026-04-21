@@ -23,13 +23,12 @@ for simple values where the Makefile does not define its own ``PARAM``.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from make_agent.parser import Makefile, Param
 
@@ -39,11 +38,16 @@ logger = logging.getLogger(__name__)
 _VALID_MAKE_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+class ToolExecutionResult(NamedTuple):
+    is_error: bool
+    output: str
+
+
 def _is_valid_make_var_name(name: str) -> bool:
     return bool(_VALID_MAKE_VAR_NAME_RE.fullmatch(name))
 
 
-def format_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> str:
+def get_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> ToolExecutionResult:
     """
     *max_output* limits how many characters of the final combined output are kept.
     When the combined output exceeds that limit, the excess is dropped and a
@@ -81,7 +85,7 @@ def format_tool_result(stdout: str, stderr: str, exit_code: int | None, max_outp
             available = max_output - notice_len
             final_result = final_result[:available] + notice
 
-    return final_result
+    return ToolExecutionResult(is_error=is_error, output=final_result)
 
 
 def _param_schema(p: Param) -> dict[str, str]:
@@ -121,7 +125,7 @@ def run_tool(
     makefile_path: Path,
     timeout: int = 600,
     max_output: int = 0,
-) -> str:
+) -> ToolExecutionResult:
     """Invoke ``make`` with safely injected parameters and return output as JSON.
 
     Returns a JSON string with keys ``stdout``, ``stderr``, and ``exit_code``
@@ -134,9 +138,9 @@ def run_tool(
     """
     for k in arguments:
         if not _is_valid_make_var_name(k):
-            return format_tool_result("", f"{k!r} is not a valid make variable name", None)
+            return get_tool_result("", f"{k!r} is not a valid make variable name", None)
         if k in os.environ:
-            return format_tool_result("", f"argument {k!r} shadows the system environment variable {k!r}", None)
+            return get_tool_result("", f"argument {k!r} shadows the system environment variable {k!r}", None)
 
     env = {**os.environ, **{k: str(v) for k, v in arguments.items()}}
     cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target]
@@ -146,8 +150,8 @@ def run_tool(
         logger.info(f"result of '{' '.join(cmd)}': exit {result.returncode}, stdout: {result.stdout!r}, stderr: {result.stderr!r}")
     except subprocess.TimeoutExpired:
         logger.error("tool '%s' exceeded %ds timeout", target, timeout)
-        return format_tool_result("", f"tool '{target}' exceeded {timeout}s limit", None)
+        return get_tool_result("", f"tool '{target}' exceeded {timeout}s limit", None)
     except OSError as e:
         logger.error("OS error when running tool %s %s", target, e)
-        return format_tool_result("", f"failed to run make: {e}", None)
-    return format_tool_result(result.stdout, result.stderr, result.returncode, max_output)
+        return get_tool_result("", f"failed to run make: {e}", None)
+    return get_tool_result(result.stdout, result.stderr, result.returncode, max_output)

@@ -19,7 +19,7 @@ from make_agent.builtin_tools import BUILTIN_SCHEMAS, BUILTIN_TOOL_NAMES, _RunAg
 from make_agent.commands import export_conversation
 from make_agent.memory import Memory
 from make_agent.parser import parse_file, validate_or_raise
-from make_agent.tools import build_tools, format_tool_result, run_tool
+from make_agent.tools import build_tools, get_tool_result, run_tool
 
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
@@ -271,9 +271,9 @@ class Agent:
                     try:
                         arguments = json.loads(tc.function.arguments)
                     except json.JSONDecodeError as e:
-                        output = format_tool_result("", f"malformed JSON arguments: {e}", None)
-                        logger.error("[tool_result] %s -> %s", target, output)
-                        self._messages.append({"role": "tool", "tool_call_id": tc.id, "content": output})
+                        result = get_tool_result("", f"malformed JSON arguments: {e}", None)
+                        logger.error("[tool_result] %s -> %s", target, result.output)
+                        self._messages.append({"role": "tool", "tool_call_id": tc.id, "content": result.output})
                         continue
 
                     logger.debug("[tool_call] %s args=%s", target, arguments)
@@ -281,12 +281,12 @@ class Agent:
                         if target in self._builtins:
                             raw = self._builtins[target](**arguments)
                             if isinstance(raw, _RunAgent):
-                                result = self._run_agent(raw.mk_path, raw.prompt)
-                                output = format_tool_result(result, "", 0, self._max_tool_output)
+                                agent_result = self._run_agent(raw.mk_path, raw.prompt)
+                                result = get_tool_result(agent_result, "", 0, self._max_tool_output)
                             else:
-                                output = format_tool_result(str(raw), "", 0, self._max_tool_output)
+                                result = get_tool_result(str(raw), "", 0, self._max_tool_output)
                         else:
-                            output = run_tool(
+                            result = run_tool(
                                 target,
                                 arguments,
                                 self._makefile_path,
@@ -295,27 +295,26 @@ class Agent:
                             )
                     except TypeError as e:
                         logger.error("argument type error when running tool %s: %s", target, e)
-                        output = format_tool_result("", f"argument type error: {e}", None)
+                        result = get_tool_result("", f"argument type error: {e}", None)
                     except Exception as e:
                         logger.error("unexpected error when running tool %s: %s", target, e)
-                        output = format_tool_result("", f"unexpected error: {e}", None)
+                        result = get_tool_result("", f"unexpected error: {e}", None)
 
-                    logger.info("[tool_result] %s -> %s", target, output)
+                    logger.info("[tool_result] %s -> %s", target, result.output)
 
                     self._messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": output,
+                            "content": result.output,
                         }
                     )
 
                     # Detect repeated identical failing tool calls.
-                    is_error = output.startswith("ERROR:")
                     call_key = f"{target}:{tc.function.arguments}"
-                    if is_error and call_key == last_fail_key:
+                    if result.is_error and call_key == last_fail_key:
                         consecutive_failures += 1
-                    elif is_error:
+                    elif result.is_error:
                         last_fail_key = call_key
                         consecutive_failures = 1
                     else:
