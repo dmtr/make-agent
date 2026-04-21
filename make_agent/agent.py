@@ -26,7 +26,7 @@ _DEFAULT_TOOL_TIMEOUT = 600  # seconds
 _DEFAULT_MAX_TOOL_OUTPUT = 16000  # characters; 0 = unlimited
 _DEFAULT_MAX_TOKENS = 4096
 _DEFAULT_REASONING_EFFORT = "auto"
-_MAX_REPEATED_FAILURES = 5
+_MAX_REPEATED_FAILURES = 8
 
 logger = logging.getLogger(__name__)
 

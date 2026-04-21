@@ -45,39 +45,43 @@ def _is_valid_make_var_name(name: str) -> bool:
 
 def format_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> str:
     """
-    *max_output* limits how many characters of *stdout* and *stderr* are kept
-    (each stream capped independently).  When a stream is longer, the excess is
-    dropped and an ``omitted_chars`` key is added so the LLM knows it received
-    a partial result.  ``0`` means no limit.
+    *max_output* limits how many characters of the final combined output are kept.
+    When the combined output exceeds that limit, the excess is dropped and a
+    truncation notice is included within the limit.  ``0`` means no limit.
     """
-    omitted = 0
-    if max_output > 0 and len(stdout) > max_output:
-        omitted += len(stdout) - max_output
-        stdout = stdout[:max_output]
-    if max_output > 0 and len(stderr) > max_output:
-        omitted += len(stderr) - max_output
-        stderr = stderr[:max_output]
-
     result = []
     is_error = (exit_code != 0 if exit_code is not None else True) or bool(stderr.strip())
     is_stdout_empty = stdout.strip() == ""
 
-    if is_error and is_stdout_empty:
-        result.append(f"ERROR: {stderr.strip()}")
-
-    if is_error and not is_stdout_empty:
-        result.append(f"ERROR: {stdout.strip()}")
-
-    if not is_error and not is_stdout_empty:
+    if is_error:
+        stdout_stripped = stdout.strip()
+        stderr_stripped = stderr.strip()
+        if stdout_stripped:
+            result.append(stdout_stripped)
+        if stderr_stripped:
+            result.append("ERROR: ")
+            result.append(stderr_stripped)
+        else:
+            result.append("ERROR: unknown error")
+    else:
         result.append(stdout.strip())
 
     if not is_error and is_stdout_empty:
         result.append("OK. Execution succeeded with no output.")
 
-    if omitted > 0:
-        result.append(f"(Output was truncated, {omitted} characters omitted)")
+    final_result = "\n".join(result)
 
-    return "\n".join(result)
+    if max_output > 0 and len(final_result) > max_output:
+        omitted = len(final_result) - max_output
+        notice = f"(Output was truncated, {omitted} omitted_chars)"
+        notice_len = len(notice)
+        if notice_len >= max_output:
+            final_result = notice[:max_output]
+        else:
+            available = max_output - notice_len
+            final_result = final_result[:available] + notice
+
+    return final_result
 
 
 def _param_schema(p: Param) -> dict[str, str]:
