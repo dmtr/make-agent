@@ -196,7 +196,8 @@ class Memory:
         """Return aggregated token usage totals for *session_id*.
 
         Returns a dict with keys ``input_tokens``, ``output_tokens``,
-        ``total_tokens``, and ``models`` (list of distinct model names used),
+        ``total_tokens``, ``models`` (list of distinct model names used),
+        and ``agents`` (dict mapping agent name to per-agent stats),
         or an empty dict when no rows exist for that session.
         """
         conn = self._get_conn()
@@ -214,11 +215,31 @@ class Memory:
                 (session_id,),
             ).fetchall()
         ]
+        
+        # Per-agent breakdown
+        agent_rows = conn.execute(
+            "SELECT agent, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens"
+            " FROM token_usage WHERE session_id = ? GROUP BY agent ORDER BY agent",
+            (session_id,),
+        ).fetchall()
+        
+        agents = {}
+        for arow in agent_rows:
+            agent_name = arow["agent"]
+            input_tok = arow["input_tokens"] or 0
+            output_tok = arow["output_tokens"] or 0
+            agents[agent_name] = {
+                "input_tokens": input_tok,
+                "output_tokens": output_tok,
+                "total_tokens": input_tok + output_tok,
+            }
+        
         return {
             "input_tokens": row["input_tokens"],
             "output_tokens": row["output_tokens"],
             "total_tokens": row["input_tokens"] + row["output_tokens"],
             "models": models,
+            "agents": agents,
         }
 
     def close(self) -> None:
