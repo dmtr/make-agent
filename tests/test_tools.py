@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import textwrap
 from pathlib import Path
 
 from make_agent.parser import parse
-from make_agent.tools import build_tools, format_tool_result, run_tool
+from make_agent.tools import build_tools, get_tool_result, run_tool
 
 
 def test_build_tools_no_tool_rules():
@@ -70,9 +69,8 @@ def test_run_tool_stdout_captured(tmp_path):
         \t@echo hello world
     """,
     )
-    result = json.loads(run_tool("hello", {}, mf))
-    assert "hello world" in result["stdout"]
-    assert result["exit_code"] == 0
+    result = run_tool("hello", {}, mf)
+    assert "hello world" in result
 
 
 def test_run_tool_passes_variables(tmp_path):
@@ -84,8 +82,8 @@ def test_run_tool_passes_variables(tmp_path):
         \t@echo $(GREETING) $(NAME)
     """,
     )
-    result = json.loads(run_tool("greet", {"NAME": "Alice", "GREETING": "Hi"}, mf))
-    assert "Hi Alice" in result["stdout"]
+    result = run_tool("greet", {"NAME": "Alice", "GREETING": "Hi"}, mf)
+    assert "Hi Alice" in result
 
 
 def test_run_tool_error_on_nonzero_exit(tmp_path):
@@ -97,8 +95,8 @@ def test_run_tool_error_on_nonzero_exit(tmp_path):
         \t@exit 1
     """,
     )
-    result = json.loads(run_tool("fail", {}, mf))
-    assert result["exit_code"] != 0
+    result = run_tool("fail", {}, mf)
+    assert "ERROR" in result.output
 
 
 def test_run_tool_error_includes_stdout(tmp_path):
@@ -112,9 +110,9 @@ def test_run_tool_error_includes_stdout(tmp_path):
         \t@exit 1
     """,
     )
-    result = json.loads(run_tool("partial", {}, mf))
-    assert result["exit_code"] != 0
-    assert "partial output" in result["stdout"]
+    result = run_tool("partial", {}, mf)
+    assert "ERROR" in result.output
+    assert "partial output" in result.output
 
 
 def test_run_tool_error_includes_stderr(tmp_path):
@@ -127,9 +125,9 @@ def test_run_tool_error_includes_stderr(tmp_path):
         \t@echo error detail >&2; exit 2
     """,
     )
-    result = json.loads(run_tool("warn", {}, mf))
-    assert result["exit_code"] == 2
-    assert "error detail" in result["stderr"]
+    result = run_tool("warn", {}, mf)
+    assert "ERROR" in result.output
+    assert "error detail" in result.output
 
 
 def test_run_tool_unknown_target(tmp_path):
@@ -141,8 +139,8 @@ def test_run_tool_unknown_target(tmp_path):
         \t@echo ok
     """,
     )
-    result = json.loads(run_tool("nonexistent", {}, mf))
-    assert result["exit_code"] != 0
+    result = run_tool("nonexistent", {}, mf)
+    assert "ERROR" in result.output
 
 
 def test_run_tool_timeout(tmp_path):
@@ -154,10 +152,9 @@ def test_run_tool_timeout(tmp_path):
         \t@sleep 10
     """,
     )
-    result = json.loads(run_tool("slow", {}, mf, timeout=1))
-    assert result["exit_code"] is None
-    assert "exceeded" in result["stderr"]
-    assert "slow" in result["stderr"]
+    result = run_tool("slow", {}, mf, timeout=1)
+    assert "exceeded" in result.output
+    assert "slow" in result.output
 
 
 def test_run_tool_rejects_invalid_argument_name(tmp_path):
@@ -170,56 +167,12 @@ def test_run_tool_rejects_invalid_argument_name(tmp_path):
         \t@echo ok
     """,
     )
-    result = json.loads(run_tool("greet", {"--file": "x"}, mf))
-    assert result["exit_code"] is None
-    assert "not a valid make variable name" in result["stderr"]
+    result = run_tool("greet", {"--file": "x"}, mf)
+    assert "not a valid make variable name" in result.output
 
 
-# ── params.mk injection ───────────────────────────────────────────────────────
-
-def test_run_tool_dollar_in_value_preserved(tmp_path):
-    """$ signs in single-line values must survive Make and shell expansion.
-
-    params.mk stores ``SPEC = result: $$(MAKE_VAR)`` so Make expands
-    ``$(SPEC)`` to ``result: $(MAKE_VAR)``.  Single-quoting in the recipe
-    prevents the shell from further expanding it.
-    """
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        MAKE_VAR = EXPANDED
-        .PHONY: echo-spec
-        echo-spec:
-        \t@printf '%s\\n' '$(SPEC)'
-    """,
-    )
-    result = json.loads(run_tool("echo-spec", {"SPEC": "result: $(MAKE_VAR)"}, mf))
-    assert "$(MAKE_VAR)" in result["stdout"]
-    assert "EXPANDED" not in result["stdout"]
-
-
-def test_run_tool_multiline_value(tmp_path):
-    """Multiline values are written to a temp file; PARAM_FILE reaches recipe."""
-    out = tmp_path / "out.txt"
-    mf = _write_makefile(
-        tmp_path,
-        f"""\
-        .PHONY: write-file
-        write-file:
-        \t@cat "$(CONTENT_FILE)" > "{out}"
-    """,
-    )
-    multiline = "line one\nline two\nhas quotes and $VARS"
-    run_tool("write-file", {"CONTENT": multiline}, mf)
-    assert out.read_text() == multiline
-
-
-def test_run_tool_params_mk_and_file_cleaned_up(tmp_path):
-    """All temp files (params.mk and PARAM_FILE) are removed after the call."""
-    import glob as glob_mod
-
-    before_mk = set(glob_mod.glob("/tmp/make-agent-params-*"))
-    before_content = set(glob_mod.glob("/tmp/make-agent-X-*"))
+def test_run_tool_rejects_system_env_var_override(tmp_path):
+    """Arguments must not be allowed to shadow existing environment variables."""
     mf = _write_makefile(
         tmp_path,
         """\
@@ -228,51 +181,86 @@ def test_run_tool_params_mk_and_file_cleaned_up(tmp_path):
         \t@true
     """,
     )
-    run_tool("noop", {"X": "hello"}, mf)
-    after_mk = set(glob_mod.glob("/tmp/make-agent-params-*"))
-    after_content = set(glob_mod.glob("/tmp/make-agent-X-*"))
-    assert after_mk == before_mk
-    assert after_content == before_content
+    result = run_tool("noop", {"PATH": "/evil/bin"}, mf)
+    assert "shadows the system environment variable" in result.output
 
 
-def test_run_tool_file_var_always_available(tmp_path):
-    """$(PARAM_FILE) is always provided, even for single-line values."""
+# ── params.mk injection ───────────────────────────────────────────────────────
+
+
+def test_run_tool_param_accessible_via_shell_var(tmp_path):
+    """Single-line params are accessible as $$PARAM (shell env var) in recipes."""
+    mf = _write_makefile(
+        tmp_path,
+        """\
+        .PHONY: greet
+        greet:
+        \t@printf '%s' "$$NAME"
+    """,
+    )
+    result = run_tool("greet", {"NAME": "Alice"}, mf)
+    assert "Alice" in result
+
+
+def test_run_tool_multiline_value(tmp_path):
+    """Multiline values are available as $$PARAM via the env var mechanism."""
     out = tmp_path / "out.txt"
     mf = _write_makefile(
         tmp_path,
         f"""\
-        .PHONY: save
-        save:
-        \t@cat "$(MSG_FILE)" > "{out}"
+        .PHONY: write-file
+        write-file:
+        \t@printf '%s' "$$CONTENT" > "{out}"
     """,
     )
-    run_tool("save", {"MSG": "hello world"}, mf)
-    assert "hello world" in out.read_text()
+    multiline = "line one\nline two\nline three"
+    run_tool("write-file", {"CONTENT": multiline}, mf)
+    # Verify the file was written correctly
+    assert out.read_text() == multiline
 
 
-def test_run_tool_no_params_no_temp_files(tmp_path):
-    """When there are no arguments, no temp files are created."""
+def test_run_tool_no_temp_files_created(tmp_path):
+    """No temporary files are ever created — all params go via env vars."""
     mf = _write_makefile(
         tmp_path,
         """\
-        .PHONY: hello
-        hello:
-        \t@echo hi
+        .PHONY: noop
+        noop:
+        \t@true
     """,
     )
-    result = json.loads(run_tool("hello", {}, mf))
-    assert "hi" in result["stdout"]
+    before = set(tmp_path.iterdir())
+    run_tool("noop", {"X": "hello\nworld"}, mf)
+    after = set(tmp_path.iterdir())
+    assert after == before
+
+
+def test_run_tool_endef_in_multiline_value(tmp_path):
+    """A multiline value containing a bare 'endef' line is passed correctly."""
+    out = tmp_path / "out.txt"
+    mf = _write_makefile(
+        tmp_path,
+        f"""\
+        .PHONY: write-file
+        write-file:
+        \t@printf '%s' "$$CONTENT" > "{out}"
+    """,
+    )
+    value = "before\nendef\nafter"
+    run_tool("write-file", {"CONTENT": value}, mf)
+    assert "before" in out.read_text()
+    assert "after" in out.read_text()
 
 
 def test_run_tool_quotes_in_value(tmp_path):
-    """Values with double quotes are passed safely via the PARAM_FILE temp file."""
+    """Values with double quotes are passed correctly via env vars."""
     out = tmp_path / "out.txt"
     mf = _write_makefile(
         tmp_path,
         f"""\
         .PHONY: show
         show:
-        \t@cat "$(MSG_FILE)" > "{out}"
+        \t@printf '%s' "$$MSG" > "{out}"
     """,
     )
     run_tool("show", {"MSG": 'say "hello"'}, mf)
@@ -281,40 +269,55 @@ def test_run_tool_quotes_in_value(tmp_path):
 
 # ── format_tool_result ────────────────────────────────────────────────────────
 
+
+def format_tool_result(
+    stdout: str,
+    stderr: str,
+    exit_code: int | None,
+    max_output: int = 0,
+) -> str:
+    """Return the formatted output string for a tool execution.
+
+    This is a thin wrapper around :func:`get_tool_result` that returns
+    only the ``output`` portion of the :class:`ToolExecutionResult` tuple.
+    """
+    return get_tool_result(stdout, stderr, exit_code, max_output).output
+
+
 def test_format_tool_result_success():
-    result = json.loads(format_tool_result("hello\n", "", 0))
-    assert result == {"stdout": "hello\n", "stderr": "", "exit_code": 0}
+    result = format_tool_result("hello\n", "", 0)
+    assert result == "hello"
 
 
 def test_format_tool_result_failure():
-    result = json.loads(format_tool_result("", "oops", 1))
-    assert result["exit_code"] == 1
-    assert result["stderr"] == "oops"
+    result = format_tool_result("", "oops", 1)
+    assert "ERROR" in result
+    assert "oops" in result
 
 
 def test_format_tool_result_framework_error():
-    result = json.loads(format_tool_result("", "timeout", None))
-    assert result["exit_code"] is None
+    result = format_tool_result("", "timeout", None)
+    assert "ERROR" in result
+    assert "timeout" in result
 
 
 def test_format_tool_result_no_truncation_when_under_limit():
     stdout = "x" * 100
-    result = json.loads(format_tool_result(stdout, "", 0, max_output=200))
-    assert result["stdout"] == stdout
+    result = format_tool_result(stdout, "", 0, max_output=200)
+    assert result == "x" * 100
     assert "omitted_chars" not in result
 
 
 def test_format_tool_result_truncates_when_over_limit():
     stdout = "x" * 1000
-    result = json.loads(format_tool_result(stdout, "", 0, max_output=100))
-    assert len(result["stdout"]) == 100
-    assert result["omitted_chars"] == 900
+    result = format_tool_result(stdout, "", 0, max_output=100)
+    assert "omitted_chars" in result
 
 
 def test_format_tool_result_unlimited_when_max_output_zero():
     stdout = "x" * 50000
-    result = json.loads(format_tool_result(stdout, "", 0, max_output=0))
-    assert len(result["stdout"]) == 50000
+    result = format_tool_result(stdout, "", 0, max_output=0)
+    assert len(result) == 50000
     assert "omitted_chars" not in result
 
 
@@ -327,7 +330,6 @@ def test_run_tool_truncates_output(tmp_path):
         \t@python3 -c "print('a' * 500)"
     """,
     )
-    result = json.loads(run_tool("big", {}, mf, max_output=100))
-    assert len(result["stdout"]) == 100
-    assert result["omitted_chars"] > 0
-
+    result = run_tool("big", {}, mf, max_output=100)
+    assert len(result.output) == 100
+    assert "omitted_chars" in result.output

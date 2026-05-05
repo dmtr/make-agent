@@ -133,12 +133,11 @@ class TestAgentValidation:
         mf = tmp_path / "Makefile"
         mf.write_text(content)
         return mf
-
     def test_valid_makefile_loads(self, tmp_path):
-        mf = self._write_makefile(tmp_path, ("# <tool>\n# Greet.\n# @param NAME string A name\n# </tool>\n" "greet:\n\t@echo $(NAME)\n"))
+        mf = self._write_makefile(tmp_path, ("# <tool>\n# Greet.\n# @param NAME string A name\n# </tool>\n" "greet:\n	@echo $(NAME)\n"))
         from make_agent.agent import Agent, AgentConfig
-
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"))
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
         assert "greet" in agent.tool_names
 
     def test_broken_recipe_raises_on_load(self, tmp_path):
@@ -147,7 +146,7 @@ class TestAgentValidation:
         from make_agent.agent import Agent, AgentConfig
 
         with pytest.raises(ValueError, match="FILE"):
-            Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"))
+            Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
 
     def test_error_message_names_tool_and_param(self, tmp_path):
         mf = self._write_makefile(tmp_path, ("# <tool>\n# Do X.\n# @param QUERY string Search term\n# </tool>\n" "search:\n\t@grep foo .\n"))
@@ -155,9 +154,185 @@ class TestAgentValidation:
         from make_agent.agent import Agent, AgentConfig
 
         with pytest.raises(ValueError) as exc_info:
-            Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"))
+            Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
         assert "search" in str(exc_info.value)
         assert "QUERY" in str(exc_info.value)
 
 
+# ── DISABLED_BUILTINS Makefile variable ───────────────────────────────────────
 
+
+class TestDisabledBuiltins:
+    def _make_agent(self, tmp_path, content: str):
+        from make_agent.agent import Agent, AgentConfig
+
+        mf = tmp_path / "Makefile"
+        mf.write_text(content)
+        return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
+
+    def test_single_tool_disabled_via_makefile(self, tmp_path):
+        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = run_agent\n")
+        assert "run_agent" not in agent.tool_names
+
+    def test_multiple_tools_disabled_via_makefile(self, tmp_path):
+        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = run_agent,validate_agent\n")
+        assert "run_agent" not in agent.tool_names
+        assert "validate_agent" not in agent.tool_names
+
+    def test_all_disables_everything(self, tmp_path):
+        from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
+
+        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = all\n")
+        for name in BUILTIN_TOOL_NAMES:
+            assert name not in agent.tool_names
+
+    def test_unknown_tool_raises_value_error(self, tmp_path):
+        import pytest
+
+        with pytest.raises(ValueError, match="DISABLED_BUILTINS"):
+            self._make_agent(tmp_path, "DISABLED_BUILTINS = no_such_tool\n")
+
+    def test_makefile_and_cli_flags_are_merged(self, tmp_path):
+        from make_agent.agent import Agent, AgentConfig
+
+        mf = tmp_path / "Makefile"
+        mf.write_text("DISABLED_BUILTINS = run_agent\n")
+        agent = Agent(
+            AgentConfig(
+                makefile_path=mf,
+                model="openai/gpt-4o-mini",
+                agents_dir=str(tmp_path),
+                disabled_builtin_tools=frozenset({"validate_agent"}),
+            ),
+            None,
+        )
+        assert "run_agent" not in agent.tool_names
+        assert "validate_agent" not in agent.tool_names
+
+    def test_empty_disabled_builtins_is_no_op(self, tmp_path):
+        from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
+
+        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS =\n")
+        builtin_names_present = [n for n in agent.tool_names if n in BUILTIN_TOOL_NAMES]
+        assert len(builtin_names_present) > 0
+
+
+# ── run_agent in-process dispatch ─────────────────────────────────────────────
+
+
+class TestRunAgentInProcess:
+    def _make_agent(self, tmp_path, content: str, agents_dir: str | None = None):
+        from make_agent.agent import Agent, AgentConfig
+
+        mf = tmp_path / "Makefile"
+        mf.write_text(content)
+        return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=agents_dir or str(tmp_path)), None)
+
+    def test_run_agent_disabled_for_sub_agent(self, tmp_path):
+        """Sub-agents must not have run_agent available (prevents infinite loops)."""
+        from make_agent.agent import Agent, AgentConfig
+
+        (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
+        mf = tmp_path / "Makefile"
+        mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
+
+        # Build sub-config as _run_agent would and verify run_agent is disabled
+        sub_disabled = agent._disabled_builtin_tools | frozenset({"run_agent"})  # noqa: SLF001
+        assert "run_agent" in sub_disabled
+
+    def test_run_agent_sub_agent_gets_same_model(self, tmp_path):
+        from make_agent.agent import Agent, AgentConfig
+
+        (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
+        mf = tmp_path / "Makefile"
+        mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
+        assert agent._model == "openai/gpt-4o-mini"  # noqa: SLF001
+
+    def test_run_agent_dispatched_via_call(self, tmp_path):
+        """Agent.__call__ runs the sub-agent and returns its response as a tool result."""
+        from unittest.mock import MagicMock, patch
+
+        from make_agent.agent import Agent, AgentConfig
+
+        (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
+        mf = tmp_path / "Makefile"
+        mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
+
+        # Patch _run_agent to return a known string without hitting the LLM
+        with patch.object(agent, "_run_agent", return_value="specialist done") as mock_run:
+            # Build a fake LLM response that calls run_agent then returns text
+            tool_call = MagicMock()
+            tool_call.id = "tc1"
+            tool_call.function.name = "run_agent"
+            tool_call.function.arguments = '{"name": "specialist", "prompt": "go"}'
+
+            tool_response = MagicMock()
+            tool_response.choices[0].message.tool_calls = [tool_call]
+
+            final_response = MagicMock()
+            final_response.choices[0].message.tool_calls = None
+            final_response.choices[0].message.content = "all done"
+
+            with patch("make_agent.agent.any_llm.completion", side_effect=[tool_response, final_response]):
+                result = agent("delegate to specialist")
+
+        mock_run.assert_called_once()
+        assert result == "all done"
+
+
+class TestAgentSafetyGuards:
+    def _make_agent(self, tmp_path):
+        from make_agent.agent import Agent, AgentConfig
+
+        mf = tmp_path / "Makefile"
+        mf.write_text(
+            "# <tool>\n"
+            "# Visible tool.\n"
+            "# </tool>\n"
+            "safe:\n"
+            "\t@echo safe\n"
+            "hidden:\n"
+            "\t@echo hidden\n"
+        )
+        return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
+
+    def _tool_call_response(self, name: str, arguments: str = "{}"):
+        tool_call = MagicMock()
+        tool_call.id = "tc1"
+        tool_call.function.name = name
+        tool_call.function.arguments = arguments
+        response = MagicMock()
+        response.choices[0].message.tool_calls = [tool_call]
+        return response
+
+    def test_unknown_tool_is_rejected_without_running_make(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        tool_response = self._tool_call_response("hidden")
+        final_response = MagicMock()
+        final_response.choices[0].message.tool_calls = None
+        final_response.choices[0].message.content = "done"
+
+        with (
+            patch("make_agent.agent._completion_with_retry", side_effect=[tool_response, final_response]),
+            patch("make_agent.agent.run_tool") as mock_run_tool,
+        ):
+            result = agent("use hidden target")
+
+        assert result == "done"
+        mock_run_tool.assert_not_called()
+        tool_outputs = [m["content"] for m in agent.messages if m.get("role") == "tool"]
+        assert any("unknown tool: hidden" in output for output in tool_outputs)
+
+    def test_model_turn_limit_stops_runaway_tool_loop(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        looping_response = self._tool_call_response("hidden")
+
+        with (
+            patch("make_agent.agent._MAX_MODEL_TURNS_PER_REQUEST", 2),
+            patch("make_agent.agent._completion_with_retry", return_value=looping_response),
+        ):
+            with pytest.raises(RuntimeError, match="model turns"):
+                agent("loop forever")

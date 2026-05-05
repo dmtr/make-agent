@@ -33,13 +33,15 @@ class TestRunPromptInput:
             model="model-x",
             prompt=None,
             prompt_file=str(prompt_file),
-            debug=False,
+            loglevel="INFO",
             max_retries=5,
             tool_timeout=600,
             max_tool_output=20000,
             max_tokens=4096,
             agents_dir=None,
             disable_builtin_tools=None,
+            reasoning_effort=None,
+            agent_model=None,
         )
         captured: dict = {}
 

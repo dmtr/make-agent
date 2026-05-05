@@ -7,12 +7,11 @@ import sqlite3
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from make_agent.memory import Memory
 from make_agent.builtin_tools import get_builtin_tools, get_memory_schemas
-
+from make_agent.memory import Memory
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def mem(tmp_path):
@@ -23,6 +22,7 @@ def mem(tmp_path):
 
 
 # ── Schema & initialisation ───────────────────────────────────────────────────
+
 
 class TestMemorySchema:
     def test_db_file_created_on_first_use(self, tmp_path):
@@ -80,6 +80,7 @@ class TestMemorySchema:
 
 # ── store() ───────────────────────────────────────────────────────────────────
 
+
 class TestMemoryStore:
     def test_store_user_message(self, mem):
         mem.store("user", "hello world")
@@ -119,6 +120,7 @@ class TestMemoryStore:
 
 # ── Views ─────────────────────────────────────────────────────────────────────
 
+
 class TestMemoryViews:
     def test_user_memory_filters_user(self, mem):
         mem.store("user", "user msg")
@@ -138,6 +140,7 @@ class TestMemoryViews:
 
 
 # ── FTS5 triggers ─────────────────────────────────────────────────────────────
+
 
 class TestFTSTriggers:
     def test_insert_trigger_indexes_message(self, mem):
@@ -166,17 +169,14 @@ class TestFTSTriggers:
         row_id = conn.execute("SELECT id FROM messages").fetchone()[0]
         conn.execute("UPDATE messages SET message = 'new phrase bbb' WHERE id = ?", (row_id,))
         conn.commit()
-        old_hits = conn.execute(
-            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("aaa",)
-        ).fetchall()
-        new_hits = conn.execute(
-            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("bbb",)
-        ).fetchall()
+        old_hits = conn.execute("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("aaa",)).fetchall()
+        new_hits = conn.execute("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("bbb",)).fetchall()
         assert len(old_hits) == 0
         assert len(new_hits) == 1
 
 
 # ── search_user / search_agent ────────────────────────────────────────────────
+
 
 class TestMemorySearch:
     def test_search_user_finds_match(self, mem):
@@ -270,6 +270,7 @@ class TestMemorySearch:
 
 # ── recent() ──────────────────────────────────────────────────────────────────
 
+
 class TestMemoryRecent:
     def test_returns_messages_in_chronological_order(self, mem):
         mem.store("user", "first")
@@ -343,12 +344,14 @@ class TestMemoryRecent:
 
     def test_date_range_and_limit_combined(self, mem):
         conn = mem._get_conn()
-        for i, date in enumerate([
-            "2026-02-01T00:00:00Z",
-            "2026-02-02T00:00:00Z",
-            "2026-02-03T00:00:00Z",
-            "2026-02-04T00:00:00Z",
-        ]):
+        for i, date in enumerate(
+            [
+                "2026-02-01T00:00:00Z",
+                "2026-02-02T00:00:00Z",
+                "2026-02-03T00:00:00Z",
+                "2026-02-04T00:00:00Z",
+            ]
+        ):
             conn.execute(
                 "INSERT INTO messages (created_at, sender, message) VALUES (?, ?, ?)",
                 (date, "user", f"feb msg {i}"),
@@ -364,6 +367,7 @@ class TestMemoryRecent:
 
 
 # ── Built-in tools integration ────────────────────────────────────────────────
+
 
 class TestMemoryBuiltinTools:
     def test_memory_schemas_returned(self):
@@ -391,20 +395,20 @@ class TestMemoryBuiltinTools:
 
     def test_search_user_memory_tool_callable(self, mem):
         mem.store("user", "remember this phrase")
-        tools = get_builtin_tools("agents_dir", "model", memory=mem)
+        tools = get_builtin_tools("agents_dir", memory=mem)
         assert "search_user_memory" in tools
         result = tools["search_user_memory"](query="remember this phrase")
         assert "remember this phrase" in result
 
     def test_search_agent_memory_tool_callable(self, mem):
         mem.store("agent", "I can recall things")
-        tools = get_builtin_tools("agents_dir", "model", memory=mem)
+        tools = get_builtin_tools("agents_dir", memory=mem)
         assert "search_agent_memory" in tools
         result = tools["search_agent_memory"](query="recall things")
         assert "I can recall things" in result
 
     def test_no_memory_tools_without_memory(self):
-        tools = get_builtin_tools("agents_dir", "model")
+        tools = get_builtin_tools("agents_dir")
         assert "search_user_memory" not in tools
         assert "search_agent_memory" not in tools
         assert "get_recent_messages" not in tools
@@ -416,7 +420,7 @@ class TestMemoryBuiltinTools:
     def test_get_recent_messages_tool_callable(self, mem):
         mem.store("user", "first message")
         mem.store("agent", "first reply")
-        tools = get_builtin_tools("agents_dir", "model", memory=mem)
+        tools = get_builtin_tools("agents_dir", memory=mem)
         assert "get_recent_messages" in tools
         result = tools["get_recent_messages"](limit=5)
         assert "first message" in result
@@ -433,21 +437,24 @@ class TestMemoryBuiltinTools:
 
 # ── Agent auto-storage ────────────────────────────────────────────────────────
 
+
 class TestAgentAutoStorage:
     """Verify Agent.__call__ writes to memory automatically."""
 
     def _make_agent(self, tmp_path, mem):
         from make_agent.agent import Agent, AgentConfig
+
         mf_path = tmp_path / "Makefile"
         mf_path.write_text("noop:\n\t@echo ok\n")
-        config = AgentConfig(makefile_path=mf_path, memory=mem)
-        return Agent(config)
+        config = AgentConfig(makefile_path=mf_path, model="openai/gpt-4o-mini")
+        return Agent(config, mem)
 
     def test_user_message_stored(self, tmp_path, mem):
         agent = self._make_agent(tmp_path, mem)
         fake_response = MagicMock()
         fake_response.choices[0].message.tool_calls = None
         fake_response.choices[0].message.content = "the reply"
+        fake_response.usage = None
 
         with patch("make_agent.agent._completion_with_retry", return_value=fake_response):
             agent("hello from user")
@@ -462,6 +469,7 @@ class TestAgentAutoStorage:
         fake_response = MagicMock()
         fake_response.choices[0].message.tool_calls = None
         fake_response.choices[0].message.content = "the reply"
+        fake_response.usage = None
 
         with patch("make_agent.agent._completion_with_retry", return_value=fake_response):
             agent("hello from user")
@@ -473,10 +481,11 @@ class TestAgentAutoStorage:
 
     def test_no_storage_without_memory(self, tmp_path):
         from make_agent.agent import Agent, AgentConfig
+
         mf_path = tmp_path / "Makefile"
         mf_path.write_text("noop:\n\t@echo ok\n")
-        config = AgentConfig(makefile_path=mf_path, memory=None)
-        agent = Agent(config)
+        config = AgentConfig(makefile_path=mf_path, model="openai/gpt-4o-mini")
+        agent = Agent(config, None)
 
         fake_response = MagicMock()
         fake_response.choices[0].message.tool_calls = None
@@ -488,6 +497,7 @@ class TestAgentAutoStorage:
 
 
 # ── CLI flag wiring ───────────────────────────────────────────────────────────
+
 
 class TestWithMemoryFlag:
     def test_with_memory_flag_creates_memory_instance(self, tmp_path):
@@ -509,6 +519,8 @@ class TestWithMemoryFlag:
             agents_dir=None,
             with_memory=True,
             disable_builtin_tools=None,
+            reasoning_effort=None,
+            agent_model=None,
         )
 
         captured: dict = {}
@@ -519,14 +531,12 @@ class TestWithMemoryFlag:
         original = main_module.run
         main_module.run = _fake_run
         try:
-            with patch("make_agent.main.project_dir", return_value=tmp_path):
+            with patch("make_agent.agent.project_dir", return_value=tmp_path):
                 main_module._cmd_run(args)
         finally:
             main_module.run = original
 
-        assert captured.get("memory") is not None
-        from make_agent.memory import Memory
-        assert isinstance(captured["memory"], Memory)
+        assert captured.get("with_memory") is True
 
     def test_without_memory_flag_passes_none(self, tmp_path):
         import make_agent.main as main_module
@@ -547,6 +557,8 @@ class TestWithMemoryFlag:
             agents_dir=None,
             with_memory=False,
             disable_builtin_tools=None,
+            reasoning_effort=None,
+            agent_model=None,
         )
 
         captured: dict = {}
@@ -561,7 +573,7 @@ class TestWithMemoryFlag:
         finally:
             main_module.run = original
 
-        assert captured.get("memory") is None
+        assert captured.get("with_memory") is False
 
     def test_settings_memory_true_enables_memory(self, tmp_path):
         import make_agent.main as main_module
@@ -582,6 +594,8 @@ class TestWithMemoryFlag:
             agents_dir=None,
             with_memory=False,  # not set via CLI
             disable_builtin_tools=None,
+            reasoning_effort=None,
+            agent_model=None,
         )
 
         captured: dict = {}
@@ -592,11 +606,84 @@ class TestWithMemoryFlag:
         original = main_module.run
         main_module.run = _fake_run
         try:
-            with patch("make_agent.main.load_settings", return_value={"model": "x", "memory": True}), \
-                 patch("make_agent.main.project_dir", return_value=tmp_path):
+            with (
+                patch("make_agent.main.load_settings", return_value={"model": "x", "memory": True}),
+                patch("make_agent.agent.project_dir", return_value=tmp_path),
+            ):
                 main_module._cmd_run(args)
         finally:
             main_module.run = original
 
-        from make_agent.memory import Memory
-        assert isinstance(captured.get("memory"), Memory)
+        assert captured.get("with_memory") is True
+
+
+# ── Token usage ───────────────────────────────────────────────────────────────
+
+
+class TestTokenUsage:
+    def test_token_usage_table_columns(self, mem):
+        conn = mem._get_conn()
+        info = conn.execute("PRAGMA table_info(token_usage)").fetchall()
+        col_names = [row[1] for row in info]
+        assert "id" in col_names
+        assert "created_at" in col_names
+        assert "session_id" in col_names
+        assert "agent" in col_names
+        assert "model" in col_names
+        assert "input_tokens" in col_names
+        assert "output_tokens" in col_names
+
+    def test_record_token_usage_inserts_row(self, mem):
+        mem.record_token_usage("sess-1", "agent.mk", "openai/gpt-4o", 100, 50)
+        conn = mem._get_conn()
+        rows = conn.execute("SELECT * FROM token_usage").fetchall()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["session_id"] == "sess-1"
+        assert row["agent"] == "agent.mk"
+        assert row["model"] == "openai/gpt-4o"
+        assert row["input_tokens"] == 100
+        assert row["output_tokens"] == 50
+
+    def test_record_token_usage_multiple_rows(self, mem):
+        mem.record_token_usage("sess-1", "a.mk", "model-a", 10, 5)
+        mem.record_token_usage("sess-1", "a.mk", "model-a", 20, 10)
+        conn = mem._get_conn()
+        count = conn.execute("SELECT COUNT(*) FROM token_usage WHERE session_id='sess-1'").fetchone()[0]
+        assert count == 2
+
+    def test_get_session_stats_empty_when_no_rows(self, mem):
+        assert mem.get_session_stats("nonexistent-session") == {}
+
+    def test_get_session_stats_aggregates_totals(self, mem):
+        mem.record_token_usage("sess-1", "a.mk", "model-a", 100, 40)
+        mem.record_token_usage("sess-1", "a.mk", "model-a", 200, 60)
+        stats = mem.get_session_stats("sess-1")
+        assert stats["input_tokens"] == 300
+        assert stats["output_tokens"] == 100
+        assert stats["total_tokens"] == 400
+
+    def test_get_session_stats_includes_model(self, mem):
+        mem.record_token_usage("sess-1", "a.mk", "openai/gpt-4o", 10, 5)
+        stats = mem.get_session_stats("sess-1")
+        assert stats["models"] == ["openai/gpt-4o"]
+
+    def test_get_session_stats_multiple_models(self, mem):
+        mem.record_token_usage("sess-1", "a.mk", "model-a", 10, 5)
+        mem.record_token_usage("sess-1", "b.mk", "model-b", 20, 10)
+        stats = mem.get_session_stats("sess-1")
+        assert sorted(stats["models"]) == ["model-a", "model-b"]
+
+    def test_get_session_stats_isolates_sessions(self, mem):
+        mem.record_token_usage("sess-1", "a.mk", "model-a", 100, 50)
+        mem.record_token_usage("sess-2", "a.mk", "model-a", 999, 999)
+        stats = mem.get_session_stats("sess-1")
+        assert stats["input_tokens"] == 100
+        assert stats["output_tokens"] == 50
+        assert stats["total_tokens"] == 150
+
+    def test_get_session_stats_deduplicates_model_names(self, mem):
+        mem.record_token_usage("sess-1", "a.mk", "model-a", 10, 5)
+        mem.record_token_usage("sess-1", "a.mk", "model-a", 20, 10)
+        stats = mem.get_session_stats("sess-1")
+        assert stats["models"] == ["model-a"]

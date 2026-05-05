@@ -58,7 +58,8 @@
         <ul>
   <li><a href="#system-prompt">SYSTEM_PROMPT block</a></li>
   <li><a href="#tool-blocks">Tool blocks</a></li>
-  <li><a href="#param-file">PARAM_FILE guidance</a></li>
+  <li><a href="#params">Parameter access</a></li>
+  <li><a href="#variables">Optional variables</a></li>
 </ul>
       </section>
       <section id="system-prompt">
@@ -74,11 +75,22 @@ endef</code></pre>
 # @param NAME string Description
 # &lt;/tool&gt;
 my-target:
-	@echo $(NAME)</code></pre>
+	@echo "$$NAME"</code></pre>
 </section>
-<section id="param-file">
-  <h2>PARAM_FILE guidance</h2>
-  <p>Use <code>$(PARAM_FILE)</code> for multiline content or values that may contain shell metacharacters.</p>
+<section id="params">
+  <h2>Parameter access</h2>
+  <p>Parameters are injected as environment variables. In recipes, use <code>$$PARAM</code> as the canonical form (for example <code>$$NAME</code>).</p>
+  <p><code>$(PARAM)</code> also works for simple single-line values because Make imports environment variables.</p>
+</section>
+<section id="variables">
+  <h2>Optional variables</h2>
+  <p>You can define agent metadata and built-in-tool policy directly in the Makefile:</p>
+  <pre><code>define DESCRIPTION
+Specialist description shown by list_agent.
+endef
+
+DISABLED_BUILTINS = run_agent,validate_agent
+# or: DISABLED_BUILTINS = all</code></pre>
 </section>
       <p class="footer-note">Last synced with README context at commit <code>eb18bec</code>.</p>
     </main>

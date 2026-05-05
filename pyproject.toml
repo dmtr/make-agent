@@ -1,7 +1,7 @@
 [project]
 name = "makefile-agent"
-version = "0.3.2"
-description = "AI‑assistant‑as‑Makefile: a tool to create and manage AI agents using a simple YAML configuration."
+version = "0.3.3"
+description = "AI‑assistant‑as‑Makefile: a tool to create and manage AI agents using a Makefile."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -34,7 +34,6 @@ dev = [
 
 [project.scripts]
 make_agent = "make_agent.main:main"
-make-agent-create = "make_agent.create_agent:main"
 
 [build-system]
 requires = ["setuptools"]
