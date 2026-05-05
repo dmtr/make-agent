@@ -1,7 +1,8 @@
-import cmd
+import asyncio
 import readline
+import signal
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from make_agent.agent import (
     _DEFAULT_MAX_RETRIES,
@@ -11,89 +12,140 @@ from make_agent.agent import (
     _DEFAULT_TOOL_TIMEOUT,
     AgentConfig,
     AgentManager,
+    DoneEvent,
+    TokenEvent,
+    ToolDoneEvent,
+    ToolStartEvent,
 )
 
 
-class MakeAgentShell(cmd.Cmd):
-    """Interactive shell that delegates all LLM interaction to an :class:`Agent`."""
+class MakeAgentShell:
+    """Async interactive REPL that delegates all LLM interaction to an :class:`Agent`."""
 
     prompt = "make-agent> "
-    intro = "Welcome to the Make Agent shell! Type your message and press Enter. Type '/exit' or '/quit' to leave."
 
     def __init__(self, agent_manager: AgentManager, session_id: str) -> None:
-        super().__init__()
         self._agent_manager = agent_manager
         self._session_id = session_id
+        self._commands: dict[str, Any] = {
+            "exit": self._cmd_exit,
+            "quit": self._cmd_exit,
+            "export": self._cmd_export,
+            "stats": self._cmd_stats,
+            "help": self._cmd_help,
+        }
 
-    def preloop(self) -> None:
-        """Configure readline to treat '/' as part of a word so /cmd completions work."""
+    # ── readline completion ────────────────────────────────────────────────
+
+    def _setup_readline(self) -> None:
+        """Configure readline so /cmd completions work."""
         try:
             readline.set_completer_delims(readline.get_completer_delims().replace("/", ""))
-        except ImportError:
+            readline.set_completer(self._completer)
+            readline.parse_and_bind("tab: complete")
+        except Exception:
             pass
 
-    def completenames(self, text: str, *ignored) -> list[str]:
-        """Complete /command names; bare words have no completions (they go to the LLM)."""
-        if text.startswith("/"):
-            return ["/" + name for name in super().completenames(text[1:], *ignored)]
-        return []
+    def _completer(self, text: str, state: int) -> str | None:
+        if not text.startswith("/"):
+            return None
+        cmd_text = text[1:]
+        matches = ["/" + name for name in self._commands if name.startswith(cmd_text)]
+        return matches[state] if state < len(matches) else None
 
-    def parseline(self, line: str):
-        """Route /commands to cmd.Cmd dispatch; everything else goes to the LLM.
+    # ── command handlers ───────────────────────────────────────────────────
 
-        The bare string ``'EOF'`` (injected by cmdloop on Ctrl-D) is passed
-        through unchanged so that :meth:`do_EOF` is still reachable.
-        """
-        stripped = line.strip()
-        if stripped == "EOF":
-            return super().parseline(stripped)
-        if stripped.startswith("/"):
-            return super().parseline(stripped[1:])
-        return "", "", stripped
-
-    def default(self, line: str) -> None:
-        """Send *line* to the agent and print the reply."""
-        try:
-            print(self._agent_manager.notify_agent(self._session_id, line))
-        except Exception as e:
-            print(f"Error: {e}")
-
-    def emptyline(self) -> None:
-        """Do nothing on an empty line (overrides cmd.Cmd's repeat-last-command)."""
-
-    def do_EOF(self, line: str) -> bool:
-        """Exit on Ctrl-D."""
-        print()
+    def _cmd_exit(self) -> bool:
         return True
 
-    def do_exit(self, line: str) -> bool:
-        """Exit the shell."""
-        return True
-
-    def do_quit(self, line: str) -> bool:
-        """Exit the shell."""
-        return True
-
-    def do_export(self, line: str) -> None:
-        """Export the conversation to a timestamped HTML file in the current directory."""
+    def _cmd_export(self) -> bool:
         path = self._agent_manager.export_conversation(self._session_id)
         if path:
             print(f"Conversation exported to {path}")
+        return False
 
-    def do_stats(self, line: str) -> None:
-        """Print aggregated token usage stats for the current session."""
+    def _cmd_stats(self) -> bool:
         stats = self._agent_manager.get_token_stats(self._session_id)
         if not stats:
             print("No token usage stats available (memory not enabled or no LLM calls yet).")
-            return
+            return False
         print(f"Token usage for session {self._session_id}:")
         print(f"  Model(s):      {', '.join(stats['models'])}")
         print(f"  Input tokens:  {stats['input_tokens']}")
         print(f"  Output tokens: {stats['output_tokens']}")
         print(f"  Total tokens:  {stats['total_tokens']}")
+        return False
+
+    def _cmd_help(self) -> bool:
+        print("Commands: " + "  ".join(f"/{name}" for name in self._commands))
+        print("Any other input is sent to the agent. Press Ctrl-C to cancel a running turn.")
+        return False
+
+    def _dispatch_command(self, line: str) -> bool:
+        """Dispatch a /command. Returns True if the shell should exit."""
+        name, *_ = line.strip().split(None, 1)
+        handler = self._commands.get(name)
+        if handler is None:
+            print(f"Unknown command: /{name}  (type /help for a list)")
+            return False
+        return handler()
+
+    # ── agent turn ─────────────────────────────────────────────────────────
+
+    async def _stream_turn(self, message: str) -> None:
+        """Stream one agent turn, printing events as they arrive."""
+        async for event in self._agent_manager.astream_agent(self._session_id, message):
+            if isinstance(event, TokenEvent):
+                print(event.text, end="", flush=True)
+            elif isinstance(event, ToolStartEvent):
+                print(f"\nRunning: {event.name}...", flush=True)
+            elif isinstance(event, ToolDoneEvent):
+                pass  # tool output visible via agent logs; keep terminal clean
+            elif isinstance(event, DoneEvent):
+                print()  # trailing newline after streamed content
+
+    async def _run_turn(self, message: str) -> None:
+        """Run one agent turn with per-turn Ctrl-C cancellation."""
+        task = asyncio.create_task(self._stream_turn(message))
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGINT, task.cancel)
+        try:
+            await task
+        except asyncio.CancelledError:
+            print("\nCancelled.")
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            loop.remove_signal_handler(signal.SIGINT)
+
+    # ── main loop ──────────────────────────────────────────────────────────
+
+    async def run(self) -> None:
+        """Start the interactive REPL loop."""
+        self._setup_readline()
+        loop = asyncio.get_running_loop()
+        print(
+            "Type your message. Prefix shell commands with /  "
+            "(e.g. /exit, /help). Press Ctrl-D or Ctrl-C twice to exit.\n"
+        )
+        while True:
+            try:
+                line = await loop.run_in_executor(None, input, self.prompt)
+            except EOFError:
+                print()
+                break
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("/"):
+                should_exit = self._dispatch_command(line[1:])
+                if should_exit:
+                    break
+                continue
+            await self._run_turn(line)
 
 
-def run(
+async def run(
     makefile_path: Path,
     model: str,
     agent_model: Optional[str] = None,
@@ -107,13 +159,13 @@ def run(
     disabled_builtin_tools: frozenset[str] = frozenset(),
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
 ) -> None:
-    """Start the interactive shell.
+    """Start the interactive shell (or send a single prompt and return).
 
     Reads the system prompt and tool definitions from *makefile_path*, then
-    enters a :class:`MakeAgentShell` loop.  Press Ctrl-D, Ctrl-C, or type
-    ``exit`` / ``quit`` to leave.
+    enters a :class:`MakeAgentShell` loop.  Press Ctrl-D or type ``/exit``
+    to leave.  When *prompt* is given the shell is bypassed: the prompt is
+    sent to the agent and the reply is printed.
     """
-
     agent_config = AgentConfig(
         makefile_path=makefile_path,
         model=model,
@@ -132,12 +184,11 @@ def run(
 
     if prompt:
         print("Sending initial prompt...\n")
-        print(agent_manager.notify_agent(session_id, prompt))
+        print(await agent_manager.arun_agent(session_id, prompt))
         return
 
-    print("Type your message. Prefix shell commands with /  (e.g. /exit, /help). Press Ctrl-D or Ctrl-C to exit.\n")
     shell = MakeAgentShell(agent_manager, session_id)
     try:
-        shell.cmdloop()
+        await shell.run()
     except KeyboardInterrupt:
         print()

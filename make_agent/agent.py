@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, AsyncGenerator, NamedTuple
 from uuid import uuid4
 
 import any_llm
@@ -32,6 +34,40 @@ _MAX_TOOL_CALLS_PER_REQUEST = 256
 _MAX_RUN_SECONDS_PER_REQUEST = 900
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TokenEvent:
+    """A partial text token streamed from the LLM."""
+
+    text: str
+
+
+@dataclass
+class ToolStartEvent:
+    """Emitted just before a tool call is executed."""
+
+    name: str
+    args: dict
+
+
+@dataclass
+class ToolDoneEvent:
+    """Emitted after a tool call completes."""
+
+    name: str
+    output: str
+    is_error: bool
+
+
+@dataclass
+class DoneEvent:
+    """Emitted once the agent has a final text response (no more tool calls)."""
+
+    content: str
+
+
+AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent
 
 
 class AgentConfig(NamedTuple):
@@ -66,7 +102,7 @@ def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
     return None
 
 
-def _completion_with_retry(
+async def _acompletion_with_retry(
     model: str,
     messages: list[dict],
     tool_kwargs: dict[str, Any],
@@ -74,25 +110,36 @@ def _completion_with_retry(
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
 ) -> Any:
-    """Call ``any_llm.completion``, retrying on rate limit up to *max_retries* times.
+    """Call ``any_llm.acompletion`` with streaming, retrying on rate limit.
 
     On each ``RateLimitError`` the wait time is read from the ``Retry-After``
     response header when present, otherwise exponential backoff is used
     (``2^attempt`` seconds, capped at 60 s).  A message is printed before
     each retry so the user can see what is happening.
+
+    Returns an ``AsyncIterator[ChatCompletionChunk]``.
     """
     for attempt in range(max_retries + 1):
         try:
-            return any_llm.completion(model=model, messages=messages, max_tokens=max_tokens, reasoning_effort=reasoning_effort, **tool_kwargs)
+            return await any_llm.acompletion(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
+                stream=True,
+                stream_options={"include_usage": True},
+                **tool_kwargs,
+            )
         except any_llm.RateLimitError as e:
             if attempt == max_retries:
                 raise
             wait = _parse_retry_after(e) or min(2**attempt, 60)
             print(
-                f"Rate limited, retrying in {wait:.0f}s" f" (attempt {attempt + 1}/{max_retries})...",
+                f"Rate limited, retrying in {wait:.0f}s"
+                f" (attempt {attempt + 1}/{max_retries})...",
                 flush=True,
             )
-            time.sleep(wait)
+            await asyncio.sleep(wait)
 
 
 def _parse_item(doc: Any) -> ChatCompletionMessageToolCall | None:
@@ -160,11 +207,12 @@ def _parse_disabled_builtins(value: str | None) -> frozenset[str]:
 class Agent:
     """LLM agent that maintains conversation history and dispatches tool calls.
 
-    Call the instance with a user message to get the assistant's reply::
+    Await ``arun()`` with a user message to get the assistant's reply, or use
+    ``astream()`` to receive events as they are produced::
 
-        config = AgentConfig(makefile_path=Path("Makefile"), model="anthropic/claude-haiku-4-5-20251001", session_id="example")
+        config = AgentConfig(makefile_path=Path("Makefile"), model="anthropic/claude-haiku-4-5", session_id="example")
         agent = Agent(config, memory=None)
-        reply = agent("List the files in the current directory.")
+        reply = await agent.arun("List the files in the current directory.")
     """
 
     def __init__(self, config: AgentConfig, memory: Memory | None) -> None:
@@ -212,7 +260,7 @@ class Agent:
     def model(self) -> str:
         return self._model
 
-    def _run_agent(self, mk_path: Path, prompt: str) -> str:
+    async def _arun_agent(self, mk_path: Path, prompt: str) -> str:
         """Instantiate a specialist agent in-process and return its response."""
         sub_disabled = self._disabled_builtin_tools | frozenset({"run_agent"})
         logger.info("Instantiating sub-agent with model %s to run %s", self._agent_model, mk_path)
@@ -228,23 +276,23 @@ class Agent:
             reasoning_effort=self._reasoning_effort,
             session_id=self._session_id,
         )
-        return Agent(sub_config, self._memory)(prompt)
+        return await Agent(sub_config, self._memory).arun(prompt)
 
     def __repr__(self) -> str:
         return f"Agent(model={self._model!r}, tools={self.tool_names!r})"
 
-    def __call__(self, user_input: str) -> str:
-        """Send *user_input* to the LLM and return the assistant's reply.
+    async def astream(self, user_input: str) -> AsyncGenerator[AgentEvent, None]:
+        """Stream events produced while processing *user_input*.
 
-        Dispatches tool calls in a loop until the model returns a plain
-        text response.
+        Yields :class:`TokenEvent` for each partial LLM token,
+        :class:`ToolStartEvent` / :class:`ToolDoneEvent` around each tool call,
+        and a final :class:`DoneEvent` when the agent is done.
         """
         self._messages.append({"role": "user", "content": user_input})
         logger.debug("[user]\n%s", user_input)
         if self._memory is not None:
             self._memory.store("user", user_input)
 
-        # Track consecutive identical failing tool calls to detect loops.
         last_fail_key: str | None = None
         consecutive_failures = 0
         model_turns = 0
@@ -261,7 +309,7 @@ class Agent:
                     f"aborted: exceeded {_MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request"
                 )
 
-            response = _completion_with_retry(
+            stream = await _acompletion_with_retry(
                 self._model,
                 self._messages,
                 self._tool_kwargs,
@@ -270,23 +318,79 @@ class Agent:
                 self._reasoning_effort,
             )
             model_turns += 1
-            msg = response.choices[0].message
-            logger.debug("[model_response]\n%s", msg)
 
-            if self._memory is not None and response.usage is not None:
+            # Accumulate streaming response.
+            content_parts: list[str] = []
+            tool_call_acc: dict[int, dict] = {}  # index → {id, name, arguments}
+            usage = None
+
+            async for chunk in stream:
+                if not chunk.choices:
+                    if chunk.usage is not None:
+                        usage = chunk.usage
+                    continue
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    content_parts.append(delta.content)
+                    yield TokenEvent(delta.content)
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_call_acc:
+                            tool_call_acc[idx] = {"id": tc_delta.id or "", "name": "", "arguments": ""}
+                        if tc_delta.function:
+                            tool_call_acc[idx]["name"] += tc_delta.function.name or ""
+                            tool_call_acc[idx]["arguments"] += tc_delta.function.arguments or ""
+                if chunk.usage is not None:
+                    usage = chunk.usage
+
+            content = "".join(content_parts)
+            logger.debug("[model_response] content=%r tool_calls=%d", content[:120], len(tool_call_acc))
+
+            if self._memory is not None and usage is not None:
                 self._memory.record_token_usage(
                     self._session_id or "",
                     self._makefile_path.name,
                     self._model,
-                    response.usage.prompt_tokens,
-                    response.usage.completion_tokens,
+                    usage.prompt_tokens,
+                    usage.completion_tokens,
                 )
 
-            tool_calls = msg.tool_calls or _parse_content_tool_calls(msg.content or "")
-            if tool_calls:
-                self._messages.append(msg.model_dump(exclude_none=True))
+            # Support models that embed tool calls as a JSON array in content.
+            content_tool_calls = None
+            if not tool_call_acc and content:
+                content_tool_calls = _parse_content_tool_calls(content)
 
-                for tc in tool_calls:
+            if tool_call_acc or content_tool_calls:
+                if tool_call_acc:
+                    sorted_tcs = [tool_call_acc[i] for i in sorted(tool_call_acc)]
+                    assistant_msg: dict = {
+                        "role": "assistant",
+                        "content": content or None,
+                        "tool_calls": [
+                            {
+                                "id": tc["id"],
+                                "type": "function",
+                                "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                            }
+                            for tc in sorted_tcs
+                        ],
+                    }
+                    tool_calls_to_run = [
+                        ChatCompletionMessageFunctionToolCall(
+                            id=tc["id"],
+                            type="function",
+                            function=Function(name=tc["name"], arguments=tc["arguments"]),
+                        )
+                        for tc in sorted_tcs
+                    ]
+                else:
+                    assistant_msg = {"role": "assistant", "content": content}
+                    tool_calls_to_run = content_tool_calls  # type: ignore[assignment]
+
+                self._messages.append(assistant_msg)
+
+                for tc in tool_calls_to_run:
                     if tool_calls_executed >= _MAX_TOOL_CALLS_PER_REQUEST:
                         raise RuntimeError(
                             f"aborted: exceeded {_MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request"
@@ -302,6 +406,8 @@ class Agent:
                         continue
 
                     logger.debug("[tool_call] %s args=%s", target, arguments)
+                    yield ToolStartEvent(name=target, args=arguments)
+
                     if target not in self._tool_name_set:
                         result = get_tool_result("", f"unknown tool: {target}", None)
                     else:
@@ -309,12 +415,12 @@ class Agent:
                             if target in self._builtins:
                                 raw = self._builtins[target](**arguments)
                                 if isinstance(raw, _RunAgent):
-                                    agent_result = self._run_agent(raw.mk_path, raw.prompt)
+                                    agent_result = await self._arun_agent(raw.mk_path, raw.prompt)
                                     result = get_tool_result(agent_result, "", 0, self._max_tool_output)
                                 else:
                                     result = get_tool_result(str(raw), "", 0, self._max_tool_output)
                             else:
-                                result = run_tool(
+                                result = await run_tool(
                                     target,
                                     arguments,
                                     self._makefile_path,
@@ -329,16 +435,10 @@ class Agent:
                             result = get_tool_result("", f"unexpected error: {e}", None)
 
                     logger.info("[tool_result] %s -> %s", target, result.output)
+                    yield ToolDoneEvent(name=target, output=result.output, is_error=result.is_error)
 
-                    self._messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": result.output,
-                        }
-                    )
+                    self._messages.append({"role": "tool", "tool_call_id": tc.id, "content": result.output})
 
-                    # Detect repeated identical failing tool calls.
                     call_key = f"{target}:{tc.function.arguments}"
                     if result.is_error and call_key == last_fail_key:
                         consecutive_failures += 1
@@ -361,12 +461,23 @@ class Agent:
                     last_fail_key = None
                     consecutive_failures = 0
             else:
-                content = msg.content or ""
                 self._messages.append({"role": "assistant", "content": content})
                 logger.debug("[assistant]\n%s", content)
                 if self._memory is not None:
                     self._memory.store("agent", content)
-                return content
+                yield DoneEvent(content=content)
+                return
+
+    async def arun(self, user_input: str) -> str:
+        """Send *user_input* to the LLM and return the assistant's final reply.
+
+        Convenience wrapper around :meth:`astream` that discards intermediate
+        events and returns the final text.
+        """
+        async for event in self.astream(user_input):
+            if isinstance(event, DoneEvent):
+                return event.content
+        return ""
 
 
 class SessionNotFoundError(Exception):
@@ -400,9 +511,13 @@ class AgentManager:
         except KeyError:
             raise SessionNotFoundError(f"Session with id {session_id} not found.")
 
-    def notify_agent(self, session_id: str, message: str) -> str:
+    async def arun_agent(self, session_id: str, message: str) -> str:
         agent = self.get_agent(session_id)
-        return agent(message)
+        return await agent.arun(message)
+
+    def astream_agent(self, session_id: str, message: str) -> AsyncGenerator[AgentEvent, None]:
+        agent = self.get_agent(session_id)
+        return agent.astream(message)
 
     def export_conversation(self, session_id: str) -> Path | None:
         agent = self.get_agent(session_id)

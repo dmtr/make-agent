@@ -23,10 +23,10 @@ for simple values where the Makefile does not define its own ``PARAM``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
-import subprocess
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -119,22 +119,22 @@ def build_tools(makefile: Makefile) -> list[dict[str, Any]]:
     return tools
 
 
-def run_tool(
+async def run_tool(
     target: str,
     arguments: dict[str, Any],
     makefile_path: Path,
     timeout: int = 600,
     max_output: int = 0,
 ) -> ToolExecutionResult:
-    """Invoke ``make`` with safely injected parameters and return output as JSON.
-
-    Returns a JSON string with keys ``stdout``, ``stderr``, and ``exit_code``
-    (``null`` for framework-level errors such as timeout or OS failure).  When
-    *max_output* is non-zero and the stdout exceeds that limit, the output is
-    truncated and an ``omitted_chars`` key is added.
+    """Invoke ``make`` with safely injected parameters and return the result.
 
     All parameter values are injected as environment variables.  Recipes access
-    them with shell syntax (``$$PARAM``).
+    them with shell syntax (``$$PARAM``).  When *max_output* is non-zero and
+    the combined output exceeds that limit, the excess is dropped and a
+    truncation notice is appended.
+
+    Raises :exc:`asyncio.CancelledError` if cancelled mid-execution (the
+    subprocess is killed before re-raising).
     """
     for k in arguments:
         if not _is_valid_make_var_name(k):
@@ -144,14 +144,38 @@ def run_tool(
 
     env = {**os.environ, **{k: str(v) for k, v in arguments.items()}}
     cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target]
-    logger.debug(f"running tool with command: {' '.join(cmd)}")
+    logger.debug("running tool with command: %s", " ".join(cmd))
     try:
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout)
-        logger.info(f"result of '{' '.join(cmd)}': exit {result.returncode}, stdout: {result.stdout!r}, stderr: {result.stderr!r}")
-    except subprocess.TimeoutExpired:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL,
+        )
+    except OSError as e:
+        logger.error("OS error when running tool %s: %s", target, e)
+        return get_tool_result("", f"failed to run make: {e}", None)
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
         logger.error("tool '%s' exceeded %ds timeout", target, timeout)
         return get_tool_result("", f"tool '{target}' exceeded {timeout}s limit", None)
-    except OSError as e:
-        logger.error("OS error when running tool %s %s", target, e)
-        return get_tool_result("", f"failed to run make: {e}", None)
-    return get_tool_result(result.stdout, result.stderr, result.returncode, max_output)
+    except asyncio.CancelledError:
+        proc.kill()
+        await proc.wait()
+        raise
+
+    stdout = stdout_b.decode(errors="replace")
+    stderr = stderr_b.decode(errors="replace")
+    logger.info(
+        "result of '%s': exit %s, stdout: %r, stderr: %r",
+        " ".join(cmd),
+        proc.returncode,
+        stdout,
+        stderr,
+    )
+    return get_tool_result(stdout, stderr, proc.returncode, max_output)

@@ -45,7 +45,7 @@ class TestRunPromptInput:
         )
         captured: dict = {}
 
-        def _fake_run(**kwargs):
+        async def _fake_run(**kwargs):
             captured.update(kwargs)
 
         original = main_module.run
