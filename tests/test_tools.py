@@ -60,7 +60,7 @@ def _write_makefile(tmp_path: Path, content: str) -> Path:
     return mf
 
 
-def test_run_tool_stdout_captured(tmp_path):
+async def test_run_tool_stdout_captured(tmp_path):
     mf = _write_makefile(
         tmp_path,
         """\
@@ -69,11 +69,11 @@ def test_run_tool_stdout_captured(tmp_path):
         \t@echo hello world
     """,
     )
-    result = run_tool("hello", {}, mf)
+    result = await run_tool("hello", {}, mf)
     assert "hello world" in result
 
 
-def test_run_tool_passes_variables(tmp_path):
+async def test_run_tool_passes_variables(tmp_path):
     mf = _write_makefile(
         tmp_path,
         """\
@@ -82,11 +82,11 @@ def test_run_tool_passes_variables(tmp_path):
         \t@echo $(GREETING) $(NAME)
     """,
     )
-    result = run_tool("greet", {"NAME": "Alice", "GREETING": "Hi"}, mf)
+    result = await run_tool("greet", {"NAME": "Alice", "GREETING": "Hi"}, mf)
     assert "Hi Alice" in result
 
 
-def test_run_tool_error_on_nonzero_exit(tmp_path):
+async def test_run_tool_error_on_nonzero_exit(tmp_path):
     mf = _write_makefile(
         tmp_path,
         """\
@@ -95,11 +95,11 @@ def test_run_tool_error_on_nonzero_exit(tmp_path):
         \t@exit 1
     """,
     )
-    result = run_tool("fail", {}, mf)
+    result = await run_tool("fail", {}, mf)
     assert "ERROR" in result.output
 
 
-def test_run_tool_error_includes_stdout(tmp_path):
+async def test_run_tool_error_includes_stdout(tmp_path):
     """Stdout output produced before a failure must not be discarded."""
     mf = _write_makefile(
         tmp_path,
@@ -110,12 +110,12 @@ def test_run_tool_error_includes_stdout(tmp_path):
         \t@exit 1
     """,
     )
-    result = run_tool("partial", {}, mf)
+    result = await run_tool("partial", {}, mf)
     assert "ERROR" in result.output
     assert "partial output" in result.output
 
 
-def test_run_tool_error_includes_stderr(tmp_path):
+async def test_run_tool_error_includes_stderr(tmp_path):
     """Stderr is reported separately from stdout."""
     mf = _write_makefile(
         tmp_path,
@@ -125,12 +125,12 @@ def test_run_tool_error_includes_stderr(tmp_path):
         \t@echo error detail >&2; exit 2
     """,
     )
-    result = run_tool("warn", {}, mf)
+    result = await run_tool("warn", {}, mf)
     assert "ERROR" in result.output
     assert "error detail" in result.output
 
 
-def test_run_tool_unknown_target(tmp_path):
+async def test_run_tool_unknown_target(tmp_path):
     mf = _write_makefile(
         tmp_path,
         """\
@@ -139,11 +139,11 @@ def test_run_tool_unknown_target(tmp_path):
         \t@echo ok
     """,
     )
-    result = run_tool("nonexistent", {}, mf)
+    result = await run_tool("nonexistent", {}, mf)
     assert "ERROR" in result.output
 
 
-def test_run_tool_timeout(tmp_path):
+async def test_run_tool_timeout(tmp_path):
     mf = _write_makefile(
         tmp_path,
         """\
@@ -152,12 +152,12 @@ def test_run_tool_timeout(tmp_path):
         \t@sleep 10
     """,
     )
-    result = run_tool("slow", {}, mf, timeout=1)
+    result = await run_tool("slow", {}, mf, timeout=1)
     assert "exceeded" in result.output
     assert "slow" in result.output
 
 
-def test_run_tool_rejects_invalid_argument_name(tmp_path):
+async def test_run_tool_rejects_invalid_argument_name(tmp_path):
     """Argument names must be make-variable-safe to block option injection."""
     mf = _write_makefile(
         tmp_path,
@@ -167,11 +167,11 @@ def test_run_tool_rejects_invalid_argument_name(tmp_path):
         \t@echo ok
     """,
     )
-    result = run_tool("greet", {"--file": "x"}, mf)
+    result = await run_tool("greet", {"--file": "x"}, mf)
     assert "not a valid make variable name" in result.output
 
 
-def test_run_tool_rejects_system_env_var_override(tmp_path):
+async def test_run_tool_rejects_system_env_var_override(tmp_path):
     """Arguments must not be allowed to shadow existing environment variables."""
     mf = _write_makefile(
         tmp_path,
@@ -181,14 +181,14 @@ def test_run_tool_rejects_system_env_var_override(tmp_path):
         \t@true
     """,
     )
-    result = run_tool("noop", {"PATH": "/evil/bin"}, mf)
+    result = await run_tool("noop", {"PATH": "/evil/bin"}, mf)
     assert "shadows the system environment variable" in result.output
 
 
 # ── params.mk injection ───────────────────────────────────────────────────────
 
 
-def test_run_tool_param_accessible_via_shell_var(tmp_path):
+async def test_run_tool_param_accessible_via_shell_var(tmp_path):
     """Single-line params are accessible as $$PARAM (shell env var) in recipes."""
     mf = _write_makefile(
         tmp_path,
@@ -198,11 +198,11 @@ def test_run_tool_param_accessible_via_shell_var(tmp_path):
         \t@printf '%s' "$$NAME"
     """,
     )
-    result = run_tool("greet", {"NAME": "Alice"}, mf)
+    result = await run_tool("greet", {"NAME": "Alice"}, mf)
     assert "Alice" in result
 
 
-def test_run_tool_multiline_value(tmp_path):
+async def test_run_tool_multiline_value(tmp_path):
     """Multiline values are available as $$PARAM via the env var mechanism."""
     out = tmp_path / "out.txt"
     mf = _write_makefile(
@@ -214,12 +214,12 @@ def test_run_tool_multiline_value(tmp_path):
     """,
     )
     multiline = "line one\nline two\nline three"
-    run_tool("write-file", {"CONTENT": multiline}, mf)
+    await run_tool("write-file", {"CONTENT": multiline}, mf)
     # Verify the file was written correctly
     assert out.read_text() == multiline
 
 
-def test_run_tool_no_temp_files_created(tmp_path):
+async def test_run_tool_no_temp_files_created(tmp_path):
     """No temporary files are ever created — all params go via env vars."""
     mf = _write_makefile(
         tmp_path,
@@ -230,12 +230,12 @@ def test_run_tool_no_temp_files_created(tmp_path):
     """,
     )
     before = set(tmp_path.iterdir())
-    run_tool("noop", {"X": "hello\nworld"}, mf)
+    await run_tool("noop", {"X": "hello\nworld"}, mf)
     after = set(tmp_path.iterdir())
     assert after == before
 
 
-def test_run_tool_endef_in_multiline_value(tmp_path):
+async def test_run_tool_endef_in_multiline_value(tmp_path):
     """A multiline value containing a bare 'endef' line is passed correctly."""
     out = tmp_path / "out.txt"
     mf = _write_makefile(
@@ -247,12 +247,12 @@ def test_run_tool_endef_in_multiline_value(tmp_path):
     """,
     )
     value = "before\nendef\nafter"
-    run_tool("write-file", {"CONTENT": value}, mf)
+    await run_tool("write-file", {"CONTENT": value}, mf)
     assert "before" in out.read_text()
     assert "after" in out.read_text()
 
 
-def test_run_tool_quotes_in_value(tmp_path):
+async def test_run_tool_quotes_in_value(tmp_path):
     """Values with double quotes are passed correctly via env vars."""
     out = tmp_path / "out.txt"
     mf = _write_makefile(
@@ -263,7 +263,7 @@ def test_run_tool_quotes_in_value(tmp_path):
         \t@printf '%s' "$$MSG" > "{out}"
     """,
     )
-    run_tool("show", {"MSG": 'say "hello"'}, mf)
+    await run_tool("show", {"MSG": 'say "hello"'}, mf)
     assert 'say "hello"' in out.read_text()
 
 
@@ -321,7 +321,7 @@ def test_format_tool_result_unlimited_when_max_output_zero():
     assert "omitted_chars" not in result
 
 
-def test_run_tool_truncates_output(tmp_path):
+async def test_run_tool_truncates_output(tmp_path):
     mf = _write_makefile(
         tmp_path,
         """\
@@ -330,6 +330,6 @@ def test_run_tool_truncates_output(tmp_path):
         \t@python3 -c "print('a' * 500)"
     """,
     )
-    result = run_tool("big", {}, mf, max_output=100)
+    result = await run_tool("big", {}, mf, max_output=100)
     assert len(result.output) == 100
     assert "omitted_chars" in result.output

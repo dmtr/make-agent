@@ -1,12 +1,12 @@
-"""Tests for rate limit retry logic — _parse_retry_after and _completion_with_retry."""
+"""Tests for rate limit retry logic — _parse_retry_after and _acompletion_with_retry."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import any_llm
 import pytest
-from make_agent.agent import _completion_with_retry, _parse_retry_after
+from make_agent.agent import _acompletion_with_retry, _parse_retry_after
 
 
 def _make_rate_limit_error(
@@ -29,11 +29,62 @@ def _make_rate_limit_error(
     )
 
 
-def _make_success_response() -> MagicMock:
-    resp = MagicMock()
-    resp.choices[0].message.tool_calls = None
-    resp.choices[0].message.content = "done"
-    return resp
+def _make_empty_stream():
+    """Return an async iterator that yields no chunks (empty stream)."""
+
+    async def _stream():
+        return
+        yield  # make it an async generator
+
+    return _stream()
+
+
+def _make_text_stream(content: str):
+    """Return an async iterator that yields a single text chunk."""
+
+    async def _stream():
+        chunk = MagicMock()
+        chunk.choices = [MagicMock()]
+        chunk.choices[0].delta.content = content
+        chunk.choices[0].delta.tool_calls = None
+        chunk.usage = None
+        yield chunk
+
+    return _stream()
+
+
+def _make_tool_call_stream(tool_id: str, tool_name: str, arguments: str):
+    """Return an async iterator that yields a single tool-call chunk."""
+
+    async def _stream():
+        chunk = MagicMock()
+        chunk.choices = [MagicMock()]
+        chunk.choices[0].delta.content = None
+        tc_delta = MagicMock()
+        tc_delta.index = 0
+        tc_delta.id = tool_id
+        tc_delta.function = MagicMock()
+        tc_delta.function.name = tool_name
+        tc_delta.function.arguments = arguments
+        chunk.choices[0].delta.tool_calls = [tc_delta]
+        chunk.usage = None
+        yield chunk
+
+    return _stream()
+
+
+def _mock_acompletion_with_retry(*streams):
+    """Return an async callable that yields successive streams on each call."""
+    streams_list = list(streams)
+    call_count = 0
+
+    async def _mock(*args, **kwargs):
+        nonlocal call_count
+        stream = streams_list[call_count % len(streams_list)]
+        call_count += 1
+        return stream
+
+    return _mock
 
 
 class TestParseRetryAfter:
@@ -62,66 +113,64 @@ class TestParseRetryAfter:
         assert _parse_retry_after(err) is None
 
 
-class TestCompletionWithRetry:
-    def test_succeeds_on_first_attempt(self):
-        success = _make_success_response()
-        with patch("make_agent.agent.any_llm.completion", return_value=success) as mock_c:
-            result = _completion_with_retry("model", [], {}, max_retries=3)
-        assert result is success
+class TestACompletionWithRetry:
+    async def test_succeeds_on_first_attempt(self):
+        stream = _make_empty_stream()
+        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(return_value=stream)) as mock_c:
+            result = await _acompletion_with_retry("model", [], {}, max_retries=3)
+        assert result is stream
         mock_c.assert_called_once()
 
-    def test_retries_on_rate_limit_then_succeeds(self):
+    async def test_retries_on_rate_limit_then_succeeds(self):
         err = _make_rate_limit_error(retry_after=10)
-        success = _make_success_response()
-        with patch("make_agent.agent.any_llm.completion", side_effect=[err, err, success]):
-            with patch("make_agent.agent.time.sleep") as mock_sleep:
-                result = _completion_with_retry("model", [], {}, max_retries=3)
-        assert result is success
+        stream = _make_empty_stream()
+        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=[err, err, stream])):
+            with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
+                result = await _acompletion_with_retry("model", [], {}, max_retries=3)
+        assert result is stream
         assert mock_sleep.call_count == 2
         mock_sleep.assert_called_with(10.0)
 
-    def test_exponential_backoff_without_header(self):
-        err = _make_rate_limit_error()  # no retry-after header
-        success = _make_success_response()
-        with patch("make_agent.agent.any_llm.completion", side_effect=[err, err, success]):
-            with patch("make_agent.agent.time.sleep") as mock_sleep:
-                _completion_with_retry("model", [], {}, max_retries=3)
-        # attempt 0 → 2^0 = 1s, attempt 1 → 2^1 = 2s
+    async def test_exponential_backoff_without_header(self):
+        err = _make_rate_limit_error()
+        stream = _make_empty_stream()
+        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=[err, err, stream])):
+            with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
+                await _acompletion_with_retry("model", [], {}, max_retries=3)
         assert mock_sleep.call_args_list == [call(1), call(2)]
 
-    def test_exponential_backoff_capped_at_60s(self):
+    async def test_exponential_backoff_capped_at_60s(self):
         err = _make_rate_limit_error()
-        success = _make_success_response()
-        # need 7 failures to reach 2^6=64 > 60; cap kicks in at attempt 6
-        side_effects = [err] * 7 + [success]
-        with patch("make_agent.agent.any_llm.completion", side_effect=side_effects):
-            with patch("make_agent.agent.time.sleep") as mock_sleep:
-                _completion_with_retry("model", [], {}, max_retries=10)
+        stream = _make_empty_stream()
+        side_effects = [err] * 7 + [stream]
+        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=side_effects)):
+            with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
+                await _acompletion_with_retry("model", [], {}, max_retries=10)
         waits = [c.args[0] for c in mock_sleep.call_args_list]
         assert all(w <= 60 for w in waits)
         assert waits[6] == 60  # 2^6=64 capped to 60
 
-    def test_raises_after_max_retries_exhausted(self):
+    async def test_raises_after_max_retries_exhausted(self):
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent.any_llm.completion", side_effect=err):
-            with patch("make_agent.agent.time.sleep"):
+        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=err)):
+            with patch("asyncio.sleep", AsyncMock()):
                 with pytest.raises(any_llm.RateLimitError):
-                    _completion_with_retry("model", [], {}, max_retries=2)
+                    await _acompletion_with_retry("model", [], {}, max_retries=2)
 
-    def test_total_calls_equals_max_retries_plus_one(self):
+    async def test_total_calls_equals_max_retries_plus_one(self):
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent.any_llm.completion", side_effect=err) as mock_c:
-            with patch("make_agent.agent.time.sleep"):
+        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=err)) as mock_c:
+            with patch("asyncio.sleep", AsyncMock()):
                 with pytest.raises(any_llm.RateLimitError):
-                    _completion_with_retry("model", [], {}, max_retries=3)
+                    await _acompletion_with_retry("model", [], {}, max_retries=3)
         assert mock_c.call_count == 4  # 1 initial + 3 retries
 
-    def test_zero_max_retries_raises_immediately(self):
+    async def test_zero_max_retries_raises_immediately(self):
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent.any_llm.completion", side_effect=err):
-            with patch("make_agent.agent.time.sleep") as mock_sleep:
+        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=err)):
+            with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
                 with pytest.raises(any_llm.RateLimitError):
-                    _completion_with_retry("model", [], {}, max_retries=0)
+                    await _acompletion_with_retry("model", [], {}, max_retries=0)
         mock_sleep.assert_not_called()
 
 
@@ -250,10 +299,8 @@ class TestRunAgentInProcess:
         agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
         assert agent._model == "openai/gpt-4o-mini"  # noqa: SLF001
 
-    def test_run_agent_dispatched_via_call(self, tmp_path):
-        """Agent.__call__ runs the sub-agent and returns its response as a tool result."""
-        from unittest.mock import MagicMock, patch
-
+    async def test_run_agent_dispatched_via_call(self, tmp_path):
+        """agent.arun() runs the sub-agent via _arun_agent and returns final text."""
         from make_agent.agent import Agent, AgentConfig
 
         (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
@@ -261,23 +308,15 @@ class TestRunAgentInProcess:
         mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
         agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
 
-        # Patch _run_agent to return a known string without hitting the LLM
-        with patch.object(agent, "_run_agent", return_value="specialist done") as mock_run:
-            # Build a fake LLM response that calls run_agent then returns text
-            tool_call = MagicMock()
-            tool_call.id = "tc1"
-            tool_call.function.name = "run_agent"
-            tool_call.function.arguments = '{"name": "specialist", "prompt": "go"}'
-
-            tool_response = MagicMock()
-            tool_response.choices[0].message.tool_calls = [tool_call]
-
-            final_response = MagicMock()
-            final_response.choices[0].message.tool_calls = None
-            final_response.choices[0].message.content = "all done"
-
-            with patch("make_agent.agent.any_llm.completion", side_effect=[tool_response, final_response]):
-                result = agent("delegate to specialist")
+        with patch.object(agent, "_arun_agent", new_callable=AsyncMock, return_value="specialist done") as mock_run:
+            with patch(
+                "make_agent.agent._acompletion_with_retry",
+                _mock_acompletion_with_retry(
+                    _make_tool_call_stream("tc1", "run_agent", '{"name": "specialist", "prompt": "go"}'),
+                    _make_text_stream("all done"),
+                ),
+            ):
+                result = await agent.arun("delegate to specialist")
 
         mock_run.assert_called_once()
         assert result == "all done"
@@ -299,40 +338,35 @@ class TestAgentSafetyGuards:
         )
         return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
 
-    def _tool_call_response(self, name: str, arguments: str = "{}"):
-        tool_call = MagicMock()
-        tool_call.id = "tc1"
-        tool_call.function.name = name
-        tool_call.function.arguments = arguments
-        response = MagicMock()
-        response.choices[0].message.tool_calls = [tool_call]
-        return response
-
-    def test_unknown_tool_is_rejected_without_running_make(self, tmp_path):
+    async def test_unknown_tool_is_rejected_without_running_make(self, tmp_path):
         agent = self._make_agent(tmp_path)
-        tool_response = self._tool_call_response("hidden")
-        final_response = MagicMock()
-        final_response.choices[0].message.tool_calls = None
-        final_response.choices[0].message.content = "done"
 
         with (
-            patch("make_agent.agent._completion_with_retry", side_effect=[tool_response, final_response]),
-            patch("make_agent.agent.run_tool") as mock_run_tool,
+            patch(
+                "make_agent.agent._acompletion_with_retry",
+                _mock_acompletion_with_retry(
+                    _make_tool_call_stream("tc1", "hidden", "{}"),
+                    _make_text_stream("done"),
+                ),
+            ),
+            patch("make_agent.agent.run_tool", new_callable=AsyncMock) as mock_run_tool,
         ):
-            result = agent("use hidden target")
+            result = await agent.arun("use hidden target")
 
         assert result == "done"
         mock_run_tool.assert_not_called()
         tool_outputs = [m["content"] for m in agent.messages if m.get("role") == "tool"]
         assert any("unknown tool: hidden" in output for output in tool_outputs)
 
-    def test_model_turn_limit_stops_runaway_tool_loop(self, tmp_path):
+    async def test_model_turn_limit_stops_runaway_tool_loop(self, tmp_path):
         agent = self._make_agent(tmp_path)
-        looping_response = self._tool_call_response("hidden")
+
+        async def _always_tool_call(*args, **kwargs):
+            return _make_tool_call_stream("tc1", "hidden", "{}")
 
         with (
             patch("make_agent.agent._MAX_MODEL_TURNS_PER_REQUEST", 2),
-            patch("make_agent.agent._completion_with_retry", return_value=looping_response),
+            patch("make_agent.agent._acompletion_with_retry", _always_tool_call),
         ):
             with pytest.raises(RuntimeError, match="model turns"):
-                agent("loop forever")
+                await agent.arun("loop forever")

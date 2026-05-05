@@ -1,6 +1,7 @@
 """make-agent: an AI agent driven by a Makefile."""
 
 import argparse
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -119,19 +120,21 @@ def _cmd_run(args: argparse.Namespace) -> None:
         except OSError as e:
             sys.exit(f"make-agent run: {e}")
 
-    run(
-        makefile_path=Path(args.file),
-        model=args.model,
-        agent_model=args.agent_model if args.agent_model is not None else args.model,
-        prompt=prompt,
-        max_retries=args.max_retries,
-        tool_timeout=args.tool_timeout,
-        max_tool_output=args.max_tool_output,
-        max_tokens=args.max_tokens,
-        agents_dir=args.agents_dir,
-        with_memory=args.with_memory,
-        disabled_builtin_tools=_parse_disabled_tools(args.disable_builtin_tools),
-        reasoning_effort=args.reasoning_effort,
+    asyncio.run(
+        run(
+            makefile_path=Path(args.file),
+            model=args.model,
+            agent_model=args.agent_model if args.agent_model is not None else args.model,
+            prompt=prompt,
+            max_retries=args.max_retries,
+            tool_timeout=args.tool_timeout,
+            max_tool_output=args.max_tool_output,
+            max_tokens=args.max_tokens,
+            agents_dir=args.agents_dir,
+            with_memory=args.with_memory,
+            disabled_builtin_tools=_parse_disabled_tools(args.disable_builtin_tools),
+            reasoning_effort=args.reasoning_effort,
+        )
     )
 
 

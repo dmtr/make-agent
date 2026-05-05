@@ -1,6 +1,6 @@
 [project]
 name = "makefile-agent"
-version = "0.3.3"
+version = "0.3.4"
 description = "AI‑assistant‑as‑Makefile: a tool to create and manage AI agents using a Makefile."
 readme = "README.md"
 license = "MIT"
@@ -29,6 +29,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.24",
     "ruff>=0.8.5",
 ]
 
@@ -48,6 +49,7 @@ Issues = "https://github.com/dmtr/make-agent/issues"
 make_agent = ["templates/*.mk"]
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 markers = [
     "e2e: end-to-end tests that call the real API (skipped by default; pass --e2e to run)",
 ]

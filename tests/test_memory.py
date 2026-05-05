@@ -439,7 +439,7 @@ class TestMemoryBuiltinTools:
 
 
 class TestAgentAutoStorage:
-    """Verify Agent.__call__ writes to memory automatically."""
+    """Verify agent.arun() writes to memory automatically."""
 
     def _make_agent(self, tmp_path, mem):
         from make_agent.agent import Agent, AgentConfig
@@ -449,37 +449,51 @@ class TestAgentAutoStorage:
         config = AgentConfig(makefile_path=mf_path, model="openai/gpt-4o-mini")
         return Agent(config, mem)
 
-    def test_user_message_stored(self, tmp_path, mem):
+    async def test_user_message_stored(self, tmp_path, mem):
         agent = self._make_agent(tmp_path, mem)
-        fake_response = MagicMock()
-        fake_response.choices[0].message.tool_calls = None
-        fake_response.choices[0].message.content = "the reply"
-        fake_response.usage = None
 
-        with patch("make_agent.agent._completion_with_retry", return_value=fake_response):
-            agent("hello from user")
+        async def _fake_acompletion(*args, **kwargs):
+            async def _stream():
+                chunk = MagicMock()
+                chunk.choices = [MagicMock()]
+                chunk.choices[0].delta.content = "the reply"
+                chunk.choices[0].delta.tool_calls = None
+                chunk.usage = None
+                yield chunk
+
+            return _stream()
+
+        with patch("make_agent.agent._acompletion_with_retry", _fake_acompletion):
+            await agent.arun("hello from user")
 
         conn = mem._get_conn()
         row = conn.execute("SELECT sender, message FROM messages WHERE sender='user'").fetchone()
         assert row is not None
         assert row["message"] == "hello from user"
 
-    def test_agent_reply_stored(self, tmp_path, mem):
+    async def test_agent_reply_stored(self, tmp_path, mem):
         agent = self._make_agent(tmp_path, mem)
-        fake_response = MagicMock()
-        fake_response.choices[0].message.tool_calls = None
-        fake_response.choices[0].message.content = "the reply"
-        fake_response.usage = None
 
-        with patch("make_agent.agent._completion_with_retry", return_value=fake_response):
-            agent("hello from user")
+        async def _fake_acompletion(*args, **kwargs):
+            async def _stream():
+                chunk = MagicMock()
+                chunk.choices = [MagicMock()]
+                chunk.choices[0].delta.content = "the reply"
+                chunk.choices[0].delta.tool_calls = None
+                chunk.usage = None
+                yield chunk
+
+            return _stream()
+
+        with patch("make_agent.agent._acompletion_with_retry", _fake_acompletion):
+            await agent.arun("hello from user")
 
         conn = mem._get_conn()
         row = conn.execute("SELECT sender, message FROM messages WHERE sender='agent'").fetchone()
         assert row is not None
         assert row["message"] == "the reply"
 
-    def test_no_storage_without_memory(self, tmp_path):
+    async def test_no_storage_without_memory(self, tmp_path):
         from make_agent.agent import Agent, AgentConfig
 
         mf_path = tmp_path / "Makefile"
@@ -487,12 +501,19 @@ class TestAgentAutoStorage:
         config = AgentConfig(makefile_path=mf_path, model="openai/gpt-4o-mini")
         agent = Agent(config, None)
 
-        fake_response = MagicMock()
-        fake_response.choices[0].message.tool_calls = None
-        fake_response.choices[0].message.content = "the reply"
+        async def _fake_acompletion(*args, **kwargs):
+            async def _stream():
+                chunk = MagicMock()
+                chunk.choices = [MagicMock()]
+                chunk.choices[0].delta.content = "the reply"
+                chunk.choices[0].delta.tool_calls = None
+                chunk.usage = None
+                yield chunk
 
-        with patch("make_agent.agent._completion_with_retry", return_value=fake_response):
-            agent("hello")
+            return _stream()
+
+        with patch("make_agent.agent._acompletion_with_retry", _fake_acompletion):
+            await agent.arun("hello")
         # No exception — memory is simply not used
 
 
@@ -525,7 +546,7 @@ class TestWithMemoryFlag:
 
         captured: dict = {}
 
-        def _fake_run(**kwargs):
+        async def _fake_run(**kwargs):
             captured.update(kwargs)
 
         original = main_module.run
@@ -563,7 +584,7 @@ class TestWithMemoryFlag:
 
         captured: dict = {}
 
-        def _fake_run(**kwargs):
+        async def _fake_run(**kwargs):
             captured.update(kwargs)
 
         original = main_module.run
@@ -600,7 +621,7 @@ class TestWithMemoryFlag:
 
         captured: dict = {}
 
-        def _fake_run(**kwargs):
+        async def _fake_run(**kwargs):
             captured.update(kwargs)
 
         original = main_module.run
