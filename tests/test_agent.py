@@ -370,3 +370,40 @@ class TestAgentSafetyGuards:
         ):
             with pytest.raises(RuntimeError, match="model turns"):
                 await agent.arun("loop forever")
+
+
+class TestAssistantMessageContent:
+    """Assistant messages with tool calls must never have content=None (breaks Ollama provider)."""
+
+    async def test_tool_call_without_text_has_empty_string_content(self, tmp_path):
+        """When the LLM streams a tool call with no text, the assistant message content must be ''."""
+        from make_agent.agent import Agent, AgentConfig
+
+        mf = tmp_path / "Makefile"
+        mf.write_text(
+            "# <tool>\n"
+            "# A simple tool.\n"
+            "# </tool>\n"
+            "say_hi:\n"
+            "\t@echo hi\n"
+        )
+        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
+
+        with (
+            patch(
+                "make_agent.agent._acompletion_with_retry",
+                _mock_acompletion_with_retry(
+                    _make_tool_call_stream("tc1", "say_hi", "{}"),
+                    _make_text_stream("all done"),
+                ),
+            ),
+            patch("make_agent.agent.run_tool", new_callable=AsyncMock, return_value=MagicMock(output="hi", is_error=False)),
+        ):
+            result = await agent.arun("call say_hi")
+
+        assert result == "all done"
+        assistant_msgs = [m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m]
+        assert assistant_msgs, "expected at least one assistant message with tool_calls"
+        for msg in assistant_msgs:
+            assert msg["content"] is not None, "assistant message content must not be None (breaks Ollama)"
+            assert isinstance(msg["content"], str)

@@ -135,8 +135,7 @@ async def _acompletion_with_retry(
                 raise
             wait = _parse_retry_after(e) or min(2**attempt, 60)
             print(
-                f"Rate limited, retrying in {wait:.0f}s"
-                f" (attempt {attempt + 1}/{max_retries})...",
+                f"Rate limited, retrying in {wait:.0f}s" f" (attempt {attempt + 1}/{max_retries})...",
                 flush=True,
             )
             await asyncio.sleep(wait)
@@ -301,13 +300,9 @@ class Agent:
 
         while True:
             if model_turns >= _MAX_MODEL_TURNS_PER_REQUEST:
-                raise RuntimeError(
-                    f"aborted: exceeded {_MAX_MODEL_TURNS_PER_REQUEST} model turns in a single request"
-                )
+                raise RuntimeError(f"aborted: exceeded {_MAX_MODEL_TURNS_PER_REQUEST} model turns in a single request")
             if time.monotonic() - started_at >= _MAX_RUN_SECONDS_PER_REQUEST:
-                raise RuntimeError(
-                    f"aborted: exceeded {_MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request"
-                )
+                raise RuntimeError(f"aborted: exceeded {_MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
 
             stream = await _acompletion_with_retry(
                 self._model,
@@ -366,7 +361,7 @@ class Agent:
                     sorted_tcs = [tool_call_acc[i] for i in sorted(tool_call_acc)]
                     assistant_msg: dict = {
                         "role": "assistant",
-                        "content": content or None,
+                        "content": content,
                         "tool_calls": [
                             {
                                 "id": tc["id"],
@@ -392,9 +387,7 @@ class Agent:
 
                 for tc in tool_calls_to_run:
                     if tool_calls_executed >= _MAX_TOOL_CALLS_PER_REQUEST:
-                        raise RuntimeError(
-                            f"aborted: exceeded {_MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request"
-                        )
+                        raise RuntimeError(f"aborted: exceeded {_MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request")
                     tool_calls_executed += 1
                     target = tc.function.name
                     try:
