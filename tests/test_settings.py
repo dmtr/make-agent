@@ -29,11 +29,11 @@ class TestLoadSettings:
         with _patch_settings_file(tmp_path):
             assert load_settings() is None
 
-    def test_returns_model_and_makefile(self, tmp_path):
-        (tmp_path / "settings.yaml").write_text("model: mymodel\nmakefile: MyMakefile\n")
+    def test_returns_model(self, tmp_path):
+        (tmp_path / "settings.yaml").write_text("model: mymodel\n")
         with _patch_settings_file(tmp_path):
             result = load_settings()
-        assert result == {"model": "mymodel", "makefile": "MyMakefile"}
+        assert result == {"model": "mymodel"}
 
     def test_partial_settings_only_model(self, tmp_path):
         (tmp_path / "settings.yaml").write_text("model: mymodel\n")
@@ -41,14 +41,14 @@ class TestLoadSettings:
             result = load_settings()
         assert result == {"model": "mymodel"}
 
-    def test_partial_settings_only_makefile(self, tmp_path):
+    def test_makefile_key_is_ignored(self, tmp_path):
         (tmp_path / "settings.yaml").write_text("makefile: special.mk\n")
         with _patch_settings_file(tmp_path):
             result = load_settings()
-        assert result == {"makefile": "special.mk"}
+        assert result == {}
 
     def test_unknown_keys_are_ignored(self, tmp_path):
-        (tmp_path / "settings.yaml").write_text("model: m\nmakefile: f\nunknown: x\n")
+        (tmp_path / "settings.yaml").write_text("model: m\nunknown: x\n")
         with _patch_settings_file(tmp_path):
             result = load_settings()
         assert "unknown" not in result
@@ -66,14 +66,14 @@ class TestLoadSettings:
 class TestSaveSettings:
     def test_writes_yaml_file(self, tmp_path):
         with _patch_settings_file(tmp_path):
-            save_settings({"model": "m", "makefile": "Makefile"})
+            save_settings({"model": "m"})
         data = yaml.safe_load((tmp_path / "settings.yaml").read_text())
-        assert data == {"model": "m", "makefile": "Makefile"}
+        assert data == {"model": "m"}
 
     def test_overwrites_existing_file(self, tmp_path):
         (tmp_path / "settings.yaml").write_text("model: old\n")
         with _patch_settings_file(tmp_path):
-            save_settings({"model": "new", "makefile": "M"})
+            save_settings({"model": "new"})
         data = yaml.safe_load((tmp_path / "settings.yaml").read_text())
         assert data["model"] == "new"
 
@@ -83,15 +83,18 @@ class TestSaveSettings:
 
 def _make_args(**kwargs) -> argparse.Namespace:
     defaults = dict(
-        file=None,
         model=None,
         prompt=None,
         prompt_file=None,
-        debug=False,
+        system=None,
+        system_file=None,
         max_retries=5,
         tool_timeout=600,
         max_tool_output=20000,
-        agents_dir=None,
+        max_tokens=4096,
+        skills_dir=None,
+        with_memory=False,
+        disable_builtin_tools=None,
         reasoning_effort=None,
     )
     defaults.update(kwargs)
@@ -99,183 +102,84 @@ def _make_args(**kwargs) -> argparse.Namespace:
 
 
 class TestResolveRunArgs:
-    def test_cli_file_overrides_settings(self, tmp_path):
-        with patch("make_agent.main.load_settings", return_value={"makefile": "settings.mk", "model": "sm"}):
-            args = _make_args(file="cli.mk", model=None)
-            result = main_module._resolve_run_args(args)
-        assert result.file == "cli.mk"
-
-    def test_cli_model_overrides_settings(self, tmp_path):
-        with patch("make_agent.main.load_settings", return_value={"makefile": "s.mk", "model": "settings-model"}):
-            args = _make_args(file="f.mk", model="cli-model")
+    def test_cli_model_overrides_settings(self):
+        with patch("make_agent.main.load_settings", return_value={"model": "settings-model"}):
+            args = _make_args(model="cli-model")
             result = main_module._resolve_run_args(args)
         assert result.model == "cli-model"
 
     def test_settings_model_used_when_no_cli_model(self):
-        with patch("make_agent.main.load_settings", return_value={"makefile": "s.mk", "model": "settings-model"}):
-            args = _make_args(file="f.mk", model=None)
+        with patch("make_agent.main.load_settings", return_value={"model": "settings-model"}):
+            args = _make_args(model=None)
             result = main_module._resolve_run_args(args)
         assert result.model == "settings-model"
 
-    def test_settings_makefile_used_when_no_cli_file(self):
-        with patch("make_agent.main.load_settings", return_value={"makefile": "settings.mk", "model": "m"}), \
-             patch("make_agent.main._find_makefile", return_value="settings.mk"):
-            args = _make_args(file=None, model="m")
-            result = main_module._resolve_run_args(args)
-        assert result.file == "settings.mk"
-
-    def test_settings_makefile_found_in_agents_dir(self):
-        with patch("make_agent.main.load_settings", return_value={"makefile": "myfile.mk"}), \
-             patch("make_agent.main._find_makefile", return_value="/home/.make-agent/proj/agents/myfile.mk"):
-            args = _make_args(file=None, model="m")
-            result = main_module._resolve_run_args(args)
-        assert result.file == "/home/.make-agent/proj/agents/myfile.mk"
-
-    def test_settings_makefile_kept_as_is_when_not_found(self):
-        with patch("make_agent.main.load_settings", return_value={"makefile": "missing.mk"}), \
-             patch("make_agent.main._find_makefile", return_value=None):
-            args = _make_args(file=None, model="m")
-            result = main_module._resolve_run_args(args)
-        assert result.file == "missing.mk"
-
     def test_model_is_none_when_no_settings_and_no_cli(self):
         with patch("make_agent.main.load_settings", return_value={}):
-            args = _make_args(file="f.mk", model=None)
+            args = _make_args(model=None)
             result = main_module._resolve_run_args(args)
         assert result.model is None
 
-    def test_code_default_makefile_when_no_settings_and_no_cli(self):
-        with patch("make_agent.main.load_settings", return_value={}), \
-             patch("make_agent.main._find_makefile", return_value=None):
-            args = _make_args(file=None, model="m")
-            result = main_module._resolve_run_args(args)
-        assert result.file == main_module._DEFAULT_MAKEFILE
-
-    def test_wizard_triggered_when_no_file_no_settings_and_no_makefile_found(self):
-        wizard_result = {"makefile": "wizard.mk", "model": "wizard-model"}
-        with patch("make_agent.main.load_settings", return_value=None), \
-             patch("make_agent.main._find_makefile", return_value=None), \
-             patch("make_agent.main.run_setup_wizard", return_value=wizard_result) as mock_wizard:
-            args = _make_args(file=None, model=None)
-            result = main_module._resolve_run_args(args)
-        mock_wizard.assert_called_once()
-        assert result.file == "wizard.mk"
-        assert result.model == "wizard-model"
-
-    def test_wizard_not_triggered_when_makefile_found_in_search_path(self):
-        with patch("make_agent.main.load_settings", return_value=None), \
-             patch("make_agent.main._find_makefile", return_value="found.mk"), \
-             patch("make_agent.main.run_setup_wizard") as mock_wizard:
-            args = _make_args(file=None, model=None)
-            result = main_module._resolve_run_args(args)
-        mock_wizard.assert_not_called()
-        assert result.file == "found.mk"
-
-    def test_found_makefile_used_when_no_settings(self):
-        with patch("make_agent.main.load_settings", return_value=None), \
-             patch("make_agent.main._find_makefile", return_value="/home/proj/agents/Makefile"):
-            args = _make_args(file=None, model="m")
-            result = main_module._resolve_run_args(args)
-        assert result.file == "/home/proj/agents/Makefile"
-
-    def test_wizard_triggered_when_no_file_and_no_settings(self):
-        wizard_result = {"makefile": "wizard.mk", "model": "wizard-model"}
-        with patch("make_agent.main.load_settings", return_value=None), \
-             patch("make_agent.main._find_makefile", return_value=None), \
-             patch("make_agent.main.run_setup_wizard", return_value=wizard_result) as mock_wizard:
-            args = _make_args(file=None, model=None)
-            result = main_module._resolve_run_args(args)
-        mock_wizard.assert_called_once()
-        assert result.file == "wizard.mk"
-        assert result.model == "wizard-model"
-
-    def test_wizard_not_triggered_when_file_provided(self):
-        with patch("make_agent.main.load_settings", return_value=None), \
-             patch("make_agent.main.run_setup_wizard") as mock_wizard:
-            args = _make_args(file="explicit.mk", model=None)
-            main_module._resolve_run_args(args)
-        mock_wizard.assert_not_called()
-
-    def test_wizard_not_triggered_when_settings_exist(self):
-        with patch("make_agent.main.load_settings", return_value={"makefile": "s.mk", "model": "m"}), \
-             patch("make_agent.main.run_setup_wizard") as mock_wizard:
-            args = _make_args(file=None, model=None)
-            main_module._resolve_run_args(args)
-        mock_wizard.assert_not_called()
-
     def test_reasoning_effort_default_auto_when_not_in_settings(self):
         with patch("make_agent.main.load_settings", return_value={"model": "m"}):
-            args = _make_args(file="f.mk", model="m")
+            args = _make_args(model="m")
             result = main_module._resolve_run_args(args)
         assert result.reasoning_effort == "auto"
 
     def test_reasoning_effort_from_settings(self):
         with patch("make_agent.main.load_settings", return_value={"model": "m", "reasoning_effort": "low"}):
-            args = _make_args(file="f.mk", model="m")
+            args = _make_args(model="m")
             result = main_module._resolve_run_args(args)
         assert result.reasoning_effort == "low"
 
     def test_cli_reasoning_effort_overrides_settings(self):
         with patch("make_agent.main.load_settings", return_value={"model": "m", "reasoning_effort": "low"}):
-            args = _make_args(file="f.mk", model="m", reasoning_effort="high")
+            args = _make_args(model="m", reasoning_effort="high")
             result = main_module._resolve_run_args(args)
         assert result.reasoning_effort == "high"
 
     def test_invalid_reasoning_effort_in_settings_raises(self):
         with patch("make_agent.main.load_settings", return_value={"model": "m", "reasoning_effort": "extreme"}):
-            args = _make_args(file="f.mk", model="m")
+            args = _make_args(model="m")
             with pytest.raises(ValueError, match="Invalid reasoning_effort"):
                 main_module._resolve_run_args(args)
 
 
-# ── _find_makefile ────────────────────────────────────────────────────────────
+# ── _resolve_system_prompt ────────────────────────────────────────────────────
 
 
-class TestFindMakefile:
-    def test_returns_cwd_makefile_when_it_exists(self, tmp_path, monkeypatch):
+class TestResolveSystemPrompt:
+    def test_system_string_takes_priority(self, tmp_path):
+        args = _make_args(system="You are a helper.", system_file=None)
+        result = main_module._resolve_system_prompt(args)
+        assert result == "You are a helper."
+
+    def test_system_file_is_read(self, tmp_path):
+        f = tmp_path / "prompt.md"
+        f.write_text("From file.")
+        args = _make_args(system=None, system_file=str(f))
+        result = main_module._resolve_system_prompt(args)
+        assert result == "From file."
+
+    def test_cwd_system_md_is_discovered(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "Makefile").write_text("all:\n\t@echo ok\n")
-        with patch("make_agent.main.default_agents_dir", return_value=str(tmp_path / "agents")):
-            result = main_module._find_makefile()
-        assert result == "Makefile"
+        (tmp_path / "SYSTEM.md").write_text("From cwd.")
+        args = _make_args(system=None, system_file=None)
+        result = main_module._resolve_system_prompt(args)
+        assert result == "From cwd."
 
-    def test_returns_agents_makefile_when_only_there(self, tmp_path, monkeypatch):
+    def test_returns_empty_string_when_nothing_found(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        agents = tmp_path / "agents"
-        agents.mkdir()
-        (agents / "Makefile").write_text("all:\n\t@echo ok\n")
-        with patch("make_agent.main.default_agents_dir", return_value=str(agents)):
-            result = main_module._find_makefile()
-        assert result == str(agents / "Makefile")
+        args = _make_args(system=None, system_file=None)
+        with patch("make_agent.main.project_dir", return_value=tmp_path / "nonexistent"):
+            result = main_module._resolve_system_prompt(args)
+        assert result == ""
 
-    def test_returns_none_when_not_found_anywhere(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        with patch("make_agent.main.default_agents_dir", return_value=str(tmp_path / "agents")):
-            result = main_module._find_makefile()
-        assert result is None
-
-    def test_cwd_takes_priority_over_agents_dir(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "Makefile").write_text("cwd:\n\t@echo cwd\n")
-        agents = tmp_path / "agents"
-        agents.mkdir()
-        (agents / "Makefile").write_text("agents:\n\t@echo agents\n")
-        with patch("make_agent.main.default_agents_dir", return_value=str(agents)):
-            result = main_module._find_makefile()
-        assert result == "Makefile"
-
-    def test_custom_name_found_in_agents_dir(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        agents = tmp_path / "agents"
-        agents.mkdir()
-        (agents / "myfile.mk").write_text("all:\n\t@echo ok\n")
-        with patch("make_agent.main.default_agents_dir", return_value=str(agents)):
-            result = main_module._find_makefile("myfile.mk")
-        assert result == str(agents / "myfile.mk")
-
-    def test_custom_name_found_in_cwd(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "myfile.mk").write_text("all:\n\t@echo ok\n")
-        with patch("make_agent.main.default_agents_dir", return_value=str(tmp_path / "agents")):
-            result = main_module._find_makefile("myfile.mk")
-        assert result == "myfile.mk"
+    def test_system_string_overrides_file(self, tmp_path):
+        f = tmp_path / "prompt.md"
+        f.write_text("From file.")
+        args = _make_args(system="Inline prompt.", system_file=str(f))
+        # Note: argparse enforces mutual exclusivity at parse time; here we just
+        # verify priority in the function itself.
+        result = main_module._resolve_system_prompt(args)
+        assert result == "Inline prompt."

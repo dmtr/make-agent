@@ -1,7 +1,6 @@
 import asyncio
 import readline
 import signal
-from pathlib import Path
 from typing import Any, Optional
 
 from make_agent.agent import (
@@ -157,41 +156,42 @@ class MakeAgentShell:
 
 
 async def run(
-    makefile_path: Path,
+    system_prompt: str,
     model: str,
-    agent_model: Optional[str] = None,
     prompt: Optional[str] = None,
     max_retries: int = _DEFAULT_MAX_RETRIES,
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
-    agents_dir: str | None = None,
+    skills_dir: str | None = None,
     with_memory: bool = False,
     disabled_builtin_tools: frozenset[str] = frozenset(),
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
 ) -> None:
     """Start the interactive shell (or send a single prompt and return).
 
-    Reads the system prompt and tool definitions from *makefile_path*, then
-    enters a :class:`MakeAgentShell` loop.  Press Ctrl-D or type ``/exit``
-    to leave.  When *prompt* is given the shell is bypassed: the prompt is
-    sent to the agent and the reply is printed.
+    Uses *system_prompt* as the agent's system instruction.  Enters a
+    :class:`MakeAgentShell` loop.  Press Ctrl-D or type ``/exit`` to leave.
+    When *prompt* is given the shell is bypassed: the prompt is sent to the
+    agent and the reply is printed.
     """
     agent_config = AgentConfig(
-        makefile_path=makefile_path,
+        system_prompt=system_prompt,
         model=model,
-        agent_model=agent_model,
         max_retries=max_retries,
         tool_timeout=tool_timeout,
         max_tool_output=max_tool_output,
         max_tokens=max_tokens,
-        agents_dir=agents_dir,
+        skills_dir=skills_dir,
         disabled_builtin_tools=disabled_builtin_tools,
         reasoning_effort=reasoning_effort,
     )
     agent_manager = AgentManager()
     session_id = agent_manager.create_session(agent_config, with_memory=with_memory)
-    print(f"Loaded {makefile_path}")
+    if system_prompt:
+        print("System prompt loaded.")
+    else:
+        print("No system prompt — using built-in defaults.")
 
     if prompt:
         print("Sending initial prompt...\n")

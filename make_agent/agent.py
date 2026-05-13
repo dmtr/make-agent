@@ -16,12 +16,11 @@ from any_llm.types.completion import (
     Function,
 )
 
-from make_agent.app_dirs import default_agents_dir, project_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, BUILTIN_TOOL_NAMES, _RunAgent, get_builtin_tools, get_memory_schemas
+from make_agent.app_dirs import default_skills_dir, project_dir
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, _ExecuteSkill, get_builtin_tools, get_memory_schemas
 from make_agent.commands import export_conversation
 from make_agent.memory import Memory
-from make_agent.parser import parse_file, validate_or_raise
-from make_agent.tools import build_tools, get_tool_result, run_tool
+from make_agent.tools import get_tool_result, run_tool
 
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
@@ -71,14 +70,13 @@ AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent
 
 
 class AgentConfig(NamedTuple):
-    makefile_path: Path
+    system_prompt: str
     model: str
     max_retries: int = _DEFAULT_MAX_RETRIES
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT
     max_tokens: int = _DEFAULT_MAX_TOKENS
-    agents_dir: str | None = None
-    agent_model: str | None = None
+    skills_dir: str | None = None
     disabled_builtin_tools: frozenset[str] = frozenset()
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT
     session_id: str | None = None
@@ -186,42 +184,19 @@ def _parse_content_tool_calls(content: str) -> list[ChatCompletionMessageToolCal
     return None
 
 
-def _parse_disabled_builtins(value: str | None) -> frozenset[str]:
-    """Parse a DISABLED_BUILTINS Makefile variable value into a frozenset of tool names.
-
-    Accepts ``"all"`` or a comma-separated list of known built-in tool names.
-    Raises ``ValueError`` on unknown names.
-    """
-    if not value or not value.strip():
-        return frozenset()
-    if value.strip().lower() == "all":
-        return BUILTIN_TOOL_NAMES
-    names = frozenset(n.strip() for n in value.split(",") if n.strip())
-    unknown = names - BUILTIN_TOOL_NAMES
-    if unknown:
-        raise ValueError(f"DISABLED_BUILTINS: unknown built-in tool(s): {', '.join(sorted(unknown))}. " f"Valid names: {', '.join(sorted(BUILTIN_TOOL_NAMES))}")
-    return names
-
-
 class Agent:
     """LLM agent that maintains conversation history and dispatches tool calls.
 
     Await ``arun()`` with a user message to get the assistant's reply, or use
     ``astream()`` to receive events as they are produced::
 
-        config = AgentConfig(makefile_path=Path("Makefile"), model="anthropic/claude-haiku-4-5", session_id="example")
+        config = AgentConfig(system_prompt="You are a helpful assistant.", model="anthropic/claude-haiku-4-5")
         agent = Agent(config, memory=None)
-        reply = await agent.arun("List the files in the current directory.")
+        reply = await agent.arun("List the skills available.")
     """
 
     def __init__(self, config: AgentConfig, memory: Memory | None) -> None:
-        mf = parse_file(config.makefile_path)
-        validate_or_raise(mf)
-        makefile_disabled = _parse_disabled_builtins(mf.variables["DISABLED_BUILTINS"].value if "DISABLED_BUILTINS" in mf.variables else None)
-        disabled_builtin_tools = config.disabled_builtin_tools | makefile_disabled
         self._model = config.model
-        self._agent_model = config.agent_model or config.model
-        self._makefile_path = config.makefile_path
         self._max_retries = config.max_retries
         self._max_tokens = config.max_tokens
         self._tool_timeout = config.tool_timeout
@@ -229,22 +204,21 @@ class Agent:
         self._memory = memory
         self._reasoning_effort = config.reasoning_effort
         self._session_id = config.session_id
-        agents_dir = config.agents_dir if config.agents_dir is not None else default_agents_dir()
-        self._agents_dir = agents_dir
-        self._disabled_builtin_tools = disabled_builtin_tools
-        self._builtins = get_builtin_tools(agents_dir, memory, disabled_builtin_tools, config.tool_timeout, config.makefile_path.stem)
-        makefile_tools = build_tools(mf)
+        skills_dir = config.skills_dir if config.skills_dir is not None else default_skills_dir()
+        self._skills_dir = skills_dir
+        self._disabled_builtin_tools = config.disabled_builtin_tools
+        self._builtins = get_builtin_tools(skills_dir, memory, config.disabled_builtin_tools, config.tool_timeout)
         memory_schemas = get_memory_schemas() if memory is not None else []
-        active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in disabled_builtin_tools]
-        active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in disabled_builtin_tools]
-        self._static_schemas = active_builtin_schemas + active_memory_schemas
-        self._tools = self._static_schemas + makefile_tools
-        self._tool_name_set = frozenset(t["function"]["name"] for t in self._tools)
+        active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
+        active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in config.disabled_builtin_tools]
+        self._tools: list[dict] = active_builtin_schemas + active_memory_schemas
+        self._tool_name_set: set[str] = {t["function"]["name"] for t in self._tools}
+        self._tool_mk_paths: dict[str, Path] = {}
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
-        if mf.system_prompt:
-            self._messages.append({"role": "system", "content": mf.system_prompt})
-            logger.debug("[system]\n%s", mf.system_prompt)
+        if config.system_prompt:
+            self._messages.append({"role": "system", "content": config.system_prompt})
+            logger.debug("[system]\n%s", config.system_prompt)
 
     @property
     def tool_names(self) -> list[str]:
@@ -258,24 +232,6 @@ class Agent:
     @property
     def model(self) -> str:
         return self._model
-
-    async def _arun_agent(self, mk_path: Path, prompt: str) -> str:
-        """Instantiate a specialist agent in-process and return its response."""
-        sub_disabled = self._disabled_builtin_tools | frozenset({"run_agent"})
-        logger.info("Instantiating sub-agent with model %s to run %s", self._agent_model, mk_path)
-        sub_config = AgentConfig(
-            makefile_path=mk_path,
-            model=self._agent_model,
-            max_retries=self._max_retries,
-            tool_timeout=self._tool_timeout,
-            max_tool_output=self._max_tool_output,
-            max_tokens=self._max_tokens,
-            agents_dir=self._agents_dir,
-            disabled_builtin_tools=sub_disabled,
-            reasoning_effort=self._reasoning_effort,
-            session_id=self._session_id,
-        )
-        return await Agent(sub_config, self._memory).arun(prompt)
 
     def __repr__(self) -> str:
         return f"Agent(model={self._model!r}, tools={self.tool_names!r})"
@@ -345,7 +301,7 @@ class Agent:
             if self._memory is not None and usage is not None:
                 self._memory.record_token_usage(
                     self._session_id or "",
-                    self._makefile_path.name,
+                    "main",
                     self._model,
                     usage.prompt_tokens,
                     usage.completion_tokens,
@@ -407,19 +363,29 @@ class Agent:
                         try:
                             if target in self._builtins:
                                 raw = self._builtins[target](**arguments)
-                                if isinstance(raw, _RunAgent):
-                                    agent_result = await self._arun_agent(raw.mk_path, raw.prompt)
-                                    result = get_tool_result(agent_result, "", 0, self._max_tool_output)
+                                if isinstance(raw, _ExecuteSkill):
+                                    for schema in raw.tool_schemas:
+                                        tool_name = schema["function"]["name"]
+                                        if tool_name not in self._tool_name_set:
+                                            self._tools.append(schema)
+                                            self._tool_name_set.add(tool_name)
+                                            if raw.mk_path is not None:
+                                                self._tool_mk_paths[tool_name] = raw.mk_path
+                                    self._tool_kwargs = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
+                                    output = raw.skill_md + "\n\n" + raw.tool_summary
+                                    result = get_tool_result(output, "", 0, self._max_tool_output)
                                 else:
                                     result = get_tool_result(str(raw), "", 0, self._max_tool_output)
-                            else:
+                            elif target in self._tool_mk_paths:
                                 result = await run_tool(
                                     target,
                                     arguments,
-                                    self._makefile_path,
+                                    self._tool_mk_paths[target],
                                     self._tool_timeout,
                                     self._max_tool_output,
                                 )
+                            else:
+                                result = get_tool_result("", f"tool {target!r} has no executor", None)
                         except TypeError as e:
                             logger.error("argument type error when running tool %s: %s", target, e)
                             result = get_tool_result("", f"argument type error: {e}", None)

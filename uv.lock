@@ -250,7 +250,7 @@ wheels = [
 
 [[package]]
 name = "makefile-agent"
-version = "0.3.3"
+version = "0.3.6"
 source = { editable = "." }
 dependencies = [
     { name = "any-llm-sdk", extra = ["ollama"] },

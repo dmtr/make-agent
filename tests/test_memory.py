@@ -444,9 +444,7 @@ class TestAgentAutoStorage:
     def _make_agent(self, tmp_path, mem):
         from make_agent.agent import Agent, AgentConfig
 
-        mf_path = tmp_path / "Makefile"
-        mf_path.write_text("noop:\n\t@echo ok\n")
-        config = AgentConfig(makefile_path=mf_path, model="openai/gpt-4o-mini")
+        config = AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
         return Agent(config, mem)
 
     async def test_user_message_stored(self, tmp_path, mem):
@@ -496,9 +494,7 @@ class TestAgentAutoStorage:
     async def test_no_storage_without_memory(self, tmp_path):
         from make_agent.agent import Agent, AgentConfig
 
-        mf_path = tmp_path / "Makefile"
-        mf_path.write_text("noop:\n\t@echo ok\n")
-        config = AgentConfig(makefile_path=mf_path, model="openai/gpt-4o-mini")
+        config = AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
         agent = Agent(config, None)
 
         async def _fake_acompletion(*args, **kwargs):
@@ -524,24 +520,20 @@ class TestWithMemoryFlag:
     def test_with_memory_flag_creates_memory_instance(self, tmp_path):
         import make_agent.main as main_module
 
-        mf = tmp_path / "Makefile"
-        mf.write_text("noop:\n\t@echo ok\n")
-
         args = argparse.Namespace(
-            file=str(mf),
+            system=None,
+            system_file=None,
             model="model-x",
             prompt="hello",
             prompt_file=None,
-            debug=False,
             max_retries=5,
             tool_timeout=600,
             max_tool_output=20000,
             max_tokens=4096,
-            agents_dir=None,
+            skills_dir=None,
             with_memory=True,
             disable_builtin_tools=None,
             reasoning_effort=None,
-            agent_model=None,
         )
 
         captured: dict = {}
@@ -562,24 +554,20 @@ class TestWithMemoryFlag:
     def test_without_memory_flag_passes_none(self, tmp_path):
         import make_agent.main as main_module
 
-        mf = tmp_path / "Makefile"
-        mf.write_text("noop:\n\t@echo ok\n")
-
         args = argparse.Namespace(
-            file=str(mf),
+            system=None,
+            system_file=None,
             model="model-x",
             prompt="hello",
             prompt_file=None,
-            debug=False,
             max_retries=5,
             tool_timeout=600,
             max_tool_output=20000,
             max_tokens=4096,
-            agents_dir=None,
+            skills_dir=None,
             with_memory=False,
             disable_builtin_tools=None,
             reasoning_effort=None,
-            agent_model=None,
         )
 
         captured: dict = {}
@@ -599,24 +587,20 @@ class TestWithMemoryFlag:
     def test_settings_memory_true_enables_memory(self, tmp_path):
         import make_agent.main as main_module
 
-        mf = tmp_path / "Makefile"
-        mf.write_text("noop:\n\t@echo ok\n")
-
         args = argparse.Namespace(
-            file=str(mf),
+            system=None,
+            system_file=None,
             model="model-x",
             prompt="hello",
             prompt_file=None,
-            debug=False,
             max_retries=5,
             tool_timeout=600,
             max_tool_output=20000,
             max_tokens=4096,
-            agents_dir=None,
+            skills_dir=None,
             with_memory=False,  # not set via CLI
             disable_builtin_tools=None,
             reasoning_effort=None,
-            agent_model=None,
         )
 
         captured: dict = {}

@@ -39,6 +39,13 @@ def default_agents_dir(cwd: str | None = None) -> str:
     return str(directory)
 
 
+def default_skills_dir(cwd: str | None = None) -> str:
+    """Return ``~/.make-agent/<slug>/skills/`` as a string, creating it if necessary."""
+    directory = project_dir(cwd) / "skills"
+    directory.mkdir(parents=True, exist_ok=True)
+    return str(directory)
+
+
 def log_file(cwd: str | None = None) -> str:
     """Return ``~/.make-agent/<slug>/logs/make-agent.log`` as a string, creating the logs dir if necessary."""
     logs_dir = project_dir(cwd) / "logs"
