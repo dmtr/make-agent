@@ -17,10 +17,10 @@ from any_llm.types.completion import (
 )
 
 from make_agent.app_dirs import default_skills_dir, project_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, _ExecuteSkill, get_builtin_tools, get_memory_schemas
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools, get_memory_schemas
 from make_agent.commands import export_conversation
 from make_agent.memory import Memory
-from make_agent.tools import get_tool_result, run_tool
+from make_agent.tools import get_tool_result
 
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
@@ -213,7 +213,6 @@ class Agent:
         active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in config.disabled_builtin_tools]
         self._tools: list[dict] = active_builtin_schemas + active_memory_schemas
         self._tool_name_set: set[str] = {t["function"]["name"] for t in self._tools}
-        self._tool_mk_paths: dict[str, Path] = {}
         self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
         self._messages: list[dict] = []
         if config.system_prompt:
@@ -363,27 +362,7 @@ class Agent:
                         try:
                             if target in self._builtins:
                                 raw = self._builtins[target](**arguments)
-                                if isinstance(raw, _ExecuteSkill):
-                                    for schema in raw.tool_schemas:
-                                        tool_name = schema["function"]["name"]
-                                        if tool_name not in self._tool_name_set:
-                                            self._tools.append(schema)
-                                            self._tool_name_set.add(tool_name)
-                                            if raw.mk_path is not None:
-                                                self._tool_mk_paths[tool_name] = raw.mk_path
-                                    self._tool_kwargs = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
-                                    output = raw.skill_md + "\n\n" + raw.tool_summary
-                                    result = get_tool_result(output, "", 0, self._max_tool_output)
-                                else:
-                                    result = get_tool_result(str(raw), "", 0, self._max_tool_output)
-                            elif target in self._tool_mk_paths:
-                                result = await run_tool(
-                                    target,
-                                    arguments,
-                                    self._tool_mk_paths[target],
-                                    self._tool_timeout,
-                                    self._max_tool_output,
-                                )
+                                result = get_tool_result(str(raw), "", 0, self._max_tool_output)
                             else:
                                 result = get_tool_result("", f"tool {target!r} has no executor", None)
                         except TypeError as e:

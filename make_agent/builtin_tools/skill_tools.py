@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
+import subprocess
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 import yaml
 
 from make_agent.parser import parse, parse_file, validate
-from make_agent.tools import build_tools
+from make_agent.tools import _is_valid_make_var_name, get_tool_result
 
 _VALID_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -36,15 +39,6 @@ def _skill_description(md_path: Path) -> str:
     return "  (no description)"
 
 
-class _ExecuteSkill(NamedTuple):
-    """Sentinel returned by execute_skill to trigger dynamic tool injection."""
-
-    skill_md: str
-    tool_schemas: list[dict]
-    mk_path: Path | None
-    tool_summary: str
-
-
 def list_skills(skills_dir: str) -> str:
     """List all available skills with their names and descriptions."""
     path = Path(skills_dir)
@@ -65,7 +59,7 @@ def list_skills(skills_dir: str) -> str:
 
 
 def read_skill(name: str, skills_dir: str) -> str:
-    """Read a skill's full definition (skill.md and skill.mk if present)."""
+    """Read a skill's instructions (skill.md only)."""
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
     skill_dir = Path(skills_dir) / name
@@ -75,55 +69,59 @@ def read_skill(name: str, skills_dir: str) -> str:
     if not md_path.exists():
         return f"Skill '{name}' is missing skill.md"
     try:
-        md_content = md_path.read_text(encoding="utf-8")
+        return md_path.read_text(encoding="utf-8")
     except OSError as e:
         return f"Error: could not read skill.md: {e}"
-    mk_path = skill_dir / "skill.mk"
-    if not mk_path.exists():
-        return f"skill.md:\n{md_content}\n\n(no skill.mk)"
-    try:
-        mk_content = mk_path.read_text(encoding="utf-8")
-    except OSError as e:
-        return f"skill.md:\n{md_content}\n\nError reading skill.mk: {e}"
-    return f"skill.md:\n{md_content}\n\nskill.mk:\n{mk_content}"
 
 
-def execute_skill(name: str, skills_dir: str) -> _ExecuteSkill | str:
-    """Load a skill and return its instructions; injects skill.mk tools into the active tool set."""
+def execute_skill(
+    name: str,
+    target: str,
+    skills_dir: str,
+    params: str | None = None,
+    timeout: int = 600,
+) -> str:
+    """Run a target in a skill's skill.mk with optional key=value parameters."""
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
     skill_dir = Path(skills_dir) / name
-    md_path = skill_dir / "skill.md"
-    if not skill_dir.exists() or not md_path.exists():
+    if not skill_dir.exists() or not (skill_dir / "skill.md").exists():
         return f"Skill '{name}' not found in {skills_dir}"
-    try:
-        skill_md = md_path.read_text(encoding="utf-8")
-    except OSError as e:
-        return f"Error: could not read skill.md: {e}"
     mk_path = skill_dir / "skill.mk"
     if not mk_path.exists():
-        return _ExecuteSkill(
-            skill_md=skill_md,
-            tool_schemas=[],
-            mk_path=None,
-            tool_summary="No additional tools available for this skill.",
-        )
+        return f"Skill '{name}' has no skill.mk"
+    parsed: dict[str, str] = {}
+    if params:
+        try:
+            tokens = shlex.split(params)
+        except ValueError as e:
+            return f"Error: could not parse params {params!r}: {e}"
+        for token in tokens:
+            k, sep, v = token.partition("=")
+            if not sep:
+                return f"Error: invalid parameter {token!r}, expected KEY=value format"
+            if not _is_valid_make_var_name(k):
+                return f"Error: {k!r} is not a valid make variable name"
+            if k in os.environ:
+                return f"Error: parameter {k!r} shadows the system environment variable {k!r}"
+            parsed[k] = v
+    env = {**os.environ, **parsed}
+    cmd = ["make", "--no-print-directory", "-f", str(mk_path), target]
     try:
-        mf = parse_file(mk_path)
-    except Exception as e:
-        return f"Error: could not parse skill.mk for '{name}': {e}"
-    tool_schemas = build_tools(mf)
-    if tool_schemas:
-        tool_names = [s["function"]["name"] for s in tool_schemas]
-        tool_summary = f"Newly available tools: {', '.join(tool_names)}"
-    else:
-        tool_summary = "skill.mk has no annotated tools."
-    return _ExecuteSkill(
-        skill_md=skill_md,
-        tool_schemas=tool_schemas,
-        mk_path=mk_path,
-        tool_summary=tool_summary,
-    )
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return f"Error: execute_skill '{name}/{target}' exceeded {timeout}s timeout"
+    except OSError as e:
+        return f"Error: failed to run make: {e}"
+    stdout = proc.stdout.decode(errors="replace")
+    stderr = proc.stderr.decode(errors="replace")
+    return get_tool_result(stdout, stderr, proc.returncode).output
 
 
 def _write_no_symlink(path: Path, content: str) -> None:
@@ -240,16 +238,24 @@ SKILL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "execute_skill",
             "description": (
-                "Execute a skill: returns skill.md instructions and injects skill.mk tools "
-                "into the active tool set for the rest of the conversation. "
-                "Read the returned instructions carefully and follow them."
+                "Run a target in a skill's skill.mk. "
+                "Only usable when the skill has a skill.mk file. "
+                "Call read_skill first to learn what targets and parameters are available."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "The skill name (directory name)."},
+                    "target": {"type": "string", "description": "The make target to run."},
+                    "params": {
+                        "type": "string",
+                        "description": (
+                            "Optional space-separated KEY=value pairs passed to make. "
+                            "Quote values that contain spaces, e.g. 'KEY1=val1 KEY2=val2'."
+                        ),
+                    },
                 },
-                "required": ["name"],
+                "required": ["name", "target"],
             },
         },
     },

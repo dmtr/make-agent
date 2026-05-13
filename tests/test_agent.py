@@ -190,27 +190,23 @@ class TestAgentSafetyGuards:
             }
         )
         agent._tool_name_set.add("safe")  # noqa: SLF001
-        agent._tool_mk_paths["safe"] = tmp_path / "skill.mk"  # noqa: SLF001
+        agent._builtins["safe"] = lambda **_: "ok"  # noqa: SLF001
         agent._tool_kwargs = {"tools": agent._tools, "tool_choice": "auto"}  # noqa: SLF001
         return agent
 
     async def test_unknown_tool_is_rejected_without_running_make(self, tmp_path):
         agent = self._make_agent(tmp_path)
 
-        with (
-            patch(
-                "make_agent.agent._acompletion_with_retry",
-                _mock_acompletion_with_retry(
-                    _make_tool_call_stream("tc1", "hidden", "{}"),
-                    _make_text_stream("done"),
-                ),
+        with patch(
+            "make_agent.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(
+                _make_tool_call_stream("tc1", "hidden", "{}"),
+                _make_text_stream("done"),
             ),
-            patch("make_agent.agent.run_tool", new_callable=AsyncMock) as mock_run_tool,
         ):
             result = await agent.arun("use hidden target")
 
         assert result == "done"
-        mock_run_tool.assert_not_called()
         tool_outputs = [m["content"] for m in agent.messages if m.get("role") == "tool"]
         assert any("unknown tool: hidden" in output for output in tool_outputs)
 
@@ -236,7 +232,7 @@ class TestAssistantMessageContent:
         from make_agent.agent import Agent, AgentConfig
 
         agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), None)
-        # Inject say_hi as a known skill tool
+        # Inject say_hi as a known builtin tool
         agent._tools.append(  # noqa: SLF001
             {
                 "type": "function",
@@ -244,18 +240,15 @@ class TestAssistantMessageContent:
             }
         )
         agent._tool_name_set.add("say_hi")  # noqa: SLF001
-        agent._tool_mk_paths["say_hi"] = tmp_path / "skill.mk"  # noqa: SLF001
+        agent._builtins["say_hi"] = lambda **_: "hi"  # noqa: SLF001
         agent._tool_kwargs = {"tools": agent._tools, "tool_choice": "auto"}  # noqa: SLF001
 
-        with (
-            patch(
-                "make_agent.agent._acompletion_with_retry",
-                _mock_acompletion_with_retry(
-                    _make_tool_call_stream("tc1", "say_hi", "{}"),
-                    _make_text_stream("all done"),
-                ),
+        with patch(
+            "make_agent.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(
+                _make_tool_call_stream("tc1", "say_hi", "{}"),
+                _make_text_stream("all done"),
             ),
-            patch("make_agent.agent.run_tool", new_callable=AsyncMock, return_value=MagicMock(output="hi", is_error=False)),
         ):
             result = await agent.arun("call say_hi")
 

@@ -15,7 +15,6 @@ from typing import Any
 from make_agent.builtin_tools.memory_tools import MEMORY_SCHEMAS, get_memory_schemas
 from make_agent.builtin_tools.skill_tools import (
     SKILL_SCHEMAS,
-    _ExecuteSkill,
     _valid_skill_name,
     create_skill,
     execute_skill,
@@ -55,7 +54,7 @@ def get_builtin_tools(
     tools: dict[str, Any] = {
         "list_skills": lambda **_kw: list_skills(skills_dir),
         "read_skill": lambda name, **_kw: read_skill(name, skills_dir),
-        "execute_skill": lambda name, **_kw: execute_skill(name, skills_dir),
+        "execute_skill": lambda name, target, params=None, **_kw: execute_skill(name, target, skills_dir, params, tool_timeout),
         "create_skill": lambda name, description, md_content, mk_content=None, **_kw: create_skill(
             name, description, md_content, skills_dir, mk_content
         ),
@@ -74,7 +73,6 @@ __all__ = [
     "BUILTIN_TOOL_NAMES",
     "MEMORY_SCHEMAS",
     "SKILL_SCHEMAS",
-    "_ExecuteSkill",
     "_valid_skill_name",
     "create_skill",
     "execute_skill",
