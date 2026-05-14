@@ -1,20 +1,3 @@
-define DESCRIPTION
-A file editing agent with tools to list, read, write, and modify files.
-endef
-
-define SYSTEM_PROMPT
-You are a file editing agent. Use the provided tools to read, create, and
-modify files. When editing an existing file, first read it with read-file or
-read-lines to understand its content, then apply changes with write-file (full
-rewrite) or replace-in-file (targeted replacement). Always verify the result
-by reading the file again after making changes. Report all errors clearly.
-endef
-
-define  DISABLED_BUILTINS
-all
-endef
-
-
 .PHONY: list-files count-lines read-file read-lines write-file append-to-file replace-in-file
 
 # <tool>
