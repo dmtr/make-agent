@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import textwrap
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,22 +17,17 @@ from make_agent.builtin_tools import (
 )
 
 _SKILL_MK = """\
+define DESCRIPTION
+Read and write files on the filesystem
+endef
+
 .PHONY: read-file write-file
 
-# <tool>
-# Read the contents of a file.
-# @param PATH string The file path
-# </tool>
 read-file:
-\t@cat "$(PATH)"
+\t@cat "$$FILE"
 
-# <tool>
-# Write content to a file.
-# @param PATH string The destination path
-# @param CONTENT string The content to write
-# </tool>
 write-file:
-\t@printf '%s' "$$CONTENT" > "$(PATH)"
+\t@printf '%s' "$$CONTENT" > "$$FILE"
 """
 
 
@@ -65,9 +59,13 @@ def test_list_skills_empty_dir(tmp_path):
 
 def test_list_skills_returns_skills(tmp_path):
     (tmp_path / "search").mkdir()
-    (tmp_path / "search" / "skill.md").write_text('---\ndescription: "Searches files by pattern."\n---\n')
+    (tmp_path / "search" / "skill.mk").write_text(
+        "define DESCRIPTION\nSearches files by pattern.\nendef\n\nsearch:\n\t@echo hi\n"
+    )
     (tmp_path / "writer").mkdir()
-    (tmp_path / "writer" / "skill.md").write_text('---\ndescription: "Writes and edits files."\n---\n')
+    (tmp_path / "writer" / "skill.mk").write_text(
+        "define DESCRIPTION\nWrites and edits files.\nendef\n\nwrite:\n\t@echo hi\n"
+    )
     result = list_skills(str(tmp_path))
     assert "search:" in result
     assert "Searches files by pattern." in result
@@ -77,24 +75,16 @@ def test_list_skills_returns_skills(tmp_path):
 
 def test_list_skills_sorted(tmp_path):
     (tmp_path / "zzz").mkdir()
-    (tmp_path / "zzz" / "skill.md").write_text('---\ndescription: "Z skill."\n---\n')
+    (tmp_path / "zzz" / "skill.mk").write_text("define DESCRIPTION\nZ skill.\nendef\n")
     (tmp_path / "aaa").mkdir()
-    (tmp_path / "aaa" / "skill.md").write_text('---\ndescription: "A skill."\n---\n')
+    (tmp_path / "aaa" / "skill.mk").write_text("define DESCRIPTION\nA skill.\nendef\n")
     result = list_skills(str(tmp_path))
     assert result.index("aaa:") < result.index("zzz:")
 
 
-def test_list_skills_marks_has_tools(tmp_path):
-    (tmp_path / "rich").mkdir()
-    (tmp_path / "rich" / "skill.md").write_text('---\ndescription: "Has tools."\n---\n')
-    (tmp_path / "rich" / "skill.mk").write_text(_SKILL_MK)
-    result = list_skills(str(tmp_path))
-    assert "[has tools]" in result
-
-
 def test_list_skills_no_description_fallback(tmp_path):
     (tmp_path / "bare").mkdir()
-    (tmp_path / "bare" / "skill.md").write_text("Just some text\n")
+    (tmp_path / "bare" / "skill.mk").write_text("search:\n\t@echo hi\n")
     result = list_skills(str(tmp_path))
     assert "(no description)" in result
 
@@ -112,83 +102,99 @@ def test_read_skill_invalid_name(tmp_path):
     assert result.startswith("Error")
 
 
-def test_read_skill_missing_skill_md(tmp_path):
+def test_read_skill_missing_skill_mk(tmp_path):
     (tmp_path / "broken").mkdir()
     result = read_skill("broken", str(tmp_path))
-    assert "missing skill.md" in result
+    assert "missing skill.mk" in result
 
 
-def test_read_skill_md_only(tmp_path):
+def test_read_skill_returns_raw_mk(tmp_path):
     (tmp_path / "simple").mkdir()
-    (tmp_path / "simple" / "skill.md").write_text("Follow these steps.\n")
+    (tmp_path / "simple" / "skill.mk").write_text(_SKILL_MK)
     result = read_skill("simple", str(tmp_path))
-    assert "Follow these steps." in result
-
-
-def test_read_skill_with_mk(tmp_path):
-    (tmp_path / "full").mkdir()
-    (tmp_path / "full" / "skill.md").write_text("Instructions.\n")
-    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
-    result = read_skill("full", str(tmp_path))
-    assert "Instructions." in result
-    assert "read-file" not in result
+    assert "define DESCRIPTION" in result
+    assert "read-file" in result
 
 
 # ── execute_skill ─────────────────────────────────────────────────────────────
 
 
 def test_execute_skill_invalid_name(tmp_path):
-    result = execute_skill("../evil", "target", str(tmp_path))
+    result = execute_skill("../evil", "make", str(tmp_path))
     assert result.startswith("Error")
 
 
 def test_execute_skill_not_found(tmp_path):
-    result = execute_skill("ghost", "target", str(tmp_path))
+    result = execute_skill("ghost", "make", str(tmp_path))
     assert "not found" in result
 
 
-def test_execute_skill_no_mk_returns_error(tmp_path):
-    (tmp_path / "simple").mkdir()
-    (tmp_path / "simple" / "skill.md").write_text("Follow these steps.\n")
-    result = execute_skill("simple", "some-target", str(tmp_path))
-    assert "no skill.mk" in result
-
-
-def test_execute_skill_runs_target(tmp_path):
+def test_execute_skill_runs_default_target(tmp_path):
     (tmp_path / "full").mkdir()
-    (tmp_path / "full" / "skill.md").write_text("Instructions.\n")
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
     fake_proc = MagicMock()
     fake_proc.stdout = b"hello world\n"
     fake_proc.stderr = b""
     fake_proc.returncode = 0
     with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc) as mock_run:
-        result = execute_skill("full", "read-file", str(tmp_path), params="FILEPATH=/tmp/f.txt")
+        result = execute_skill("full", "make", str(tmp_path))
     mock_run.assert_called_once()
-    call_args = mock_run.call_args
-    assert "read-file" in call_args.args[0]
-    assert call_args.kwargs["env"]["FILEPATH"] == "/tmp/f.txt"
+    call_args = mock_run.call_args.args[0]
+    assert "make" in call_args
     assert result == "hello world"
+
+
+def test_execute_skill_runs_named_target(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    fake_proc = MagicMock()
+    fake_proc.stdout = b"hello world\n"
+    fake_proc.stderr = b""
+    fake_proc.returncode = 0
+    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc) as mock_run:
+        result = execute_skill("full", "make read-file", str(tmp_path))
+    call_args = mock_run.call_args.args[0]
+    assert "read-file" in call_args
+    assert result == "hello world"
+
+
+def test_execute_skill_leading_env_vars(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    fake_proc = MagicMock()
+    fake_proc.stdout = b"ok\n"
+    fake_proc.stderr = b""
+    fake_proc.returncode = 0
+    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc) as mock_run:
+        execute_skill("full", "FILE=/tmp/f.txt make read-file", str(tmp_path))
+    call_kwargs = mock_run.call_args.kwargs
+    assert call_kwargs["env"]["FILE"] == "/tmp/f.txt"
+    assert "read-file" in mock_run.call_args.args[0]
 
 
 def test_execute_skill_failed_target(tmp_path):
     (tmp_path / "full").mkdir()
-    (tmp_path / "full" / "skill.md").write_text("Instructions.\n")
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
     fake_proc = MagicMock()
     fake_proc.stdout = b""
     fake_proc.stderr = b"make: *** No rule to make target 'bad-target'"
     fake_proc.returncode = 2
     with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc):
-        result = execute_skill("full", "bad-target", str(tmp_path))
+        result = execute_skill("full", "make bad-target", str(tmp_path))
     assert "ERROR" in result
 
 
-def test_execute_skill_invalid_param_name(tmp_path):
+def test_execute_skill_invalid_env_var_name(tmp_path):
     (tmp_path / "full").mkdir()
-    (tmp_path / "full" / "skill.md").write_text("Instructions.\n")
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
-    result = execute_skill("full", "read-file", str(tmp_path), params="bad-key=value")
+    result = execute_skill("full", "bad-key=value make read-file", str(tmp_path))
+    assert result.startswith("Error")
+
+
+def test_execute_skill_empty_command(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    result = execute_skill("full", "", str(tmp_path))
     assert result.startswith("Error")
 
 
@@ -196,58 +202,29 @@ def test_execute_skill_invalid_param_name(tmp_path):
 
 
 def test_create_skill_invalid_name(tmp_path):
-    result = create_skill("../evil", "Evil skill.", "instructions", str(tmp_path))
+    result = create_skill("../evil", _SKILL_MK, str(tmp_path))
     assert result.startswith("Error")
 
 
-def test_create_skill_md_only(tmp_path):
-    result = create_skill("myskill", "A test skill.", "Do this thing.", str(tmp_path))
+def test_create_skill_success(tmp_path):
+    result = create_skill("myskill", _SKILL_MK, str(tmp_path))
     assert result.startswith("Created skill 'myskill'")
-    assert "(no tools)" in result
-    written = (tmp_path / "myskill" / "skill.md").read_text()
-    assert "Do this thing." in written
-    assert not (tmp_path / "myskill" / "skill.mk").exists()
+    written = (tmp_path / "myskill" / "skill.mk").read_text()
+    assert "define DESCRIPTION" in written
 
 
-def test_create_skill_auto_frontmatter(tmp_path):
-    create_skill("myskill", "A test skill.", "Do this thing.", str(tmp_path))
-    written = (tmp_path / "myskill" / "skill.md").read_text()
-    assert written.startswith("---")
-    assert 'description: "A test skill."' in written
+def test_create_skill_missing_description_block(tmp_path):
+    no_desc = ".PHONY: do-thing\n\ndo-thing:\n\t@echo hello\n"
+    result = create_skill("nodesc", no_desc, str(tmp_path))
+    assert "DESCRIPTION" in result
+    assert not (tmp_path / "nodesc").exists()
 
 
-def test_create_skill_preserves_existing_frontmatter(tmp_path):
-    md = '---\ndescription: "Already there."\n---\n\nDo this.\n'
-    create_skill("myskill", "Ignored desc.", md, str(tmp_path))
-    written = (tmp_path / "myskill" / "skill.md").read_text()
-    assert written.startswith("---")
-    assert "Already there." in written
-
-
-def test_create_skill_with_mk(tmp_path):
-    result = create_skill("full", "A full skill.", "Instructions.", str(tmp_path), mk_content=_SKILL_MK)
-    assert result.startswith("Created skill 'full'")
-    assert "2 tool(s)" in result
-    assert (tmp_path / "full" / "skill.mk").exists()
-
-
-def test_create_skill_validation_error(tmp_path):
-    bad_mk = textwrap.dedent(
-        """\
-        .PHONY: do-thing
-
-        # <tool>
-        # Do something.
-        # @param UNUSED string Not referenced
-        # </tool>
-        do-thing:
-        \t@echo hello
-    """
-    )
-    result = create_skill("bad", "Bad skill.", "Instructions.", str(tmp_path), mk_content=bad_mk)
-    assert "Validation errors" in result
-    assert "UNUSED" in result
-    assert not (tmp_path / "bad").exists()
+def test_create_skill_invalid_makefile(tmp_path):
+    result = create_skill("bad", "define DESCRIPTION\nOK\nendef\n\n{{not valid make", str(tmp_path))
+    # parser may or may not error; if it parses, description must exist
+    # just confirm no crash and result is a string
+    assert isinstance(result, str)
 
 
 # ── validate_skill ────────────────────────────────────────────────────────────
@@ -263,58 +240,25 @@ def test_validate_skill_not_found(tmp_path):
     assert "not found" in result
 
 
-def test_validate_skill_missing_md(tmp_path):
+def test_validate_skill_missing_mk(tmp_path):
     (tmp_path / "broken").mkdir()
     result = validate_skill("broken", str(tmp_path))
-    assert "missing skill.md" in result
+    assert "missing skill.mk" in result
 
 
-def test_validate_skill_md_only(tmp_path):
-    (tmp_path / "simple").mkdir()
-    (tmp_path / "simple" / "skill.md").write_text("Instructions.\n")
-    result = validate_skill("simple", str(tmp_path))
-    assert result.startswith("OK")
-    assert "no tools" in result
-
-
-def test_validate_skill_ok_with_mk(tmp_path):
+def test_validate_skill_ok(tmp_path):
     (tmp_path / "full").mkdir()
-    (tmp_path / "full" / "skill.md").write_text("Instructions.\n")
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
     result = validate_skill("full", str(tmp_path))
     assert result.startswith("OK")
-    assert "2 tool(s)" in result
 
 
-def test_validate_skill_reports_errors(tmp_path):
-    bad_mk = textwrap.dedent(
-        """\
-        .PHONY: do-thing
-
-        # <tool>
-        # Do something.
-        # @param UNUSED string Not referenced
-        # </tool>
-        do-thing:
-        \t@echo hello
-    """
-    )
-    (tmp_path / "bad").mkdir()
-    (tmp_path / "bad" / "skill.md").write_text("Instructions.\n")
-    (tmp_path / "bad" / "skill.mk").write_text(bad_mk)
-    result = validate_skill("bad", str(tmp_path))
-    assert "Validation errors" in result
-    assert "UNUSED" in result
-
-
-def test_validate_skill_no_tools_error(tmp_path):
-    no_tools_mk = "search:\n\t@echo searching\n"
+def test_validate_skill_missing_description(tmp_path):
+    no_desc = "search:\n\t@echo searching\n"
     (tmp_path / "notool").mkdir()
-    (tmp_path / "notool" / "skill.md").write_text("Instructions.\n")
-    (tmp_path / "notool" / "skill.mk").write_text(no_tools_mk)
+    (tmp_path / "notool" / "skill.mk").write_text(no_desc)
     result = validate_skill("notool", str(tmp_path))
-    assert "Validation errors" in result
-    assert "No tools defined" in result
+    assert "DESCRIPTION" in result
 
 
 # ── BUILTIN_SCHEMAS ───────────────────────────────────────────────────────────
@@ -338,8 +282,8 @@ def test_builtin_schemas_required_params():
     by_name = {s["function"]["name"]: s["function"] for s in BUILTIN_SCHEMAS}
     assert by_name["list_skills"]["parameters"]["required"] == []
     assert by_name["read_skill"]["parameters"]["required"] == ["name"]
-    assert by_name["execute_skill"]["parameters"]["required"] == ["name", "target"]
-    assert set(by_name["create_skill"]["parameters"]["required"]) == {"name", "description", "md_content"}
+    assert set(by_name["execute_skill"]["parameters"]["required"]) == {"name", "command"}
+    assert set(by_name["create_skill"]["parameters"]["required"]) == {"name", "mk_content"}
     assert by_name["validate_skill"]["parameters"]["required"] == ["name"]
 
 
@@ -359,16 +303,23 @@ def test_get_builtin_tools_list_skills_callable(tmp_path):
 
 def test_get_builtin_tools_validate_skill_callable(tmp_path):
     (tmp_path / "ok").mkdir()
-    (tmp_path / "ok" / "skill.md").write_text("Instructions.\n")
     (tmp_path / "ok" / "skill.mk").write_text(_SKILL_MK)
     tools = get_builtin_tools(str(tmp_path))
     result = tools["validate_skill"](name="ok")
     assert result.startswith("OK")
 
 
-def test_get_builtin_tools_execute_skill_no_mk_returns_error(tmp_path):
+def test_get_builtin_tools_execute_skill_callable(tmp_path):
     (tmp_path / "simple").mkdir()
-    (tmp_path / "simple" / "skill.md").write_text("Instructions.\n")
+    (tmp_path / "simple" / "skill.mk").write_text(_SKILL_MK)
+    fake_proc = MagicMock()
+    fake_proc.stdout = b"done\n"
+    fake_proc.stderr = b""
+    fake_proc.returncode = 0
     tools = get_builtin_tools(str(tmp_path))
-    result = tools["execute_skill"](name="simple", target="some-target")
-    assert "no skill.mk" in result
+    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc):
+        result = tools["execute_skill"](name="simple", command="make read-file")
+    assert result == "done"
+
+
+

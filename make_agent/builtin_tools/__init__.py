@@ -54,10 +54,8 @@ def get_builtin_tools(
     tools: dict[str, Any] = {
         "list_skills": lambda **_kw: list_skills(skills_dir),
         "read_skill": lambda name, **_kw: read_skill(name, skills_dir),
-        "execute_skill": lambda name, target, params=None, **_kw: execute_skill(name, target, skills_dir, params, tool_timeout),
-        "create_skill": lambda name, description, md_content, mk_content=None, **_kw: create_skill(
-            name, description, md_content, skills_dir, mk_content
-        ),
+        "execute_skill": lambda name, command, **_kw: execute_skill(name, command, skills_dir, tool_timeout),
+        "create_skill": lambda name, mk_content, **_kw: create_skill(name, mk_content, skills_dir),
         "validate_skill": lambda name, **_kw: validate_skill(name, skills_dir),
     }
     if memory is not None:

@@ -9,9 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from make_agent.parser import parse, parse_file, validate
+from make_agent.parser import parse, parse_file
 from make_agent.tools import _is_valid_make_var_name, get_tool_result
 
 _VALID_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -21,21 +19,23 @@ def _valid_skill_name(name: str) -> bool:
     return bool(_VALID_SKILL_NAME_RE.fullmatch(name))
 
 
-def _skill_description(md_path: Path) -> str:
-    """Return the skill's one-line description from skill.md frontmatter, or a fallback."""
+def _skill_dir(skills_dir: str, name: str) -> Path:
+    return Path(skills_dir) / name
+
+
+def _mk_path(skills_dir: str, name: str) -> Path:
+    return _skill_dir(skills_dir, name) / "skill.mk"
+
+
+def _skill_description(mk_path: Path) -> str:
+    """Return the skill's description from the define DESCRIPTION block, or a fallback."""
     try:
-        content = md_path.read_text(encoding="utf-8")
-    except OSError:
+        mf = parse_file(mk_path)
+    except Exception:
         return "  (could not read)"
-    if content.startswith("---"):
-        end = content.find("---", 3)
-        if end != -1:
-            try:
-                fm = yaml.safe_load(content[3:end].strip())
-                if isinstance(fm, dict) and "description" in fm:
-                    return f"  {fm['description']}"
-            except Exception:
-                pass
+    if mf.description:
+        first_line = mf.description.strip().splitlines()[0]
+        return f"  {first_line}"
     return "  (no description)"
 
 
@@ -44,69 +44,78 @@ def list_skills(skills_dir: str) -> str:
     path = Path(skills_dir)
     if not path.exists():
         return "No skills found (directory does not exist)"
-    skill_dirs = sorted(p for p in path.iterdir() if p.is_dir() and (p / "skill.md").exists())
+    skill_dirs = sorted(p for p in path.iterdir() if p.is_dir() and (p / "skill.mk").exists())
     if not skill_dirs:
         return "No skills found"
     entries = []
     for sd in skill_dirs:
-        desc = _skill_description(sd / "skill.md")
-        has_mk = (sd / "skill.mk").exists()
-        entry = f"{sd.name}:{desc}"
-        if has_mk:
-            entry += "  [has tools]"
-        entries.append(entry)
+        desc = _skill_description(sd / "skill.mk")
+        entries.append(f"{sd.name}:{desc}")
     return "\n\n".join(entries)
 
 
 def read_skill(name: str, skills_dir: str) -> str:
-    """Read a skill's instructions (skill.md only)."""
+    """Read a skill's full definition by returning the raw skill.mk content."""
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
-    skill_dir = Path(skills_dir) / name
-    md_path = skill_dir / "skill.md"
+    skill_dir = _skill_dir(skills_dir, name)
+    mk = _mk_path(skills_dir, name)
     if not skill_dir.exists():
         return f"Skill '{name}' not found in {skills_dir}"
-    if not md_path.exists():
-        return f"Skill '{name}' is missing skill.md"
+    if not mk.exists():
+        return f"Skill '{name}' is missing skill.mk"
     try:
-        return md_path.read_text(encoding="utf-8")
+        return mk.read_text(encoding="utf-8")
     except OSError as e:
-        return f"Error: could not read skill.md: {e}"
+        return f"Error: could not read skill.mk: {e}"
 
 
 def execute_skill(
     name: str,
-    target: str,
+    command: str,
     skills_dir: str,
-    params: str | None = None,
     timeout: int = 600,
 ) -> str:
-    """Run a target in a skill's skill.mk with optional key=value parameters."""
+    """Run a make command against a skill's skill.mk.
+
+    *command* is a shell-style string such as ``make``, ``make target``, or
+    ``VAR=val make target``.  Leading ``KEY=VAL`` tokens (before ``make``) are
+    injected as environment variables; tokens after ``make`` are passed as make
+    arguments (targets and/or make-style variable assignments).
+    """
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
-    skill_dir = Path(skills_dir) / name
-    if not skill_dir.exists() or not (skill_dir / "skill.md").exists():
+    skill_dir = _skill_dir(skills_dir, name)
+    mk = _mk_path(skills_dir, name)
+    if not skill_dir.exists() or not mk.exists():
         return f"Skill '{name}' not found in {skills_dir}"
-    mk_path = skill_dir / "skill.mk"
-    if not mk_path.exists():
-        return f"Skill '{name}' has no skill.mk"
-    parsed: dict[str, str] = {}
-    if params:
-        try:
-            tokens = shlex.split(params)
-        except ValueError as e:
-            return f"Error: could not parse params {params!r}: {e}"
-        for token in tokens:
-            k, sep, v = token.partition("=")
-            if not sep:
-                return f"Error: invalid parameter {token!r}, expected KEY=value format"
-            if not _is_valid_make_var_name(k):
-                return f"Error: {k!r} is not a valid make variable name"
-            if k in os.environ:
-                return f"Error: parameter {k!r} shadows the system environment variable {k!r}"
-            parsed[k] = v
-    env = {**os.environ, **parsed}
-    cmd = ["make", "--no-print-directory", "-f", str(mk_path), target]
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError as e:
+        return f"Error: could not parse command {command!r}: {e}"
+    if not tokens:
+        return "Error: command is empty"
+
+    env_vars: dict[str, str] = {}
+    idx = 0
+    while idx < len(tokens) and "=" in tokens[idx] and not tokens[idx].startswith("make"):
+        token = tokens[idx]
+        k, _, v = token.partition("=")
+        if not _is_valid_make_var_name(k):
+            return f"Error: {k!r} is not a valid make variable name"
+        if k in os.environ:
+            return f"Error: parameter {k!r} shadows the system environment variable {k!r}"
+        env_vars[k] = v
+        idx += 1
+
+    if idx < len(tokens) and tokens[idx] == "make":
+        idx += 1
+
+    make_args = tokens[idx:]
+
+    env = {**os.environ, **env_vars}
+    cmd = ["make", "--no-print-directory", "-f", str(mk), *make_args]
     try:
         proc = subprocess.run(
             cmd,
@@ -116,7 +125,7 @@ def execute_skill(
             stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
-        return f"Error: execute_skill '{name}/{target}' exceeded {timeout}s timeout"
+        return f"Error: execute_skill '{name}' exceeded {timeout}s timeout"
     except OSError as e:
         return f"Error: failed to run make: {e}"
     stdout = proc.stdout.decode(errors="replace")
@@ -133,81 +142,57 @@ def _write_no_symlink(path: Path, content: str) -> None:
 
 def create_skill(
     name: str,
-    description: str,
-    md_content: str,
+    mk_content: str,
     skills_dir: str,
-    mk_content: str | None = None,
 ) -> str:
-    """Create or overwrite a skill directory with skill.md and optional skill.mk."""
+    """Create or overwrite a skill directory with a single skill.mk file.
+
+    *mk_content* must contain a ``define DESCRIPTION … endef`` block.
+    """
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
 
-    parsed_mk = None
-    if mk_content:
-        try:
-            parsed_mk = parse(mk_content)
-        except Exception as e:
-            return f"Error: could not parse skill.mk: {e}"
-        errors = validate(parsed_mk)
-        if errors:
-            return "Validation errors in skill.mk:\n" + "\n".join(f"  - {e}" for e in errors)
+    try:
+        parsed_mk = parse(mk_content)
+    except Exception as e:
+        return f"Error: could not parse skill.mk: {e}"
 
-    skill_dir = Path(skills_dir) / name
-    md_path = skill_dir / "skill.md"
-    mk_path = skill_dir / "skill.mk"
+    if not parsed_mk.description:
+        return "Error: skill.mk must contain a 'define DESCRIPTION … endef' block"
 
-    if md_path.is_symlink():
-        return f"Error: refusing to overwrite symlink: {md_path}"
-    if mk_content and mk_path.is_symlink():
-        return f"Error: refusing to overwrite symlink: {mk_path}"
+    skill_dir = _skill_dir(skills_dir, name)
+    mk = skill_dir / "skill.mk"
+
+    if mk.is_symlink():
+        return f"Error: refusing to overwrite symlink: {mk}"
 
     skill_dir.mkdir(parents=True, exist_ok=True)
 
-    if not md_content.strip().startswith("---"):
-        md_with_fm = f'---\ndescription: "{description}"\n---\n\n{md_content}'
-    else:
-        md_with_fm = md_content
-
     try:
-        _write_no_symlink(md_path, md_with_fm)
+        _write_no_symlink(mk, mk_content)
     except (OSError, ValueError) as e:
-        return f"Error: could not write skill.md: {e}"
+        return f"Error: could not write skill.mk: {e}"
 
-    if mk_content and parsed_mk is not None:
-        try:
-            _write_no_symlink(mk_path, mk_content)
-        except (OSError, ValueError) as e:
-            return f"Error: could not write skill.mk: {e}"
-        tool_count = sum(1 for r in parsed_mk.rules if r.description is not None)
-        return f"Created skill '{name}' at {skill_dir} ({tool_count} tool(s))"
-
-    return f"Created skill '{name}' at {skill_dir} (no tools)"
+    return f"Created skill '{name}' at {skill_dir}"
 
 
 def validate_skill(name: str, skills_dir: str) -> str:
-    """Validate a skill: checks skill.md exists and validates skill.mk if present."""
+    """Validate a skill: checks skill.mk exists, parses cleanly, and has a DESCRIPTION block."""
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
-    skill_dir = Path(skills_dir) / name
-    md_path = skill_dir / "skill.md"
+    skill_dir = _skill_dir(skills_dir, name)
+    mk = _mk_path(skills_dir, name)
     if not skill_dir.exists():
         return f"Skill '{name}' not found in {skills_dir}"
-    if not md_path.exists():
-        return f"Skill '{name}' is missing skill.md"
-    mk_path = skill_dir / "skill.mk"
-    if not mk_path.exists():
-        return f"OK — {skill_dir} (skill.md only, no tools)"
+    if not mk.exists():
+        return f"Skill '{name}' is missing skill.mk"
     try:
-        mf = parse_file(mk_path)
+        mf = parse_file(mk)
     except OSError as e:
-        return f"Error: could not read {mk_path}: {e}"
-    errors = validate(mf)
-    tool_count = sum(1 for r in mf.rules if r.params or r.description)
-    if not tool_count:
-        errors = ["No tools defined: at least one rule must have a # <tool> annotation block."] + errors
-    if errors:
-        return "Validation errors:\n" + "\n".join(f"  - {e}" for e in errors)
-    return f"OK — {skill_dir} ({tool_count} tool(s) valid)"
+        return f"Error: could not read {mk}: {e}"
+    if not mf.description:
+        return "Validation error: skill.mk must contain a 'define DESCRIPTION … endef' block"
+    return f"OK — {skill_dir}"
 
 
 SKILL_SCHEMAS: list[dict[str, Any]] = [
@@ -223,7 +208,7 @@ SKILL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_skill",
-            "description": "Read a skill's full definition (skill.md and skill.mk if present).",
+            "description": "Read a skill's full definition (raw skill.mk content).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -238,24 +223,23 @@ SKILL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "execute_skill",
             "description": (
-                "Run a target in a skill's skill.mk. "
-                "Only usable when the skill has a skill.mk file. "
-                "Call read_skill first to learn what targets and parameters are available."
+                "Run a make command against a skill's skill.mk. "
+                "Call read_skill first to learn what targets and variables are available. "
+                "Pass a shell-style command such as 'make', 'make target', or 'VAR=val make target'."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "The skill name (directory name)."},
-                    "target": {"type": "string", "description": "The make target to run."},
-                    "params": {
+                    "command": {
                         "type": "string",
                         "description": (
-                            "Optional space-separated KEY=value pairs passed to make. "
-                            "Quote values that contain spaces, e.g. 'KEY1=val1 KEY2=val2'."
+                            "The make command to run, e.g. 'make', 'make target', or 'VAR=val make target'. "
+                            "Leading KEY=VAL tokens are passed as environment variables."
                         ),
                     },
                 },
-                "required": ["name", "target"],
+                "required": ["name", "command"],
             },
         },
     },
@@ -265,8 +249,8 @@ SKILL_SCHEMAS: list[dict[str, Any]] = [
             "name": "create_skill",
             "description": (
                 "Create a new skill or overwrite an existing one. "
-                "A skill consists of skill.md (instructions) and optionally skill.mk (tools). "
-                "skill.mk must NOT contain a define SYSTEM_PROMPT block — tools only."
+                "The skill.mk must contain a 'define DESCRIPTION … endef' block. "
+                "It must NOT contain a define SYSTEM_PROMPT block."
             ),
             "parameters": {
                 "type": "object",
@@ -275,23 +259,15 @@ SKILL_SCHEMAS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "Skill name (letters, numbers, hyphens, underscores, dots).",
                     },
-                    "description": {
-                        "type": "string",
-                        "description": "One-line description shown in list_skills.",
-                    },
-                    "md_content": {
-                        "type": "string",
-                        "description": "Full content of skill.md (instructions for the agent).",
-                    },
                     "mk_content": {
                         "type": "string",
                         "description": (
-                            "Optional: content of skill.mk with # <tool> annotated targets. "
+                            "Full content of skill.mk. Must include a 'define DESCRIPTION … endef' block. "
                             "Do NOT include a define SYSTEM_PROMPT block."
                         ),
                     },
                 },
-                "required": ["name", "description", "md_content"],
+                "required": ["name", "mk_content"],
             },
         },
     },
@@ -299,7 +275,7 @@ SKILL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "validate_skill",
-            "description": "Validate a skill: checks skill.md exists and validates skill.mk syntax if present.",
+            "description": "Validate a skill: checks skill.mk exists, parses cleanly, and has a DESCRIPTION block.",
             "parameters": {
                 "type": "object",
                 "properties": {
