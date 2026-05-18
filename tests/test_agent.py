@@ -181,9 +181,11 @@ class TestAgentSafetyGuards:
     def _make_agent(self, tmp_path):
         from make_agent.agent import Agent, AgentConfig
         from make_agent.memory import Memory
+        from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), memory)
+        tool_handler = ToolHandler(memory=memory, skills_dir=str(tmp_path))
+        agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), memory, tool_handler)
         # Inject a custom tool to give the agent a known tool set
         agent._tool_handler._schemas.append(  # noqa: SLF001
             {
@@ -231,9 +233,11 @@ class TestAssistantMessageContent:
         """When the LLM streams a tool call with no text, the assistant message content must be ''."""
         from make_agent.agent import Agent, AgentConfig
         from make_agent.memory import Memory
+        from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), memory)
+        tool_handler = ToolHandler(memory=memory, skills_dir=str(tmp_path))
+        agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), memory, tool_handler)
         # Inject say_hi as a known builtin tool
         agent._tool_handler._schemas.append(  # noqa: SLF001
             {

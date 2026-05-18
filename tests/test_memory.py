@@ -443,9 +443,11 @@ class TestAgentAutoStorage:
 
     def _make_agent(self, tmp_path, mem):
         from make_agent.agent import Agent, AgentConfig
+        from make_agent.tool_handler import ToolHandler
 
         config = AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
-        return Agent(config, mem)
+        tool_handler = ToolHandler(memory=mem, skills_dir=str(tmp_path))
+        return Agent(config, mem, tool_handler)
 
     async def test_user_message_stored(self, tmp_path, mem):
         agent = self._make_agent(tmp_path, mem)
@@ -501,11 +503,10 @@ class TestMemoryAlwaysActive:
     def test_create_session_always_creates_memory(self, tmp_path):
         from make_agent.agent import Agent, AgentConfig, AgentManager
 
-        with patch("make_agent.agent.project_dir", return_value=tmp_path):
-            manager = AgentManager()
-            config = AgentConfig(system_prompt="", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
-            session_id = manager.create_session(config)
-            agent = manager.get_agent(session_id)
+        manager = AgentManager()
+        config = AgentConfig(system_prompt="", model="openai/gpt-4o-mini", skills_dir=str(tmp_path), project_dir=tmp_path)
+        session_id = manager.create_session(config)
+        agent = manager.get_agent(session_id)
 
         assert isinstance(agent._memory, __import__("make_agent.memory", fromlist=["Memory"]).Memory)
 

@@ -16,11 +16,9 @@ from any_llm.types.completion import (
     Function,
 )
 
-from make_agent.app_dirs import default_skills_dir, project_dir
 from make_agent.commands import export_conversation
 from make_agent.memory import Memory
 from make_agent.tool_handler import ToolHandler
-from make_agent.tools import get_tool_result
 
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
@@ -76,10 +74,11 @@ class AgentConfig(NamedTuple):
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT
     max_tokens: int = _DEFAULT_MAX_TOKENS
-    skills_dir: str | None = None
+    skills_dir: str = ""
     disabled_builtin_tools: frozenset[str] = frozenset()
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT
     session_id: str | None = None
+    project_dir: Path = Path()
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -195,7 +194,7 @@ class Agent:
         reply = await agent.arun("List the skills available.")
     """
 
-    def __init__(self, config: AgentConfig, memory: Memory) -> None:
+    def __init__(self, config: AgentConfig, memory: Memory, tool_handler: ToolHandler) -> None:
         self._model = config.model
         self._max_retries = config.max_retries
         self._max_tokens = config.max_tokens
@@ -204,14 +203,7 @@ class Agent:
         self._memory = memory
         self._reasoning_effort = config.reasoning_effort
         self._session_id = config.session_id
-        skills_dir = config.skills_dir if config.skills_dir is not None else default_skills_dir()
-        self._tool_handler = ToolHandler(
-            memory=memory,
-            skills_dir=skills_dir,
-            disabled=config.disabled_builtin_tools,
-            tool_timeout=config.tool_timeout,
-            base_dir=Path.cwd(),
-        )
+        self._tool_handler = tool_handler
         self._messages: list[dict] = []
         if config.system_prompt:
             self._messages.append({"role": "system", "content": config.system_prompt})
@@ -349,7 +341,7 @@ class Agent:
                     try:
                         arguments = json.loads(tc.function.arguments)
                     except json.JSONDecodeError as e:
-                        result = get_tool_result("", f"malformed JSON arguments: {e}", None)
+                        result = ToolHandler.get_tool_result("", f"malformed JSON arguments: {e}", None)
                         logger.error("[tool_result] %s -> %s", target, result.output)
                         self._messages.append({"role": "tool", "tool_call_id": tc.id, "content": result.output})
                         continue
@@ -419,8 +411,15 @@ class AgentManager:
 
     def create_session(self, config: AgentConfig) -> str:
         session_id = self.get_session_id()
-        memory = self.init_memory(session_id)
-        agent = Agent(config._replace(session_id=session_id), memory)
+        memory = Memory(config.project_dir / "memory.db")
+        tool_handler = ToolHandler(
+            memory=memory,
+            skills_dir=config.skills_dir,
+            disabled=config.disabled_builtin_tools,
+            tool_timeout=config.tool_timeout,
+            base_dir=Path.cwd(),
+        )
+        agent = Agent(config._replace(session_id=session_id), memory, tool_handler)
         self._sessions[session_id] = agent
         return session_id
 
@@ -448,7 +447,3 @@ class AgentManager:
         """Return aggregated token usage for *session_id*, or an empty dict when unavailable."""
         agent = self.get_agent(session_id)
         return agent._memory.get_session_stats(session_id)
-
-    def init_memory(self, session_id: str) -> Memory:
-        db_path = project_dir() / "memory.db"
-        return Memory(db_path)

@@ -1,4 +1,4 @@
-"""Tests for src/tools.py — schema builder and make executor."""
+"""Tests for tool_handler.py — schema builder and make executor."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 
 from make_agent.parser import parse
-from make_agent.tools import build_tools, get_tool_result, run_tool
+from make_agent.tool_handler import ToolHandler, build_tools, run_tool
 
 
 def test_build_tools_no_tool_rules():
@@ -281,7 +281,7 @@ def format_tool_result(
     This is a thin wrapper around :func:`get_tool_result` that returns
     only the ``output`` portion of the :class:`ToolExecutionResult` tuple.
     """
-    return get_tool_result(stdout, stderr, exit_code, max_output).output
+    return ToolHandler.get_tool_result(stdout, stderr, exit_code, max_output).output
 
 
 def test_format_tool_result_success():

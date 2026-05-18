@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from make_agent.parser import parse, parse_file
-from make_agent.tools import _is_valid_make_var_name, get_tool_result
+from make_agent.tool_handler import ToolHandler, _is_valid_make_var_name
 
 _VALID_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -130,7 +130,7 @@ def execute_skill(
         return f"Error: failed to run make: {e}"
     stdout = proc.stdout.decode(errors="replace")
     stderr = proc.stderr.decode(errors="replace")
-    return get_tool_result(stdout, stderr, proc.returncode).output
+    return ToolHandler.get_tool_result(stdout, stderr, proc.returncode).output
 
 
 def _write_no_symlink(path: Path, content: str) -> None:

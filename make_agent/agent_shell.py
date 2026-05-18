@@ -16,6 +16,7 @@ from make_agent.agent import (
     ToolDoneEvent,
     ToolStartEvent,
 )
+from make_agent.app_dirs import default_skills_dir, project_dir
 
 
 class MakeAgentShell:
@@ -181,9 +182,10 @@ async def run(
         tool_timeout=tool_timeout,
         max_tool_output=max_tool_output,
         max_tokens=max_tokens,
-        skills_dir=skills_dir,
+        skills_dir=skills_dir or default_skills_dir(),
         disabled_builtin_tools=disabled_builtin_tools,
         reasoning_effort=reasoning_effort,
+        project_dir=project_dir(),
     )
     agent_manager = AgentManager()
     session_id = agent_manager.create_session(agent_config)
