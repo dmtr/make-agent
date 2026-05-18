@@ -10,9 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from make_agent.parser import parse, parse_file
-from make_agent.tool_handler import ToolHandler, _is_valid_make_var_name
 
 _VALID_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_VALID_MAKE_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _is_valid_make_var_name(name: str) -> bool:
+    return bool(_VALID_MAKE_VAR_NAME_RE.fullmatch(name))
 
 
 def _valid_skill_name(name: str) -> bool:
@@ -130,6 +134,8 @@ def execute_skill(
         return f"Error: failed to run make: {e}"
     stdout = proc.stdout.decode(errors="replace")
     stderr = proc.stderr.decode(errors="replace")
+    from make_agent.tool_handler import ToolHandler  # local import avoids circular dep
+
     return ToolHandler.get_tool_result(stdout, stderr, proc.returncode).output
 
 

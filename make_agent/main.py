@@ -6,11 +6,13 @@ import logging
 import sys
 from pathlib import Path
 
-from make_agent.agent import _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT
+from make_agent.agent_core import _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT
 from make_agent.agent_shell import run
-from make_agent.app_dirs import log_file, project_dir
+from make_agent.app_dirs import default_skills_dir, log_file, project_dir
 from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
+from make_agent.memory import Memory
 from make_agent.settings import load_settings
+from make_agent.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
 
@@ -102,18 +104,30 @@ def _cmd_run(args: argparse.Namespace) -> None:
             sys.exit(f"make-agent run: {e}")
 
     system_prompt = _resolve_system_prompt(args)
+    disabled = _parse_disabled_tools(args.disable_builtin_tools)
+
+    memory = Memory(project_dir() / "memory.db")
+    tool_handler = ToolHandler(
+        memory=memory,
+        skills_dir=args.skills_dir or default_skills_dir(),
+        disabled=disabled,
+        tool_timeout=args.tool_timeout,
+        base_dir=Path.cwd(),
+    )
 
     asyncio.run(
         run(
             system_prompt=system_prompt,
             model=args.model,
+            memory=memory,
+            tool_handler=tool_handler,
             prompt=prompt,
             max_retries=args.max_retries,
             tool_timeout=args.tool_timeout,
             max_tool_output=args.max_tool_output,
             max_tokens=args.max_tokens,
             skills_dir=args.skills_dir,
-            disabled_builtin_tools=_parse_disabled_tools(args.disable_builtin_tools),
+            disabled_builtin_tools=disabled,
             reasoning_effort=args.reasoning_effort,
         )
     )

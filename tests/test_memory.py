@@ -7,8 +7,8 @@ import sqlite3
 from unittest.mock import MagicMock, patch
 
 import pytest
-from make_agent.builtin_tools import get_builtin_tools, get_memory_schemas
-from make_agent.memory import Memory
+from make_agent.builtin_tools import get_builtin_tools
+from make_agent.memory import MEMORY_SCHEMAS, Memory, get_memory_executors
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -371,21 +371,21 @@ class TestMemoryRecent:
 
 class TestMemoryBuiltinTools:
     def test_memory_schemas_returned(self):
-        schemas = get_memory_schemas()
+        schemas = MEMORY_SCHEMAS
         names = [s["function"]["name"] for s in schemas]
         assert "search_user_memory" in names
         assert "search_agent_memory" in names
         assert "get_recent_messages" in names
 
     def test_memory_schemas_have_required_query(self):
-        schemas = get_memory_schemas()
+        schemas = MEMORY_SCHEMAS
         for schema in schemas:
             params = schema["function"]["parameters"]
             if schema["function"]["name"] in ("search_user_memory", "search_agent_memory"):
                 assert "query" in params["required"]
 
     def test_memory_schemas_have_optional_params(self):
-        schemas = get_memory_schemas()
+        schemas = MEMORY_SCHEMAS
         for schema in schemas:
             props = schema["function"]["parameters"]["properties"]
             if schema["function"]["name"] in ("search_user_memory", "search_agent_memory"):
@@ -395,39 +395,39 @@ class TestMemoryBuiltinTools:
 
     def test_search_user_memory_tool_callable(self, mem):
         mem.store("user", "remember this phrase")
-        tools = get_builtin_tools("agents_dir", memory=mem)
+        tools = get_memory_executors(mem)
         assert "search_user_memory" in tools
         result = tools["search_user_memory"](query="remember this phrase")
         assert "remember this phrase" in result
 
     def test_search_agent_memory_tool_callable(self, mem):
         mem.store("agent", "I can recall things")
-        tools = get_builtin_tools("agents_dir", memory=mem)
+        tools = get_memory_executors(mem)
         assert "search_agent_memory" in tools
         result = tools["search_agent_memory"](query="recall things")
         assert "I can recall things" in result
 
-    def test_no_memory_tools_without_memory(self):
+    def test_no_memory_tools_in_builtin_tools(self):
         tools = get_builtin_tools("agents_dir")
         assert "search_user_memory" not in tools
         assert "search_agent_memory" not in tools
         assert "get_recent_messages" not in tools
 
-    def test_no_memory_schemas_not_injected_without_memory(self):
-        schemas = get_memory_schemas()
+    def test_memory_schemas_count(self):
+        schemas = MEMORY_SCHEMAS
         assert len(schemas) == 3
 
     def test_get_recent_messages_tool_callable(self, mem):
         mem.store("user", "first message")
         mem.store("agent", "first reply")
-        tools = get_builtin_tools("agents_dir", memory=mem)
+        tools = get_memory_executors(mem)
         assert "get_recent_messages" in tools
         result = tools["get_recent_messages"](limit=5)
         assert "first message" in result
         assert "first reply" in result
 
     def test_get_recent_messages_schema_has_date_params(self):
-        schemas = get_memory_schemas()
+        schemas = MEMORY_SCHEMAS
         schema = next(s for s in schemas if s["function"]["name"] == "get_recent_messages")
         props = schema["function"]["parameters"]["properties"]
         assert "limit" in props
@@ -442,7 +442,7 @@ class TestAgentAutoStorage:
     """Verify agent.arun() writes to memory automatically."""
 
     def _make_agent(self, tmp_path, mem):
-        from make_agent.agent import Agent, AgentConfig
+        from make_agent.agent_core import Agent, AgentConfig
         from make_agent.tool_handler import ToolHandler
 
         config = AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
@@ -463,7 +463,7 @@ class TestAgentAutoStorage:
 
             return _stream()
 
-        with patch("make_agent.agent._acompletion_with_retry", _fake_acompletion):
+        with patch("make_agent.agent_core._acompletion_with_retry", _fake_acompletion):
             await agent.arun("hello from user")
 
         conn = mem._get_conn()
@@ -485,7 +485,7 @@ class TestAgentAutoStorage:
 
             return _stream()
 
-        with patch("make_agent.agent._acompletion_with_retry", _fake_acompletion):
+        with patch("make_agent.agent_core._acompletion_with_retry", _fake_acompletion):
             await agent.arun("hello from user")
 
         conn = mem._get_conn()
@@ -501,14 +501,18 @@ class TestMemoryAlwaysActive:
     """Verify memory is always created and active (no opt-in flag needed)."""
 
     def test_create_session_always_creates_memory(self, tmp_path):
-        from make_agent.agent import Agent, AgentConfig, AgentManager
+        from make_agent.agent_core import AgentConfig, AgentManager
+        from make_agent.memory import Memory
+        from make_agent.tool_handler import ToolHandler
 
-        manager = AgentManager()
+        memory = Memory(tmp_path / "memory.db")
+        tool_handler = ToolHandler(memory=memory, skills_dir=str(tmp_path))
+        manager = AgentManager(memory, tool_handler)
         config = AgentConfig(system_prompt="", model="openai/gpt-4o-mini", skills_dir=str(tmp_path), project_dir=tmp_path)
         session_id = manager.create_session(config)
         agent = manager.get_agent(session_id)
 
-        assert isinstance(agent._memory, __import__("make_agent.memory", fromlist=["Memory"]).Memory)
+        assert isinstance(agent._memory, Memory)
 
 
 # ── Token usage ───────────────────────────────────────────────────────────────

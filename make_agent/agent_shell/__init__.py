@@ -3,7 +3,7 @@ import readline
 import signal
 from typing import Any, Optional
 
-from make_agent.agent import (
+from make_agent.agent_core import (
     _DEFAULT_MAX_RETRIES,
     _DEFAULT_MAX_TOKENS,
     _DEFAULT_MAX_TOOL_OUTPUT,
@@ -17,6 +17,8 @@ from make_agent.agent import (
     ToolStartEvent,
 )
 from make_agent.app_dirs import default_skills_dir, project_dir
+from make_agent.memory import Memory
+from make_agent.tool_handler import ToolHandler
 
 
 class MakeAgentShell:
@@ -74,7 +76,7 @@ class MakeAgentShell:
         print(f"  Input tokens:  {stats['input_tokens']}")
         print(f"  Output tokens: {stats['output_tokens']}")
         print(f"  Total tokens:  {stats['total_tokens']}")
-        
+
         # Per-agent breakdown
         agents = stats.get("agents", {})
         if agents:
@@ -84,7 +86,7 @@ class MakeAgentShell:
                 print(f"      Input:  {agent_stats['input_tokens']}")
                 print(f"      Output: {agent_stats['output_tokens']}")
                 print(f"      Total:  {agent_stats['total_tokens']}")
-        
+
         return False
 
     def _cmd_help(self) -> bool:
@@ -159,6 +161,8 @@ class MakeAgentShell:
 async def run(
     system_prompt: str,
     model: str,
+    memory: Memory,
+    tool_handler: ToolHandler,
     prompt: Optional[str] = None,
     max_retries: int = _DEFAULT_MAX_RETRIES,
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
@@ -187,7 +191,7 @@ async def run(
         reasoning_effort=reasoning_effort,
         project_dir=project_dir(),
     )
-    agent_manager = AgentManager()
+    agent_manager = AgentManager(memory, tool_handler)
     session_id = agent_manager.create_session(agent_config)
     if system_prompt:
         print("System prompt loaded.")

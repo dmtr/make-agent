@@ -28,7 +28,8 @@ import re
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from make_agent.memory import Memory
+from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools
+from make_agent.memory import MEMORY_SCHEMAS, Memory, get_memory_executors
 from make_agent.parser import Makefile, Param
 
 logger = logging.getLogger(__name__)
@@ -154,16 +155,15 @@ class ToolHandler:
         tool_timeout: int = 600,
         base_dir: Path | None = None,
     ) -> None:
-        from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools, get_memory_schemas
 
         _base_dir = base_dir if base_dir is not None else Path.cwd()
-        memory_schemas = get_memory_schemas()
         active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in disabled]
-        active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in disabled]
+        active_memory_schemas = [s for s in MEMORY_SCHEMAS if s["function"]["name"] not in disabled]
         self._schemas: list[dict] = active_builtin_schemas + active_memory_schemas
-        self._executors: dict[str, Any] = get_builtin_tools(
-            skills_dir, memory, disabled, tool_timeout, base_dir=_base_dir
-        )
+
+        builtin_executors = get_builtin_tools(skills_dir, disabled, tool_timeout, base_dir=_base_dir)
+        memory_executors = {k: v for k, v in get_memory_executors(memory).items() if k not in disabled}
+        self._executors: dict[str, Any] = {**builtin_executors, **memory_executors}
 
     @staticmethod
     def get_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> ToolExecutionResult:
