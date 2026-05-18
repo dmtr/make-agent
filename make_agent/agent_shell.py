@@ -164,7 +164,6 @@ async def run(
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     skills_dir: str | None = None,
-    with_memory: bool = False,
     disabled_builtin_tools: frozenset[str] = frozenset(),
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
 ) -> None:
@@ -187,7 +186,7 @@ async def run(
         reasoning_effort=reasoning_effort,
     )
     agent_manager = AgentManager()
-    session_id = agent_manager.create_session(agent_config, with_memory=with_memory)
+    session_id = agent_manager.create_session(agent_config)
     if system_prompt:
         print("System prompt loaded.")
     else:

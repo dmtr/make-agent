@@ -41,7 +41,6 @@ class TestRunPromptInput:
             skills_dir=None,
             disable_builtin_tools=None,
             reasoning_effort=None,
-            with_memory=False,
         )
         captured: dict = {}
 
@@ -73,7 +72,6 @@ class TestRunPromptInput:
             skills_dir=None,
             disable_builtin_tools=None,
             reasoning_effort=None,
-            with_memory=False,
         )
         captured: dict = {}
 

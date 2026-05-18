@@ -17,9 +17,9 @@ from any_llm.types.completion import (
 )
 
 from make_agent.app_dirs import default_skills_dir, project_dir
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools, get_memory_schemas
 from make_agent.commands import export_conversation
 from make_agent.memory import Memory
+from make_agent.tool_handler import ToolHandler
 from make_agent.tools import get_tool_result
 
 _DEFAULT_MAX_RETRIES = 5
@@ -195,7 +195,7 @@ class Agent:
         reply = await agent.arun("List the skills available.")
     """
 
-    def __init__(self, config: AgentConfig, memory: Memory | None) -> None:
+    def __init__(self, config: AgentConfig, memory: Memory) -> None:
         self._model = config.model
         self._max_retries = config.max_retries
         self._max_tokens = config.max_tokens
@@ -205,15 +205,13 @@ class Agent:
         self._reasoning_effort = config.reasoning_effort
         self._session_id = config.session_id
         skills_dir = config.skills_dir if config.skills_dir is not None else default_skills_dir()
-        self._skills_dir = skills_dir
-        self._disabled_builtin_tools = config.disabled_builtin_tools
-        self._builtins = get_builtin_tools(skills_dir, memory, config.disabled_builtin_tools, config.tool_timeout, base_dir=Path.cwd())
-        memory_schemas = get_memory_schemas() if memory is not None else []
-        active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
-        active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in config.disabled_builtin_tools]
-        self._tools: list[dict] = active_builtin_schemas + active_memory_schemas
-        self._tool_name_set: set[str] = {t["function"]["name"] for t in self._tools}
-        self._tool_kwargs: dict = {"tools": self._tools, "tool_choice": "auto"} if self._tools else {}
+        self._tool_handler = ToolHandler(
+            memory=memory,
+            skills_dir=skills_dir,
+            disabled=config.disabled_builtin_tools,
+            tool_timeout=config.tool_timeout,
+            base_dir=Path.cwd(),
+        )
         self._messages: list[dict] = []
         if config.system_prompt:
             self._messages.append({"role": "system", "content": config.system_prompt})
@@ -221,7 +219,11 @@ class Agent:
 
     @property
     def tool_names(self) -> list[str]:
-        return [t["function"]["name"] for t in self._tools]
+        return list(self._tool_handler.tool_names)
+
+    @property
+    def _tool_kwargs(self) -> dict:
+        return self._tool_handler.llm_tool_kwargs
 
     @property
     def messages(self) -> list[dict]:
@@ -244,8 +246,7 @@ class Agent:
         """
         self._messages.append({"role": "user", "content": user_input})
         logger.debug("[user]\n%s", user_input)
-        if self._memory is not None:
-            self._memory.store("user", user_input)
+        self._memory.store("user", user_input)
 
         last_fail_key: str | None = None
         consecutive_failures = 0
@@ -297,7 +298,7 @@ class Agent:
             content = "".join(content_parts)
             logger.debug("[model_response] content=%r tool_calls=%d", content[:120], len(tool_call_acc))
 
-            if self._memory is not None and usage is not None:
+            if usage is not None:
                 self._memory.record_token_usage(
                     self._session_id or "",
                     "main",
@@ -356,21 +357,7 @@ class Agent:
                     logger.debug("[tool_call] %s args=%s", target, arguments)
                     yield ToolStartEvent(name=target, args=arguments)
 
-                    if target not in self._tool_name_set:
-                        result = get_tool_result("", f"unknown tool: {target}", None)
-                    else:
-                        try:
-                            if target in self._builtins:
-                                raw = self._builtins[target](**arguments)
-                                result = get_tool_result(str(raw), "", 0, self._max_tool_output)
-                            else:
-                                result = get_tool_result("", f"tool {target!r} has no executor", None)
-                        except TypeError as e:
-                            logger.error("argument type error when running tool %s: %s", target, e)
-                            result = get_tool_result("", f"argument type error: {e}", None)
-                        except Exception as e:
-                            logger.error("unexpected error when running tool %s: %s", target, e)
-                            result = get_tool_result("", f"unexpected error: {e}", None)
+                    result = await self._tool_handler.execute(target, arguments, self._max_tool_output)
 
                     logger.info("[tool_result] %s -> %s", target, result.output)
                     yield ToolDoneEvent(name=target, output=result.output, is_error=result.is_error)
@@ -401,8 +388,7 @@ class Agent:
             else:
                 self._messages.append({"role": "assistant", "content": content})
                 logger.debug("[assistant]\n%s", content)
-                if self._memory is not None:
-                    self._memory.store("agent", content)
+                self._memory.store("agent", content)
                 yield DoneEvent(content=content)
                 return
 
@@ -431,16 +417,11 @@ class AgentManager:
     def get_session_id() -> str:
         return str(uuid4())
 
-    def create_session(self, config: AgentConfig, with_memory: bool = False) -> str:
+    def create_session(self, config: AgentConfig) -> str:
         session_id = self.get_session_id()
-
-        memory = None
-        if with_memory:
-            memory = self.init_memory(session_id)
-
+        memory = self.init_memory(session_id)
         agent = Agent(config._replace(session_id=session_id), memory)
         self._sessions[session_id] = agent
-
         return session_id
 
     def get_agent(self, session_id: str) -> Agent:
@@ -466,8 +447,6 @@ class AgentManager:
     def get_token_stats(self, session_id: str) -> dict:
         """Return aggregated token usage for *session_id*, or an empty dict when unavailable."""
         agent = self.get_agent(session_id)
-        if agent._memory is None:
-            return {}
         return agent._memory.get_session_stats(session_id)
 
     def init_memory(self, session_id: str) -> Memory:

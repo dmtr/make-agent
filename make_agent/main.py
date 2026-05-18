@@ -59,9 +59,6 @@ def _resolve_run_args(args: argparse.Namespace) -> argparse.Namespace:
     if args.model is None:
         args.model = settings.get("model")
 
-    if not getattr(args, "with_memory", False):
-        args.with_memory = bool(settings.get("memory", False))
-
     if getattr(args, "reasoning_effort", None) is None:
         raw = settings.get("reasoning_effort", "auto")
         if raw not in _REASONING_EFFORT_VALUES:
@@ -116,7 +113,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
             max_tool_output=args.max_tool_output,
             max_tokens=args.max_tokens,
             skills_dir=args.skills_dir,
-            with_memory=args.with_memory,
             disabled_builtin_tools=_parse_disabled_tools(args.disable_builtin_tools),
             reasoning_effort=args.reasoning_effort,
         )
@@ -158,9 +154,6 @@ def main() -> None:
         help=f"Max tokens in model response (default: {_DEFAULT_MAX_TOKENS})",
     )
     run_p.add_argument(
-        "--with-memory", action="store_true", default=False, help="Enable persistent conversation memory (stored in ~/.make-agent/<project>/memory.db)"
-    )
-    run_p.add_argument(
         "--disable-builtin-tools",
         default=None,
         metavar="TOOLS",
@@ -188,7 +181,6 @@ def main() -> None:
     parser.add_argument("--skills-dir", default=None, metavar="DIR", help=argparse.SUPPRESS)
     parser.add_argument("--max-tool-output", type=int, default=_DEFAULT_MAX_TOOL_OUTPUT, metavar="CHARS", help=argparse.SUPPRESS)
     parser.add_argument("--max-tokens", type=int, default=_DEFAULT_MAX_TOKENS, metavar="N", help=argparse.SUPPRESS)
-    parser.add_argument("--with-memory", action="store_true", default=False, help=argparse.SUPPRESS)
     parser.add_argument("--disable-builtin-tools", default=None, metavar="TOOLS", help=argparse.SUPPRESS)
     parser.add_argument("--reasoning-effort", choices=_REASONING_EFFORT_VALUES, default=None, metavar="EFFORT", help=argparse.SUPPRESS)
 

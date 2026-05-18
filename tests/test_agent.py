@@ -180,18 +180,18 @@ class TestACompletionWithRetry:
 class TestAgentSafetyGuards:
     def _make_agent(self, tmp_path):
         from make_agent.agent import Agent, AgentConfig
+        from make_agent.memory import Memory
 
-        agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), None)
+        memory = Memory(tmp_path / "memory.db")
+        agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), memory)
         # Inject a custom tool to give the agent a known tool set
-        agent._tools.append(  # noqa: SLF001
+        agent._tool_handler._schemas.append(  # noqa: SLF001
             {
                 "type": "function",
                 "function": {"name": "safe", "description": "A safe tool.", "parameters": {"type": "object", "properties": {}, "required": []}},
             }
         )
-        agent._tool_name_set.add("safe")  # noqa: SLF001
-        agent._builtins["safe"] = lambda **_: "ok"  # noqa: SLF001
-        agent._tool_kwargs = {"tools": agent._tools, "tool_choice": "auto"}  # noqa: SLF001
+        agent._tool_handler._executors["safe"] = lambda **_: "ok"  # noqa: SLF001
         return agent
 
     async def test_unknown_tool_is_rejected_without_running_make(self, tmp_path):
@@ -230,18 +230,18 @@ class TestAssistantMessageContent:
     async def test_tool_call_without_text_has_empty_string_content(self, tmp_path):
         """When the LLM streams a tool call with no text, the assistant message content must be ''."""
         from make_agent.agent import Agent, AgentConfig
+        from make_agent.memory import Memory
 
-        agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), None)
+        memory = Memory(tmp_path / "memory.db")
+        agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), memory)
         # Inject say_hi as a known builtin tool
-        agent._tools.append(  # noqa: SLF001
+        agent._tool_handler._schemas.append(  # noqa: SLF001
             {
                 "type": "function",
                 "function": {"name": "say_hi", "description": "Say hi.", "parameters": {"type": "object", "properties": {}, "required": []}},
             }
         )
-        agent._tool_name_set.add("say_hi")  # noqa: SLF001
-        agent._builtins["say_hi"] = lambda **_: "hi"  # noqa: SLF001
-        agent._tool_kwargs = {"tools": agent._tools, "tool_choice": "auto"}  # noqa: SLF001
+        agent._tool_handler._executors["say_hi"] = lambda **_: "hi"  # noqa: SLF001
 
         with patch(
             "make_agent.agent._acompletion_with_retry",

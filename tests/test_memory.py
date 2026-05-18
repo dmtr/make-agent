@@ -491,135 +491,23 @@ class TestAgentAutoStorage:
         assert row is not None
         assert row["message"] == "the reply"
 
-    async def test_no_storage_without_memory(self, tmp_path):
-        from make_agent.agent import Agent, AgentConfig
-
-        config = AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
-        agent = Agent(config, None)
-
-        async def _fake_acompletion(*args, **kwargs):
-            async def _stream():
-                chunk = MagicMock()
-                chunk.choices = [MagicMock()]
-                chunk.choices[0].delta.content = "the reply"
-                chunk.choices[0].delta.tool_calls = None
-                chunk.usage = None
-                yield chunk
-
-            return _stream()
-
-        with patch("make_agent.agent._acompletion_with_retry", _fake_acompletion):
-            await agent.arun("hello")
-        # No exception — memory is simply not used
-
 
 # ── CLI flag wiring ───────────────────────────────────────────────────────────
 
 
-class TestWithMemoryFlag:
-    def test_with_memory_flag_creates_memory_instance(self, tmp_path):
-        import make_agent.main as main_module
+class TestMemoryAlwaysActive:
+    """Verify memory is always created and active (no opt-in flag needed)."""
 
-        args = argparse.Namespace(
-            system=None,
-            system_file=None,
-            model="model-x",
-            prompt="hello",
-            prompt_file=None,
-            max_retries=5,
-            tool_timeout=600,
-            max_tool_output=20000,
-            max_tokens=4096,
-            skills_dir=None,
-            with_memory=True,
-            disable_builtin_tools=None,
-            reasoning_effort=None,
-        )
+    def test_create_session_always_creates_memory(self, tmp_path):
+        from make_agent.agent import Agent, AgentConfig, AgentManager
 
-        captured: dict = {}
+        with patch("make_agent.agent.project_dir", return_value=tmp_path):
+            manager = AgentManager()
+            config = AgentConfig(system_prompt="", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
+            session_id = manager.create_session(config)
+            agent = manager.get_agent(session_id)
 
-        async def _fake_run(**kwargs):
-            captured.update(kwargs)
-
-        original = main_module.run
-        main_module.run = _fake_run
-        try:
-            with patch("make_agent.agent.project_dir", return_value=tmp_path):
-                main_module._cmd_run(args)
-        finally:
-            main_module.run = original
-
-        assert captured.get("with_memory") is True
-
-    def test_without_memory_flag_passes_none(self, tmp_path):
-        import make_agent.main as main_module
-
-        args = argparse.Namespace(
-            system=None,
-            system_file=None,
-            model="model-x",
-            prompt="hello",
-            prompt_file=None,
-            max_retries=5,
-            tool_timeout=600,
-            max_tool_output=20000,
-            max_tokens=4096,
-            skills_dir=None,
-            with_memory=False,
-            disable_builtin_tools=None,
-            reasoning_effort=None,
-        )
-
-        captured: dict = {}
-
-        async def _fake_run(**kwargs):
-            captured.update(kwargs)
-
-        original = main_module.run
-        main_module.run = _fake_run
-        try:
-            main_module._cmd_run(args)
-        finally:
-            main_module.run = original
-
-        assert captured.get("with_memory") is False
-
-    def test_settings_memory_true_enables_memory(self, tmp_path):
-        import make_agent.main as main_module
-
-        args = argparse.Namespace(
-            system=None,
-            system_file=None,
-            model="model-x",
-            prompt="hello",
-            prompt_file=None,
-            max_retries=5,
-            tool_timeout=600,
-            max_tool_output=20000,
-            max_tokens=4096,
-            skills_dir=None,
-            with_memory=False,  # not set via CLI
-            disable_builtin_tools=None,
-            reasoning_effort=None,
-        )
-
-        captured: dict = {}
-
-        async def _fake_run(**kwargs):
-            captured.update(kwargs)
-
-        original = main_module.run
-        main_module.run = _fake_run
-        try:
-            with (
-                patch("make_agent.main.load_settings", return_value={"model": "x", "memory": True}),
-                patch("make_agent.agent.project_dir", return_value=tmp_path),
-            ):
-                main_module._cmd_run(args)
-        finally:
-            main_module.run = original
-
-        assert captured.get("with_memory") is True
+        assert isinstance(agent._memory, __import__("make_agent.memory", fromlist=["Memory"]).Memory)
 
 
 # ── Token usage ───────────────────────────────────────────────────────────────
