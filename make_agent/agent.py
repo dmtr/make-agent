@@ -207,7 +207,7 @@ class Agent:
         skills_dir = config.skills_dir if config.skills_dir is not None else default_skills_dir()
         self._skills_dir = skills_dir
         self._disabled_builtin_tools = config.disabled_builtin_tools
-        self._builtins = get_builtin_tools(skills_dir, memory, config.disabled_builtin_tools, config.tool_timeout)
+        self._builtins = get_builtin_tools(skills_dir, memory, config.disabled_builtin_tools, config.tool_timeout, base_dir=Path.cwd())
         memory_schemas = get_memory_schemas() if memory is not None else []
         active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in config.disabled_builtin_tools]
         active_memory_schemas = [s for s in memory_schemas if s["function"]["name"] not in config.disabled_builtin_tools]

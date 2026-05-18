@@ -265,12 +265,12 @@ def test_validate_skill_missing_description(tmp_path):
 
 
 def test_builtin_schemas_has_five_entries():
-    assert len(BUILTIN_SCHEMAS) == 5
+    assert len(BUILTIN_SCHEMAS) == 7
 
 
 def test_builtin_schemas_names():
     names = {s["function"]["name"] for s in BUILTIN_SCHEMAS}
-    assert names == {"list_skills", "read_skill", "execute_skill", "create_skill", "validate_skill"}
+    assert names == {"list_skills", "read_skill", "execute_skill", "create_skill", "validate_skill", "write_file", "edit_file"}
 
 
 def test_builtin_schemas_are_function_type():
@@ -291,12 +291,12 @@ def test_builtin_schemas_required_params():
 
 
 def test_get_builtin_tools_returns_all_five(tmp_path):
-    tools = get_builtin_tools(str(tmp_path))
-    assert set(tools.keys()) == {"list_skills", "read_skill", "execute_skill", "create_skill", "validate_skill"}
+    tools = get_builtin_tools(str(tmp_path), base_dir=tmp_path)
+    assert set(tools.keys()) == {"list_skills", "read_skill", "execute_skill", "create_skill", "validate_skill", "write_file", "edit_file"}
 
 
 def test_get_builtin_tools_list_skills_callable(tmp_path):
-    tools = get_builtin_tools(str(tmp_path))
+    tools = get_builtin_tools(str(tmp_path), base_dir=tmp_path)
     result = tools["list_skills"]()
     assert "No skills found" in result
 
@@ -304,7 +304,7 @@ def test_get_builtin_tools_list_skills_callable(tmp_path):
 def test_get_builtin_tools_validate_skill_callable(tmp_path):
     (tmp_path / "ok").mkdir()
     (tmp_path / "ok" / "skill.mk").write_text(_SKILL_MK)
-    tools = get_builtin_tools(str(tmp_path))
+    tools = get_builtin_tools(str(tmp_path), base_dir=tmp_path)
     result = tools["validate_skill"](name="ok")
     assert result.startswith("OK")
 
@@ -316,10 +316,84 @@ def test_get_builtin_tools_execute_skill_callable(tmp_path):
     fake_proc.stdout = b"done\n"
     fake_proc.stderr = b""
     fake_proc.returncode = 0
-    tools = get_builtin_tools(str(tmp_path))
+    tools = get_builtin_tools(str(tmp_path), base_dir=tmp_path)
     with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc):
         result = tools["execute_skill"](name="simple", command="make read-file")
     assert result == "done"
 
 
+# ── file_tools ────────────────────────────────────────────────────────────────
 
+from make_agent.builtin_tools.file_tools import FILE_SCHEMAS, edit_file, write_file
+
+
+def test_write_file_creates_new_file(tmp_path):
+    result = write_file("hello.txt", "hello world", tmp_path)
+    assert "Successfully wrote" in result
+    assert (tmp_path / "hello.txt").read_text() == "hello world"
+
+
+def test_write_file_overwrites_existing(tmp_path):
+    (tmp_path / "f.txt").write_text("old content")
+    write_file("f.txt", "new content", tmp_path)
+    assert (tmp_path / "f.txt").read_text() == "new content"
+
+
+def test_write_file_creates_parent_dirs(tmp_path):
+    result = write_file("a/b/c.txt", "deep", tmp_path)
+    assert "Successfully wrote" in result
+    assert (tmp_path / "a" / "b" / "c.txt").read_text() == "deep"
+
+
+def test_write_file_rejects_traversal(tmp_path):
+    result = write_file("../../evil.txt", "x", tmp_path)
+    assert result.startswith("Error")
+
+
+def test_edit_file_replaces_first_occurrence(tmp_path):
+    (tmp_path / "code.py").write_text("foo bar foo")
+    result = edit_file("code.py", "foo", "baz", tmp_path)
+    assert "Successfully replaced" in result
+    assert (tmp_path / "code.py").read_text() == "baz bar foo"
+
+
+def test_edit_file_missing_file(tmp_path):
+    result = edit_file("ghost.txt", "x", "y", tmp_path)
+    assert result.startswith("Error")
+    assert "does not exist" in result
+
+
+def test_edit_file_text_not_found(tmp_path):
+    (tmp_path / "f.txt").write_text("hello world")
+    result = edit_file("f.txt", "missing text", "replacement", tmp_path)
+    assert result.startswith("Error")
+    assert "not found" in result
+
+
+def test_edit_file_rejects_traversal(tmp_path):
+    result = edit_file("../../evil.txt", "x", "y", tmp_path)
+    assert result.startswith("Error")
+
+
+def test_file_schemas_structure():
+    assert len(FILE_SCHEMAS) == 2
+    names = {s["function"]["name"] for s in FILE_SCHEMAS}
+    assert names == {"write_file", "edit_file"}
+    by_name = {s["function"]["name"]: s["function"] for s in FILE_SCHEMAS}
+    assert set(by_name["write_file"]["parameters"]["required"]) == {"path", "content"}
+    assert set(by_name["edit_file"]["parameters"]["required"]) == {"path", "old_text", "new_text"}
+
+
+def test_get_builtin_tools_write_file_callable(tmp_path):
+    tools = get_builtin_tools(str(tmp_path), base_dir=tmp_path)
+    result = tools["write_file"](path="out.txt", content="hello")
+    assert "Successfully wrote" in result
+    assert (tmp_path / "out.txt").read_text() == "hello"
+
+
+def test_get_builtin_tools_edit_file_callable(tmp_path):
+    (tmp_path / "src.py").write_text("x = 1")
+    tools = get_builtin_tools(str(tmp_path), base_dir=tmp_path)
+    result = tools["edit_file"](path="src.py", old_text="x = 1", new_text="x = 2")
+    assert "Successfully replaced" in result
+    assert (tmp_path / "src.py").read_text() == "x = 2"
