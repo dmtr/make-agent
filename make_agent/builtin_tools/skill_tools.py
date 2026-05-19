@@ -13,6 +13,18 @@ from make_agent.parser import parse, parse_file
 
 _VALID_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _VALID_MAKE_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_FORBIDDEN_MAKE_OPTIONS = frozenset(
+    {
+        "-f",
+        "--file",
+        "--makefile",
+        "-C",
+        "--directory",
+        "-I",
+        "--include-dir",
+        "--eval",
+    }
+)
 
 
 def _is_valid_make_var_name(name: str) -> bool:
@@ -23,12 +35,77 @@ def _valid_skill_name(name: str) -> bool:
     return bool(_VALID_SKILL_NAME_RE.fullmatch(name))
 
 
-def _skill_dir(skills_dir: str, name: str) -> Path:
-    return Path(skills_dir) / name
+def _find_forbidden_make_option(tokens: list[str]) -> str | None:
+    """Return the first blocked make option found in *tokens*, if any."""
+    for token in tokens:
+        if token in _FORBIDDEN_MAKE_OPTIONS:
+            return token
+        if token.startswith("--file=") or token.startswith("--makefile="):
+            return token
+        if token.startswith("--directory=") or token.startswith("--include-dir="):
+            return token
+        if token.startswith("--eval="):
+            return token
+        if token.startswith("-f") and token != "-f":
+            return token
+        if token.startswith("-C") and token != "-C":
+            return token
+        if token.startswith("-I") and token != "-I":
+            return token
+    return None
 
 
-def _mk_path(skills_dir: str, name: str) -> Path:
-    return _skill_dir(skills_dir, name) / "skill.mk"
+def _resolve_safe_skill_path(
+    skills_dir: str,
+    name: str,
+    filename: str,
+    *,
+    create_dirs: bool = False,
+) -> tuple[Path, Path] | str:
+    """Return ``(skill_dir, file_path)`` while enforcing symlink and containment rules."""
+    skills_root = Path(skills_dir)
+    if skills_root.exists():
+        if skills_root.is_symlink():
+            return f"Error: refusing to use symlinked skills directory: {skills_root}"
+        if not skills_root.is_dir():
+            return f"Error: skills directory is not a directory: {skills_root}"
+    if create_dirs:
+        try:
+            skills_root.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return f"Error: could not create skills directory: {e}"
+        if skills_root.is_symlink():
+            return f"Error: refusing to use symlinked skills directory: {skills_root}"
+
+    skill_dir = skills_root / name
+    if skill_dir.exists():
+        if skill_dir.is_symlink():
+            return f"Error: refusing to use symlinked skill directory: {skill_dir}"
+        if not skill_dir.is_dir():
+            return f"Error: skill path is not a directory: {skill_dir}"
+    if create_dirs:
+        try:
+            skill_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return f"Error: could not create skill directory: {e}"
+        if skill_dir.is_symlink():
+            return f"Error: refusing to use symlinked skill directory: {skill_dir}"
+
+    file_path = skill_dir / filename
+    if file_path.exists() and file_path.is_symlink():
+        return f"Error: refusing to use symlinked path: {file_path}"
+
+    try:
+        resolved_root = skills_root.resolve(strict=False)
+        resolved_skill = skill_dir.resolve(strict=False)
+    except OSError as e:
+        return f"Error: could not resolve skill path: {e}"
+    try:
+        resolved_skill.relative_to(resolved_root)
+    except ValueError:
+        return f"Error: skill path escapes the skills directory: {skill_dir}"
+
+    return skill_dir, file_path
 
 
 def _skill_description(mk_path: Path) -> str:
@@ -64,8 +141,10 @@ def read_skill(name: str, skills_dir: str) -> str:
     """Read a skill's full definition by returning the raw skill.mk content."""
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
-    skill_dir = _skill_dir(skills_dir, name)
-    mk = _mk_path(skills_dir, name)
+    safe_paths = _resolve_safe_skill_path(skills_dir, name, "skill.mk")
+    if isinstance(safe_paths, str):
+        return safe_paths
+    skill_dir, mk = safe_paths
     if not skill_dir.exists():
         return f"Skill '{name}' not found in {skills_dir}"
     if not mk.exists():
@@ -91,8 +170,10 @@ def execute_skill(
     """
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
-    skill_dir = _skill_dir(skills_dir, name)
-    mk = _mk_path(skills_dir, name)
+    safe_paths = _resolve_safe_skill_path(skills_dir, name, "skill.mk")
+    if isinstance(safe_paths, str):
+        return safe_paths
+    skill_dir, mk = safe_paths
     if not skill_dir.exists() or not mk.exists():
         return f"Skill '{name}' not found in {skills_dir}"
 
@@ -123,6 +204,12 @@ def execute_skill(
         idx += 1
 
     make_args = tokens[idx:]
+    if forbidden := _find_forbidden_make_option(make_args):
+        return (
+            f"Error: make option {forbidden!r} is not allowed in execute_skill. "
+            "Blocked options: -f/--file/--makefile, -C/--directory, "
+            "-I/--include-dir, --eval."
+        )
 
     env = {**os.environ, **env_vars}
     cmd = ["make", "--no-print-directory", "-f", str(mk), *make_args]
@@ -172,13 +259,12 @@ def create_skill(
     if not parsed_mk.description:
         return "Error: skill.mk must contain a 'define DESCRIPTION … endef' block"
 
-    skill_dir = _skill_dir(skills_dir, name)
-    mk = skill_dir / "skill.mk"
-
-    if mk.is_symlink():
-        return f"Error: refusing to overwrite symlink: {mk}"
-
-    skill_dir.mkdir(parents=True, exist_ok=True)
+    safe_paths = _resolve_safe_skill_path(
+        skills_dir, name, "skill.mk", create_dirs=True
+    )
+    if isinstance(safe_paths, str):
+        return safe_paths
+    skill_dir, mk = safe_paths
 
     try:
         _write_no_symlink(mk, mk_content)
@@ -192,8 +278,10 @@ def validate_skill(name: str, skills_dir: str) -> str:
     """Validate a skill: checks skill.mk exists, parses cleanly, and has a DESCRIPTION block."""
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
-    skill_dir = _skill_dir(skills_dir, name)
-    mk = _mk_path(skills_dir, name)
+    safe_paths = _resolve_safe_skill_path(skills_dir, name, "skill.mk")
+    if isinstance(safe_paths, str):
+        return safe_paths
+    skill_dir, mk = safe_paths
     if not skill_dir.exists():
         return f"Skill '{name}' not found in {skills_dir}"
     if not mk.exists():

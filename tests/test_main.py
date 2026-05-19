@@ -93,6 +93,46 @@ class TestRunPromptInput:
         assert captured["tool_handler"].tool_names == builtin_tool_names("makefile")
         assert captured["memory"]._db_path == tmp_path / "makefile-memory.db"  # noqa: SLF001
 
+    def test_custom_skills_dir_gets_mode_subfolder(self, tmp_path):
+        custom_dir = tmp_path / "custom"
+        args = _run_args(prompt="do something", skill_mode="python", skills_dir=str(custom_dir))
+        captured: dict = {}
+
+        async def _fake_run(**kwargs):
+            captured.update(kwargs)
+
+        with (
+            patch.object(main_module, "run", _fake_run),
+            patch.object(main_module, "ensure_mode_system_prompt"),
+            patch.object(main_module, "mode_dir", return_value=tmp_path / "python-mode"),
+            patch.object(main_module, "mode_memory_path", return_value=tmp_path / "python-memory.db"),
+        ):
+            main_module._cmd_run(args)
+
+        backend = captured["tool_handler"]._backend  # noqa: SLF001
+        assert isinstance(backend, PythonSkillBackend)
+        assert backend._skills_dir == str(custom_dir / "python")  # noqa: SLF001
+
+    def test_custom_skills_dir_makefile_mode_gets_mode_subfolder(self, tmp_path):
+        custom_dir = tmp_path / "custom"
+        args = _run_args(prompt="do something", skill_mode="makefile", skills_dir=str(custom_dir))
+        captured: dict = {}
+
+        async def _fake_run(**kwargs):
+            captured.update(kwargs)
+
+        with (
+            patch.object(main_module, "run", _fake_run),
+            patch.object(main_module, "ensure_mode_system_prompt"),
+            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
+            patch.object(main_module, "mode_memory_path", return_value=tmp_path / "makefile-memory.db"),
+        ):
+            main_module._cmd_run(args)
+
+        backend = captured["tool_handler"]._backend  # noqa: SLF001
+        assert isinstance(backend, MakefileSkillBackend)
+        assert backend._skills_dir == str(custom_dir / "makefile")  # noqa: SLF001
+
     def test_prompt_and_prompt_file_are_mutually_exclusive(self, tmp_path):
         prompt_file = _write(tmp_path, "prompt.txt", "hello")
         result = _run(

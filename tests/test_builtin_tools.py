@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -200,6 +202,16 @@ def test_execute_skill_empty_command(tmp_path):
     assert result.startswith("Error")
 
 
+def test_execute_skill_rejects_forbidden_make_options(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    with patch("make_agent.builtin_tools.skill_tools.subprocess.run") as mock_run:
+        result = execute_skill("full", "make -f /tmp/evil.mk read-file", str(tmp_path))
+    assert result.startswith("Error")
+    assert "not allowed" in result
+    mock_run.assert_not_called()
+
+
 def test_create_skill_invalid_name(tmp_path):
     result = create_skill("../evil", _SKILL_MK, str(tmp_path))
     assert result.startswith("Error")
@@ -210,6 +222,15 @@ def test_create_skill_success(tmp_path):
     assert result.startswith("Created skill 'myskill'")
     written = (tmp_path / "myskill" / "skill.mk").read_text()
     assert "define DESCRIPTION" in written
+
+
+def test_create_skill_rejects_symlinked_skill_dir(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(outside, tmp_path / "myskill")
+    result = create_skill("myskill", _SKILL_MK, str(tmp_path))
+    assert result.startswith("Error")
+    assert not (outside / "skill.mk").exists()
 
 
 def test_create_skill_missing_description_block(tmp_path):
@@ -430,6 +451,60 @@ async def test_python_backend_create_and_validate_callable(tmp_path):
 
     assert result.startswith("Created skill 'full'")
     assert validation.startswith("OK")
+
+
+@pytest.mark.asyncio
+async def test_python_backend_create_skill_rejects_symlinked_skill_dir(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(outside, tmp_path / "full")
+
+    backend = PythonSkillBackend(str(tmp_path))
+    with patch("make_agent.skill_registry._llm_security_check", new=AsyncMock(return_value=(True, None))):
+        await backend.setup("test-model")
+        result = await backend.executors["create_skill"](
+            name="full",
+            description="A full skill.",
+            md_content="Instructions.",
+            py_content=_VALID_PY,
+        )
+
+    assert result.startswith("Error")
+    assert not (outside / "skill.md").exists()
+    assert not (outside / "skill.py").exists()
+
+
+@pytest.mark.asyncio
+async def test_python_backend_execute_skill_timeout_kills_process(tmp_path):
+    skill_dir = tmp_path / "slow"
+    skill_dir.mkdir()
+    (skill_dir / "skill.md").write_text("Instructions.\n")
+    (skill_dir / "skill.py").write_text(
+        """\
+from pathlib import Path
+import time
+from make_agent import target
+
+@target
+def slow_write(path: str, delay: float = 3.0) -> str:
+    time.sleep(delay)
+    Path(path).write_text("done")
+    return "done"
+"""
+    )
+
+    backend = PythonSkillBackend(str(tmp_path), tool_timeout=1)
+    with patch("make_agent.skill_registry._llm_security_check", new=AsyncMock(return_value=(True, None))):
+        await backend.setup("test-model")
+    marker = tmp_path / "marker.txt"
+    result = await backend.executors["execute_skill"](
+        name="slow",
+        target="slow_write",
+        kwargs={"path": str(marker), "delay": 3.0},
+    )
+    await asyncio.sleep(1.5)
+    assert "exceeded 1s timeout" in result
+    assert not marker.exists()
 
 
 def test_python_backend_list_skills_marks_has_tools(tmp_path):

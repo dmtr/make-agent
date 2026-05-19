@@ -93,7 +93,10 @@ def _cmd_run(args: argparse.Namespace) -> None:
     ensure_mode_system_prompt(args.skill_mode)
     system_prompt = _resolve_system_prompt(args)
     disabled = _parse_disabled_tools(args.disable_builtin_tools, args.skill_mode)
-    skills_dir = args.skills_dir or str(default_skills_dir(args.skill_mode))
+    if args.skills_dir:
+        skills_dir = str(Path(args.skills_dir) / args.skill_mode)
+    else:
+        skills_dir = str(default_skills_dir(args.skill_mode))
 
     memory = Memory(mode_memory_path(args.skill_mode))
     backend = _build_backend(args.skill_mode, skills_dir, args.tool_timeout)

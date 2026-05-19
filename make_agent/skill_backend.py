@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import signal
+import sys
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -11,6 +15,7 @@ import yaml
 
 from make_agent.builtin_tools.file_tools import FILE_SCHEMAS, edit_file, write_file
 from make_agent.builtin_tools.skill_tools import SKILL_SCHEMAS as MAKEFILE_SKILL_SCHEMAS
+from make_agent.builtin_tools.skill_tools import _resolve_safe_skill_path
 from make_agent.builtin_tools.skill_tools import _valid_skill_name
 from make_agent.builtin_tools.skill_tools import create_skill as create_makefile_skill
 from make_agent.builtin_tools.skill_tools import execute_skill as execute_makefile_skill
@@ -22,6 +27,46 @@ from make_agent.builtin_tools.skill_tools import (
 from make_agent.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
+_PYTHON_SKILL_RESULT_PREFIX = "__MAKE_AGENT_PY_SKILL_RESULT__"
+_PYTHON_SKILL_WORKER_CODE = f"""\
+import importlib.util
+import json
+import traceback
+import sys
+
+PREFIX = {_PYTHON_SKILL_RESULT_PREFIX!r}
+path = sys.argv[1]
+target = sys.argv[2]
+raw_kwargs = sys.stdin.read()
+if not raw_kwargs:
+    raw_kwargs = "{{}}"
+
+try:
+    kwargs = json.loads(raw_kwargs)
+    module_name = "_make_agent_exec_skill"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot create module spec for {{path}}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    fn = None
+    targets = getattr(module, "_TARGETS", {{}})
+    tool_meta = targets.get(target) if isinstance(targets, dict) else None
+    if tool_meta is not None and hasattr(tool_meta, "fn"):
+        fn = tool_meta.fn
+    elif hasattr(module, target):
+        fn = getattr(module, target)
+    if fn is None or not callable(fn):
+        raise RuntimeError(f"Target '{{target}}' not found in skill")
+    result = fn(**kwargs)
+    payload = {{"ok": True, "result": None if result is None else str(result)}}
+except Exception as e:
+    traceback.print_exc()
+    payload = {{"ok": False, "error": str(e)}}
+
+print(PREFIX + json.dumps(payload), flush=True)
+"""
 
 
 class SkillBackend(Protocol):
@@ -32,6 +77,95 @@ class SkillBackend(Protocol):
     def executors(self) -> dict[str, Any]: ...
 
     async def setup(self, model: str) -> None: ...
+
+
+def _terminate_subprocess_tree(proc: asyncio.subprocess.Process) -> None:
+    if proc.returncode is not None:
+        return
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+            return
+        except ProcessLookupError:
+            return
+    proc.kill()
+
+
+def _extract_worker_payload(raw: str) -> dict[str, Any] | None:
+    for line in reversed(raw.splitlines()):
+        if line.startswith(_PYTHON_SKILL_RESULT_PREFIX):
+            payload = line[len(_PYTHON_SKILL_RESULT_PREFIX) :]
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(parsed, dict):
+                return parsed
+            return None
+    return None
+
+
+async def _run_python_skill_in_subprocess(
+    py_path: Path,
+    target: str,
+    kwargs: dict[str, Any],
+    timeout: int,
+) -> str:
+    try:
+        kwargs_json = json.dumps(kwargs)
+    except TypeError as e:
+        return f"Error: kwargs for execute_skill are not JSON-serializable: {e}"
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            _PYTHON_SKILL_WORKER_CODE,
+            str(py_path),
+            target,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+    except OSError as e:
+        return f"Error: failed to run python skill subprocess: {e}"
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(input=kwargs_json.encode()),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        _terminate_subprocess_tree(proc)
+        await proc.wait()
+        return f"Error: execute_skill '{py_path.parent.name}/{target}' exceeded {timeout}s timeout"
+    except asyncio.CancelledError:
+        _terminate_subprocess_tree(proc)
+        await proc.wait()
+        raise
+
+    stdout = stdout_b.decode(errors="replace")
+    stderr = stderr_b.decode(errors="replace")
+    payload = _extract_worker_payload(stdout) or _extract_worker_payload(stderr)
+    if payload is None:
+        logger.error(
+            "execute_skill subprocess returned malformed output for %s/%s (stdout=%r stderr=%r)",
+            py_path.parent.name,
+            target,
+            stdout,
+            stderr,
+        )
+        return "Error: execute_skill returned malformed subprocess output"
+
+    if payload.get("ok") is True:
+        result = payload.get("result")
+        return (
+            str(result)
+            if result is not None
+            else "OK. Execution succeeded with no output."
+        )
+    return f"Error: {payload.get('error', 'unknown error')}"
 
 
 class MakefileSkillBackend:
@@ -164,10 +298,12 @@ async def execute_python_skill(
     """Run *target* in skill *name* using keyword arguments."""
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
-    skill_dir = Path(skills_dir) / name
+    safe_paths = _resolve_safe_skill_path(skills_dir, name, "skill.py")
+    if isinstance(safe_paths, str):
+        return safe_paths
+    skill_dir, py_path = safe_paths
     if not skill_dir.exists() or not (skill_dir / "skill.md").exists():
         return f"Skill '{name}' not found in {skills_dir}"
-    py_path = skill_dir / "skill.py"
     if not py_path.exists():
         return f"Skill '{name}' has no skill.py"
 
@@ -209,21 +345,11 @@ async def execute_python_skill(
         elif not param.required and param.default is not None:
             final_kwargs[param.name] = param.default
 
-    loop = asyncio.get_running_loop()
-    fn = tool_meta.fn
-    try:
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: fn(**final_kwargs)),
-            timeout=timeout,
-        )
-    except asyncio.TimeoutError:
-        return f"Error: execute_skill '{name}/{target}' exceeded {timeout}s timeout"
-    except Exception as e:
-        logger.error("execute_skill '%s/%s' raised: %s", name, target, e)
-        return f"Error: {e}"
-
-    return (
-        str(result) if result is not None else "OK. Execution succeeded with no output."
+    return await _run_python_skill_in_subprocess(
+        py_path,
+        target,
+        final_kwargs,
+        timeout,
     )
 
 
@@ -246,16 +372,20 @@ async def create_python_skill(
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
 
-    skill_dir = Path(skills_dir) / name
-    md_path = skill_dir / "skill.md"
+    md_safe = _resolve_safe_skill_path(
+        skills_dir, name, "skill.md", create_dirs=True
+    )
+    if isinstance(md_safe, str):
+        return md_safe
+    skill_dir, md_path = md_safe
     py_path = skill_dir / "skill.py"
-
-    if md_path.is_symlink():
-        return f"Error: refusing to overwrite symlink: {md_path}"
-    if py_content and py_path.is_symlink():
-        return f"Error: refusing to overwrite symlink: {py_path}"
-
-    skill_dir.mkdir(parents=True, exist_ok=True)
+    if py_content:
+        py_safe = _resolve_safe_skill_path(
+            skills_dir, name, "skill.py", create_dirs=True
+        )
+        if isinstance(py_safe, str):
+            return py_safe
+        _, py_path = py_safe
 
     if not md_content.strip().startswith("---"):
         md_with_frontmatter = f'---\ndescription: "{description}"\n---\n\n{md_content}'
@@ -288,8 +418,10 @@ async def validate_python_skill(
     """Validate a skill: checks skill.md exists and runs LLM security check on skill.py."""
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
-    skill_dir = Path(skills_dir) / name
-    md_path = skill_dir / "skill.md"
+    md_safe = _resolve_safe_skill_path(skills_dir, name, "skill.md")
+    if isinstance(md_safe, str):
+        return md_safe
+    skill_dir, md_path = md_safe
     if not skill_dir.exists():
         return f"Skill '{name}' not found in {skills_dir}"
     if not md_path.exists():
