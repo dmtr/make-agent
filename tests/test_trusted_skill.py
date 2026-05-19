@@ -55,24 +55,80 @@ def _make_handler(trusted_skills: frozenset[str] = frozenset()) -> ToolHandler:
     from make_agent.memory import MEMORY_SCHEMAS, get_memory_executors
     backend.schemas = []
     backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
+    backend.get_skill_trusted = MagicMock(return_value=None)
     return ToolHandler(backend, memory, trusted_skills=trusted_skills)
 
 
 def test_is_trusted_empty_set():
     h = _make_handler(frozenset())
-    assert not h._is_trusted("web-fetch")
+    assert not h._is_trusted("web-fetch", "fetch")
 
 
 def test_is_trusted_specific_match():
     h = _make_handler(frozenset(["web-fetch"]))
-    assert h._is_trusted("web-fetch")
-    assert not h._is_trusted("search")
+    assert h._is_trusted("web-fetch", "fetch")
+    assert not h._is_trusted("search", "query")
 
 
 def test_is_trusted_wildcard():
     h = _make_handler(frozenset(["*"]))
-    assert h._is_trusted("web-fetch")
-    assert h._is_trusted("any-skill")
+    assert h._is_trusted("web-fetch", "fetch")
+    assert h._is_trusted("any-skill", "run")
+
+
+def test_is_trusted_dot_notation_specific_target():
+    h = _make_handler(frozenset(["web.fetch"]))
+    assert h._is_trusted("web", "fetch")
+    assert not h._is_trusted("web", "search")
+    assert not h._is_trusted("other", "fetch")
+
+
+def test_is_trusted_dot_notation_does_not_trust_whole_skill():
+    h = _make_handler(frozenset(["web.fetch"]))
+    assert not h._is_trusted("web", "search")
+
+
+def test_is_trusted_skill_level_trusts_all_targets():
+    h = _make_handler(frozenset(["web"]))
+    assert h._is_trusted("web", "fetch")
+    assert h._is_trusted("web", "search")
+    assert not h._is_trusted("other", "fetch")
+
+
+def test_is_trusted_backend_ast_trust():
+    """Backend returning trusted=True from AST grants trust without CLI override."""
+    backend = MagicMock()
+    backend.schemas = []
+    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
+    backend.get_skill_trusted = MagicMock(return_value=True)
+    memory = MagicMock()
+    memory.store = MagicMock()
+    h = ToolHandler(backend, memory, trusted_skills=frozenset())
+    assert h._is_trusted("web", "fetch")
+
+
+def test_is_trusted_backend_ast_untrusted():
+    """Backend returning trusted=False (AST untrusted) requires CLI override."""
+    backend = MagicMock()
+    backend.schemas = []
+    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
+    backend.get_skill_trusted = MagicMock(return_value=False)
+    memory = MagicMock()
+    memory.store = MagicMock()
+    h = ToolHandler(backend, memory, trusted_skills=frozenset())
+    assert not h._is_trusted("web", "fetch")
+
+
+def test_is_trusted_backend_ast_none():
+    """Backend returning None (Makefile backend) requires CLI override."""
+    backend = MagicMock()
+    backend.schemas = []
+    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
+    backend.get_skill_trusted = MagicMock(return_value=None)
+    memory = MagicMock()
+    memory.store = MagicMock()
+    h = ToolHandler(backend, memory, trusted_skills=frozenset())
+    assert not h._is_trusted("web", "fetch")
 
 
 # ── ToolHandler.execute — skill confirmation ───────────────────────────────────
@@ -157,6 +213,7 @@ async def test_execute_non_skill_tool_bypasses_trust_check():
     backend = MagicMock()
     backend.schemas = []
     backend.executors = {"list_skills": MagicMock(return_value="skill-list")}
+    backend.get_skill_trusted = MagicMock(return_value=None)
     memory = MagicMock()
     memory.store = MagicMock()
     handler = ToolHandler(backend, memory, trusted_skills=frozenset())

@@ -1,7 +1,7 @@
-"""In-memory skill registry with hash-based LLM security validation.
+"""In-memory skill registry with hash-based AST-based trust validation.
 
 At agent startup :meth:`SkillRegistry.load_skills_dir` scans for ``skill.py``
-files, validates each with a syntax check and an LLM security audit, then
+files, validates each with a syntax check and an AST trust check, then
 imports validated modules and collects their ``_TARGETS`` dicts.
 
 Before executing a target :meth:`SkillRegistry.get_entry` re-hashes the file
@@ -10,6 +10,7 @@ and re-validates automatically if the content has changed.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import logging
@@ -18,31 +19,31 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import any_llm
-
 from make_agent.skill import ToolMeta
 
 logger = logging.getLogger(__name__)
 
-_SECURITY_PROMPT = """\
-You are a security auditor. Review the following Python code for malicious or \
-dangerous patterns.
+_DANGEROUS_MODULES = frozenset(
+    {
+        "subprocess",
+        "socket",
+        "requests",
+        "httpx",
+        "aiohttp",
+        "urllib",
+        "http",
+        "ftplib",
+        "smtplib",
+        "imaplib",
+        "poplib",
+        "telnetlib",
+        "xmlrpc",
+    }
+)
 
-Check for: exec(), eval(), __import__(), subprocess calls, os.system(), \
-shell injection, network exfiltration, file system destruction, attempts to \
-access secrets or credentials, and any other clearly malicious behaviour.
+_DANGEROUS_BUILTINS = frozenset({"exec", "eval", "__import__"})
 
-Respond with exactly one of:
-SAFE
-or
-UNSAFE: <brief reason>
-
-Do not include any other text.
-
-Code to review:
-```python
-{code}
-```"""
+_DANGEROUS_OS_ATTRS = frozenset({"system", "popen", "execv", "execve", "execvp", "execvpe", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe"})
 
 
 @dataclass
@@ -52,6 +53,7 @@ class SkillEntry:
     hash: str  # SHA-256 hex digest
     valid: bool
     reject_reason: str | None
+    trusted: bool = False
     tools: dict[str, ToolMeta] = field(default_factory=dict)
 
 
@@ -59,32 +61,65 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-async def _llm_security_check(code: str, model: str) -> tuple[bool, str | None]:
-    """Call the LLM to audit *code*. Returns ``(is_safe, reject_reason)``."""
-    logger.debug("Running LLM security check on code:\n%s", code)
-    prompt = _SECURITY_PROMPT.format(code=code)
-    try:
-        stream = await any_llm.acompletion(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=256,
-            stream=True,
-        )
-        parts: list[str] = []
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                parts.append(chunk.choices[0].delta.content)
-        text = "".join(parts).strip()
-    except Exception as e:
-        logger.error("LLM security check failed: %s", e)
-        return False, f"LLM check error: {e}"
+def _ast_trust_check(code: str) -> tuple[bool, list[str]]:
+    """Inspect *code* with AST analysis and return ``(is_trusted, detected_patterns)``.
 
-    upper = text.upper()
-    logger.debug("LLM security check result: %r", text)
-    if upper.startswith("SAFE"):
-        return True, None
-    reason = text[len("UNSAFE:") :].strip() if upper.startswith("UNSAFE:") else text
-    return False, reason or "rejected by security check"
+    A skill is trusted when its source contains no dangerous imports or calls.
+    Detected patterns are logged at DEBUG level only.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return False, ["unparseable"]
+
+    detected: list[str] = []
+
+    for node in ast.walk(tree):
+        # import subprocess / import socket / import requests …
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in _DANGEROUS_MODULES:
+                    detected.append(root)
+
+        # from subprocess import … / from urllib.request import …
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                root = node.module.split(".")[0]
+                if root in _DANGEROUS_MODULES:
+                    detected.append(root)
+
+        # exec(...) / eval(...) / __import__(...)
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in _DANGEROUS_BUILTINS:
+                detected.append(func.id)
+            # os.system(...) / os.popen(...) etc.
+            elif (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "os"
+                and func.attr in _DANGEROUS_OS_ATTRS
+            ):
+                detected.append(f"os.{func.attr}")
+            # asyncio.create_subprocess_exec / asyncio.create_subprocess_shell
+            elif (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "asyncio"
+                and func.attr.startswith("create_subprocess_")
+            ):
+                detected.append(f"asyncio.{func.attr}")
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for p in detected:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+
+    return len(unique) == 0, unique
 
 
 def _syntax_check(path: Path) -> str | None:
@@ -116,8 +151,7 @@ def _import_skill(path: Path) -> dict[str, ToolMeta]:
 class SkillRegistry:
     """In-memory registry of validated, imported skill.py modules."""
 
-    def __init__(self, model: str) -> None:
-        self._model = model
+    def __init__(self) -> None:
         self._entries: dict[str, SkillEntry] = {}
 
     async def load_skills_dir(self, skills_dir: str) -> None:
@@ -148,19 +182,14 @@ class SkillRegistry:
                 path=py_path,
                 hash=file_hash,
                 valid=False,
+                trusted=False,
                 reject_reason=f"Syntax error: {syntax_error}",
             )
 
         code = py_path.read_text(encoding="utf-8")
-        is_safe, reason = await _llm_security_check(code, self._model)
-        if not is_safe:
-            return SkillEntry(
-                name=name,
-                path=py_path,
-                hash=file_hash,
-                valid=False,
-                reject_reason=reason,
-            )
+        is_trusted, patterns = _ast_trust_check(code)
+        if patterns:
+            logger.debug("Skill %r detected dangerous patterns: %s", name, patterns)
 
         try:
             tools = _import_skill(py_path)
@@ -170,6 +199,7 @@ class SkillRegistry:
                 path=py_path,
                 hash=file_hash,
                 valid=False,
+                trusted=False,
                 reject_reason=f"Import error: {e}",
             )
 
@@ -178,6 +208,7 @@ class SkillRegistry:
             path=py_path,
             hash=file_hash,
             valid=True,
+            trusted=is_trusted,
             reject_reason=None,
             tools=tools,
         )

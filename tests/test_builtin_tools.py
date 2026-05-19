@@ -423,8 +423,7 @@ async def test_python_backend_execute_skill_callable(tmp_path):
     (skill_dir / "skill.py").write_text(_VALID_PY)
 
     backend = PythonSkillBackend(str(tmp_path))
-    with patch("make_agent.skill_registry._llm_security_check", new=AsyncMock(return_value=(True, None))):
-        await backend.setup("test-model")
+    await backend.setup("test-model")
 
     test_file = tmp_path / "hello.txt"
     test_file.write_text("hello world")
@@ -439,15 +438,14 @@ async def test_python_backend_execute_skill_callable(tmp_path):
 @pytest.mark.asyncio
 async def test_python_backend_create_and_validate_callable(tmp_path):
     backend = PythonSkillBackend(str(tmp_path))
-    with patch("make_agent.skill_registry._llm_security_check", new=AsyncMock(return_value=(True, None))):
-        await backend.setup("test-model")
-        result = await backend.executors["create_skill"](
-            name="full",
-            description="A full skill.",
-            md_content="Instructions.",
-            py_content=_VALID_PY,
-        )
-        validation = await backend.executors["validate_skill"](name="full")
+    await backend.setup("test-model")
+    result = await backend.executors["create_skill"](
+        name="full",
+        description="A full skill.",
+        md_content="Instructions.",
+        py_content=_VALID_PY,
+    )
+    validation = await backend.executors["validate_skill"](name="full")
 
     assert result.startswith("Created skill 'full'")
     assert validation.startswith("OK")
@@ -460,14 +458,13 @@ async def test_python_backend_create_skill_rejects_symlinked_skill_dir(tmp_path)
     os.symlink(outside, tmp_path / "full")
 
     backend = PythonSkillBackend(str(tmp_path))
-    with patch("make_agent.skill_registry._llm_security_check", new=AsyncMock(return_value=(True, None))):
-        await backend.setup("test-model")
-        result = await backend.executors["create_skill"](
-            name="full",
-            description="A full skill.",
-            md_content="Instructions.",
-            py_content=_VALID_PY,
-        )
+    await backend.setup("test-model")
+    result = await backend.executors["create_skill"](
+        name="full",
+        description="A full skill.",
+        md_content="Instructions.",
+        py_content=_VALID_PY,
+    )
 
     assert result.startswith("Error")
     assert not (outside / "skill.md").exists()
@@ -494,8 +491,7 @@ def slow_write(path: str, delay: float = 3.0) -> str:
     )
 
     backend = PythonSkillBackend(str(tmp_path), tool_timeout=1)
-    with patch("make_agent.skill_registry._llm_security_check", new=AsyncMock(return_value=(True, None))):
-        await backend.setup("test-model")
+    await backend.setup("test-model")
     marker = tmp_path / "marker.txt"
     result = await backend.executors["execute_skill"](
         name="slow",

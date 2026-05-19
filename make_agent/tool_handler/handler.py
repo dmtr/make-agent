@@ -61,8 +61,15 @@ class ToolHandler:
         """Register an async callback invoked before executing an untrusted skill."""
         self._confirm = confirm
 
-    def _is_trusted(self, skill_name: str) -> bool:
-        return "*" in self._trusted_skills or skill_name in self._trusted_skills
+    def _is_trusted(self, skill_name: str, target: str) -> bool:
+        if "*" in self._trusted_skills:
+            return True
+        if f"{skill_name}.{target}" in self._trusted_skills:
+            return True
+        if skill_name in self._trusted_skills:
+            return True
+        backend_trusted = self._backend.get_skill_trusted(skill_name)
+        return backend_trusted is True
 
     @property
     def schemas(self) -> list[dict]:
@@ -93,8 +100,8 @@ class ToolHandler:
         """Route *name* to its executor and return a :class:`ToolExecutionResult`."""
         if name == _SKILL_EXECUTION_TOOL:
             skill_name = arguments.get("name", "")
-            if not self._is_trusted(skill_name):
-                target = arguments.get("target") or arguments.get("command", "")
+            target = arguments.get("target") or arguments.get("command", "")
+            if not self._is_trusted(skill_name, target):
                 kwargs = arguments.get("kwargs") or {}
                 if self._confirm is not None:
                     allowed = await self._confirm(skill_name, target, kwargs)

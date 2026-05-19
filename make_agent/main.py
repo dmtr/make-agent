@@ -231,6 +231,7 @@ def main() -> None:
         default=None,
         metavar="SKILLS",
         help="Comma-separated skill names that run without confirmation, or 'all'. "
+        "Use 'skill.target' to trust a specific target (Python mode only). "
         "Unspecified skills prompt the user before each execution.",
     )
 

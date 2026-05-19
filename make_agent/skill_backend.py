@@ -78,6 +78,8 @@ class SkillBackend(Protocol):
 
     async def setup(self, model: str) -> None: ...
 
+    def get_skill_trusted(self, name: str) -> bool | None: ...
+
 
 def _terminate_subprocess_tree(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is not None:
@@ -223,6 +225,9 @@ class MakefileSkillBackend:
 
     async def setup(self, model: str) -> None:
         del model
+
+    def get_skill_trusted(self, name: str) -> bool | None:
+        return None
 
 
 def _skill_description(md_path: Path) -> str:
@@ -415,7 +420,7 @@ async def create_python_skill(
 async def validate_python_skill(
     name: str, skills_dir: str, registry: SkillRegistry
 ) -> str:
-    """Validate a skill: checks skill.md exists and runs LLM security check on skill.py."""
+    """Validate a skill: checks skill.md exists and runs AST trust check on skill.py."""
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
     md_safe = _resolve_safe_skill_path(skills_dir, name, "skill.md")
@@ -428,12 +433,13 @@ async def validate_python_skill(
         return f"Skill '{name}' is missing skill.md"
     py_path = skill_dir / "skill.py"
     if not py_path.exists():
-        return f"OK — {skill_dir} (skill.md only, no tools)"
+        return "OK — trusted (skill.md only, no tools)"
     entry = await registry.load_or_add(name, skills_dir)
     if entry is None or not entry.valid:
         reason = entry.reject_reason if entry else "unknown"
         return f"INVALID: {reason}"
-    return f"OK — {skill_dir} ({len(entry.tools)} tool(s) valid)"
+    trust_label = "trusted" if entry.trusted else "untrusted"
+    return f"OK — {trust_label} ({len(entry.tools)} tool(s))"
 
 
 PYTHON_SKILL_SCHEMAS: list[dict[str, Any]] = [
@@ -594,7 +600,7 @@ class PythonSkillBackend:
         return self._executors
 
     async def setup(self, model: str) -> None:
-        self._registry = SkillRegistry(model)
+        self._registry = SkillRegistry()
         await self._registry.load_skills_dir(self._skills_dir)
 
     def _require_registry(self) -> SkillRegistry:
@@ -603,6 +609,14 @@ class PythonSkillBackend:
                 "PythonSkillBackend.setup() must be called before executing skill tools"
             )
         return self._registry
+
+    def get_skill_trusted(self, name: str) -> bool | None:
+        if self._registry is None:
+            return None
+        entry = self._registry.get_cached_entry(name)
+        if entry is None:
+            return None
+        return entry.trusted if entry.valid else None
 
 
 __all__ = [
