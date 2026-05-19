@@ -16,6 +16,15 @@ from make_agent.agent_core import (
 )
 
 
+async def _confirm_skill(skill_name: str, target: str, kwargs: dict) -> bool:
+    """Prompt the user to allow or deny a skill execution. Returns True to allow."""
+    loop = asyncio.get_running_loop()
+    args_repr = ", ".join(f"{k}={v!r}" for k, v in (kwargs or {}).items())
+    prompt = f"\nAllow {skill_name}/{target}({args_repr})? [y/N] "
+    answer = await loop.run_in_executor(None, input, prompt)
+    return answer.strip().lower() in ("y", "yes")
+
+
 class MakeAgentShell:
     """Async interactive REPL that delegates all LLM interaction to an :class:`Agent`."""
 
@@ -127,6 +136,7 @@ class MakeAgentShell:
     async def run(self) -> None:
         """Start the interactive REPL loop."""
         self._setup_readline()
+        self._agent_manager.set_confirm_callback(_confirm_skill)
         loop = asyncio.get_running_loop()
         print(
             "Type your message. Prefix shell commands with /  "

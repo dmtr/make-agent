@@ -73,6 +73,15 @@ def _parse_disabled_tools(value: str | None, mode: str) -> frozenset[str]:
     return names
 
 
+def _parse_trusted_skills(value: str | None) -> frozenset[str]:
+    """Parse --trusted-skills into a frozenset. 'all' maps to {'*'} (trust everything)."""
+    if not value:
+        return frozenset()
+    if value.strip().lower() == "all":
+        return frozenset(["*"])
+    return frozenset(name.strip() for name in value.split(",") if name.strip())
+
+
 def _build_backend(skill_mode: str, skills_dir: str, tool_timeout: int):
     if skill_mode == "makefile":
         return MakefileSkillBackend(skills_dir, tool_timeout, Path.cwd())
@@ -100,7 +109,8 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
     memory = Memory(mode_memory_path(args.skill_mode))
     backend = _build_backend(args.skill_mode, skills_dir, args.tool_timeout)
-    tool_handler = ToolHandler(backend, memory, disabled)
+    trusted_skills = _parse_trusted_skills(getattr(args, "trusted_skills", None))
+    tool_handler = ToolHandler(backend, memory, disabled, trusted_skills)
 
     asyncio.run(
         run(
@@ -216,6 +226,13 @@ def main() -> None:
         metavar="EFFORT",
         help=f"Reasoning effort level ({'/'.join(_REASONING_EFFORT_VALUES)}, default: auto)",
     )
+    run_p.add_argument(
+        "--trusted-skills",
+        default=None,
+        metavar="SKILLS",
+        help="Comma-separated skill names that run without confirmation, or 'all'. "
+        "Unspecified skills prompt the user before each execution.",
+    )
 
     parser.add_argument(
         "--model", default=None, metavar="MODEL", help=argparse.SUPPRESS
@@ -284,6 +301,9 @@ def main() -> None:
         default="auto",
         metavar="EFFORT",
         help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--trusted-skills", default=None, metavar="SKILLS", help=argparse.SUPPRESS
     )
 
     args = parser.parse_args()

@@ -509,6 +509,10 @@ class AgentManager:
         except KeyError:
             raise SessionNotFoundError(f"Session with id {session_id} not found.")
 
+    def set_confirm_callback(self, confirm: Any) -> None:
+        """Register a skill-execution confirmation callback on the tool handler."""
+        self._tool_handler.set_confirm(confirm)  # type: ignore[union-attr]
+
     async def arun_agent(self, session_id: str, message: str) -> str:
         agent = self.get_agent(session_id)
         return await agent.arun(message)
