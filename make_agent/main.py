@@ -11,7 +11,6 @@ from make_agent.agent_shell import run
 from make_agent.app_dirs import default_skills_dir, log_file, project_dir
 from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
 from make_agent.memory import Memory
-from make_agent.settings import load_settings
 from make_agent.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
@@ -51,28 +50,6 @@ def _resolve_system_prompt(args: argparse.Namespace) -> str:
     return ""
 
 
-def _resolve_run_args(args: argparse.Namespace) -> argparse.Namespace:
-    """Apply settings.yaml defaults.
-
-    Priority: CLI flag > settings.yaml > code default.
-    """
-    settings = load_settings() or {}
-
-    if args.model is None:
-        args.model = settings.get("model")
-
-    if getattr(args, "reasoning_effort", None) is None:
-        raw = settings.get("reasoning_effort", "auto")
-        if raw not in _REASONING_EFFORT_VALUES:
-            raise ValueError(
-                f"Invalid reasoning_effort in settings.yaml: {raw!r}. "
-                f"Valid values: {', '.join(_REASONING_EFFORT_VALUES)}"
-            )
-        args.reasoning_effort = raw
-
-    return args
-
-
 def _parse_disabled_tools(value: str | None) -> frozenset[str]:
     """Parse the --disable-builtin-tools value into a frozenset of tool names.
 
@@ -91,10 +68,8 @@ def _parse_disabled_tools(value: str | None) -> frozenset[str]:
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
-    args = _resolve_run_args(args)
-
     if args.model is None:
-        sys.exit("make-agent: model is required — pass --model or set 'model' in settings.yaml")
+        sys.exit("make-agent: --model is required")
 
     prompt = args.prompt
     if args.prompt_file is not None:
@@ -142,7 +117,7 @@ def main() -> None:
 
     # ── run (default) ────────────────────────────────────────────────────────
     run_p = subparsers.add_parser("run", help="Start the interactive agent (default)")
-    run_p.add_argument("--model", default=None, metavar="MODEL", help="any-llm model string (required if not set in settings.yaml)")
+    run_p.add_argument("--model", default=None, metavar="MODEL", help="any-llm model string (required)")
     system_g = run_p.add_mutually_exclusive_group()
     system_g.add_argument("--system", default=None, metavar="PROMPT", help="System prompt string (overrides SYSTEM.md discovery)")
     system_g.add_argument("--system-file", default=None, metavar="FILE", help="Read system prompt from FILE (overrides SYSTEM.md discovery)")
@@ -176,7 +151,7 @@ def main() -> None:
     run_p.add_argument(
         "--reasoning-effort",
         choices=_REASONING_EFFORT_VALUES,
-        default=None,
+        default="auto",
         metavar="EFFORT",
         help=f"Reasoning effort level ({'/'.join(_REASONING_EFFORT_VALUES)}, default: auto)",
     )
@@ -196,7 +171,7 @@ def main() -> None:
     parser.add_argument("--max-tool-output", type=int, default=_DEFAULT_MAX_TOOL_OUTPUT, metavar="CHARS", help=argparse.SUPPRESS)
     parser.add_argument("--max-tokens", type=int, default=_DEFAULT_MAX_TOKENS, metavar="N", help=argparse.SUPPRESS)
     parser.add_argument("--disable-builtin-tools", default=None, metavar="TOOLS", help=argparse.SUPPRESS)
-    parser.add_argument("--reasoning-effort", choices=_REASONING_EFFORT_VALUES, default=None, metavar="EFFORT", help=argparse.SUPPRESS)
+    parser.add_argument("--reasoning-effort", choices=_REASONING_EFFORT_VALUES, default="auto", metavar="EFFORT", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
     _init_logging(args.loglevel)

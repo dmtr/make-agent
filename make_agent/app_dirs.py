@@ -51,8 +51,3 @@ def log_file(cwd: str | None = None) -> str:
     logs_dir = project_dir(cwd) / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     return str(logs_dir / "make-agent.log")
-
-
-def settings_file(cwd: str | None = None) -> Path:
-    """Return ``~/.make-agent/<slug>/settings.yaml`` as a Path (does not create the file)."""
-    return project_dir(cwd) / "settings.yaml"
