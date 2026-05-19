@@ -526,26 +526,24 @@ class TestTokenUsage:
         assert "id" in col_names
         assert "created_at" in col_names
         assert "session_id" in col_names
-        assert "agent" in col_names
         assert "model" in col_names
         assert "input_tokens" in col_names
         assert "output_tokens" in col_names
 
     def test_record_token_usage_inserts_row(self, mem):
-        mem.record_token_usage("sess-1", "agent.mk", "openai/gpt-4o", 100, 50)
+        mem.record_token_usage("sess-1", "openai/gpt-4o", 100, 50)
         conn = mem._get_conn()
         rows = conn.execute("SELECT * FROM token_usage").fetchall()
         assert len(rows) == 1
         row = rows[0]
         assert row["session_id"] == "sess-1"
-        assert row["agent"] == "agent.mk"
         assert row["model"] == "openai/gpt-4o"
         assert row["input_tokens"] == 100
         assert row["output_tokens"] == 50
 
     def test_record_token_usage_multiple_rows(self, mem):
-        mem.record_token_usage("sess-1", "a.mk", "model-a", 10, 5)
-        mem.record_token_usage("sess-1", "a.mk", "model-a", 20, 10)
+        mem.record_token_usage("sess-1", "model-a", 10, 5)
+        mem.record_token_usage("sess-1", "model-a", 20, 10)
         conn = mem._get_conn()
         count = conn.execute("SELECT COUNT(*) FROM token_usage WHERE session_id='sess-1'").fetchone()[0]
         assert count == 2
@@ -554,34 +552,34 @@ class TestTokenUsage:
         assert mem.get_session_stats("nonexistent-session") == {}
 
     def test_get_session_stats_aggregates_totals(self, mem):
-        mem.record_token_usage("sess-1", "a.mk", "model-a", 100, 40)
-        mem.record_token_usage("sess-1", "a.mk", "model-a", 200, 60)
+        mem.record_token_usage("sess-1", "model-a", 100, 40)
+        mem.record_token_usage("sess-1", "model-a", 200, 60)
         stats = mem.get_session_stats("sess-1")
         assert stats["input_tokens"] == 300
         assert stats["output_tokens"] == 100
         assert stats["total_tokens"] == 400
 
     def test_get_session_stats_includes_model(self, mem):
-        mem.record_token_usage("sess-1", "a.mk", "openai/gpt-4o", 10, 5)
+        mem.record_token_usage("sess-1", "openai/gpt-4o", 10, 5)
         stats = mem.get_session_stats("sess-1")
         assert stats["models"] == ["openai/gpt-4o"]
 
     def test_get_session_stats_multiple_models(self, mem):
-        mem.record_token_usage("sess-1", "a.mk", "model-a", 10, 5)
-        mem.record_token_usage("sess-1", "b.mk", "model-b", 20, 10)
+        mem.record_token_usage("sess-1", "model-a", 10, 5)
+        mem.record_token_usage("sess-1", "model-b", 20, 10)
         stats = mem.get_session_stats("sess-1")
         assert sorted(stats["models"]) == ["model-a", "model-b"]
 
     def test_get_session_stats_isolates_sessions(self, mem):
-        mem.record_token_usage("sess-1", "a.mk", "model-a", 100, 50)
-        mem.record_token_usage("sess-2", "a.mk", "model-a", 999, 999)
+        mem.record_token_usage("sess-1", "model-a", 100, 50)
+        mem.record_token_usage("sess-2", "model-a", 999, 999)
         stats = mem.get_session_stats("sess-1")
         assert stats["input_tokens"] == 100
         assert stats["output_tokens"] == 50
         assert stats["total_tokens"] == 150
 
     def test_get_session_stats_deduplicates_model_names(self, mem):
-        mem.record_token_usage("sess-1", "a.mk", "model-a", 10, 5)
-        mem.record_token_usage("sess-1", "a.mk", "model-a", 20, 10)
+        mem.record_token_usage("sess-1", "model-a", 10, 5)
+        mem.record_token_usage("sess-1", "model-a", 20, 10)
         stats = mem.get_session_stats("sess-1")
         assert stats["models"] == ["model-a"]

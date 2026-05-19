@@ -304,7 +304,6 @@ class Agent:
             if usage is not None:
                 self._memory.record_token_usage(
                     self._session_id or "",
-                    "main",
                     self._model,
                     usage.prompt_tokens,
                     usage.completion_tokens,

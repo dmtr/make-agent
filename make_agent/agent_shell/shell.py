@@ -66,16 +66,6 @@ class MakeAgentShell:
         print(f"  Output tokens: {stats['output_tokens']}")
         print(f"  Total tokens:  {stats['total_tokens']}")
 
-        # Per-agent breakdown
-        agents = stats.get("agents", {})
-        if agents:
-            print("\nPer-agent breakdown:")
-            for agent_name, agent_stats in sorted(agents.items()):
-                print(f"    {agent_name}:")
-                print(f"      Input:  {agent_stats['input_tokens']}")
-                print(f"      Output: {agent_stats['output_tokens']}")
-                print(f"      Total:  {agent_stats['total_tokens']}")
-
         return False
 
     def _cmd_help(self) -> bool:
