@@ -73,6 +73,73 @@ def _make_tool_call_stream(tool_id: str, tool_name: str, arguments: str):
     return _stream()
 
 
+def _make_parallel_tool_calls_stream_anthropic_style(calls: list[tuple[str, str, str]]):
+    """Simulate Anthropic-style parallel tool calls where any_llm hardcodes index=0.
+
+    Each call is (tool_id, tool_name, arguments_json).  All start-events and all
+    delta-events carry index=0 — exactly the broken output produced by any_llm's
+    Anthropic provider — so the fix must be id-based, not index-based.
+    """
+
+    async def _stream():
+        for tool_id, tool_name, arguments in calls:
+            # Start event: has id + name, hardcoded index=0
+            start_chunk = MagicMock()
+            start_chunk.choices = [MagicMock()]
+            start_chunk.choices[0].delta.content = None
+            tc_start = MagicMock()
+            tc_start.index = 0  # hardcoded by any_llm bug
+            tc_start.id = tool_id
+            tc_start.function = MagicMock()
+            tc_start.function.name = tool_name
+            tc_start.function.arguments = ""
+            start_chunk.choices[0].delta.tool_calls = [tc_start]
+            start_chunk.usage = None
+            yield start_chunk
+
+            # Argument delta: no id, hardcoded index=0
+            delta_chunk = MagicMock()
+            delta_chunk.choices = [MagicMock()]
+            delta_chunk.choices[0].delta.content = None
+            tc_delta = MagicMock()
+            tc_delta.index = 0  # hardcoded by any_llm bug
+            tc_delta.id = None
+            tc_delta.function = MagicMock()
+            tc_delta.function.name = None
+            tc_delta.function.arguments = arguments
+            delta_chunk.choices[0].delta.tool_calls = [tc_delta]
+            delta_chunk.usage = None
+            yield delta_chunk
+
+    return _stream()
+
+
+def _make_tool_call_stream_empty_args(tool_id: str, tool_name: str):
+    """Anthropic-style stream where a no-argument tool sends only a start event (no delta).
+
+    This replicates what any_llm emits for tools with empty input: the start
+    chunk sets arguments="" and no input_json_delta follows, leaving arguments as "".
+    json.loads("") raises JSONDecodeError — the fix should treat "" as "{}".
+    """
+
+    async def _stream():
+        chunk = MagicMock()
+        chunk.choices = [MagicMock()]
+        chunk.choices[0].delta.content = None
+        tc_delta = MagicMock()
+        tc_delta.index = 0
+        tc_delta.id = tool_id
+        tc_delta.function = MagicMock()
+        tc_delta.function.name = tool_name
+        tc_delta.function.arguments = ""  # no delta follows for empty-input tools
+        chunk.choices[0].delta.tool_calls = [tc_delta]
+        chunk.usage = None
+        yield chunk
+
+    return _stream()
+
+
+
 def _mock_acompletion_with_retry(*streams):
     """Return an async callable that yields successive streams on each call."""
     streams_list = list(streams)
@@ -262,3 +329,162 @@ class TestAssistantMessageContent:
         for msg in assistant_msgs:
             assert msg["content"] is not None, "assistant message content must not be None (breaks Ollama)"
             assert isinstance(msg["content"], str)
+
+
+class TestAnthropicParallelToolCalls:
+    """Anthropic (via any_llm) hardcodes index=0 for every tool call in a response.
+
+    When the model returns two parallel tool calls, both start-events and both
+    delta-events carry index=0.  The agent loop must use id-based detection to
+    keep them separate, otherwise names and arguments get concatenated and the
+    next LLM request fails with a JSONDecodeError, breaking the loop.
+    """
+
+    def _make_agent(self, tmp_path):
+        from make_agent.agent_core import Agent, AgentConfig
+        from make_agent.memory import Memory
+        from make_agent.tool_handler import ToolHandler
+
+        memory = Memory(tmp_path / "memory.db")
+        tool_handler = ToolHandler(memory=memory, skills_dir=str(tmp_path))
+        agent = Agent(
+            AgentConfig(system_prompt="You are a helper.", model="anthropic/claude-3-5-sonnet-20241022", skills_dir=str(tmp_path)),
+            memory,
+            tool_handler,
+        )
+        for name in ("tool_a", "tool_b"):
+            agent._tool_handler._schemas.append(  # noqa: SLF001
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": f"Tool {name}.",
+                        "parameters": {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]},
+                    },
+                }
+            )
+            agent._tool_handler._executors[name] = lambda x, _n=name: f"{_n}_result"  # noqa: SLF001
+        return agent
+
+    async def test_parallel_tool_calls_are_kept_separate(self, tmp_path):
+        """Two parallel Anthropic tool calls (both index=0) must each be executed."""
+        agent = self._make_agent(tmp_path)
+
+        parallel_stream = _make_parallel_tool_calls_stream_anthropic_style(
+            [
+                ("toolu_A", "tool_a", '{"x": 1}'),
+                ("toolu_B", "tool_b", '{"x": 2}'),
+            ]
+        )
+
+        with patch(
+            "make_agent.agent_core.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(parallel_stream, _make_text_stream("done")),
+        ):
+            result = await agent.arun("run both tools")
+
+        assert result == "done"
+        tool_msgs = [m for m in agent.messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 2, f"expected 2 tool results, got {len(tool_msgs)}: {tool_msgs}"
+
+        tool_call_ids = {m["tool_call_id"] for m in tool_msgs}
+        assert "toolu_A" in tool_call_ids
+        assert "toolu_B" in tool_call_ids
+
+    async def test_parallel_tool_calls_have_correct_arguments(self, tmp_path):
+        """Arguments must not be concatenated across parallel tool calls."""
+        agent = self._make_agent(tmp_path)
+
+        received: dict[str, dict] = {}
+
+        def capture_a(**kwargs):
+            received["tool_a"] = kwargs
+            return "result_a"
+
+        def capture_b(**kwargs):
+            received["tool_b"] = kwargs
+            return "result_b"
+
+        agent._tool_handler._executors["tool_a"] = capture_a  # noqa: SLF001
+        agent._tool_handler._executors["tool_b"] = capture_b  # noqa: SLF001
+
+        parallel_stream = _make_parallel_tool_calls_stream_anthropic_style(
+            [
+                ("toolu_A", "tool_a", '{"x": 42}'),
+                ("toolu_B", "tool_b", '{"x": 99}'),
+            ]
+        )
+
+        with patch(
+            "make_agent.agent_core.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(parallel_stream, _make_text_stream("done")),
+        ):
+            await agent.arun("run both tools")
+
+        assert received.get("tool_a") == {"x": 42}, f"tool_a got wrong args: {received.get('tool_a')}"
+        assert received.get("tool_b") == {"x": 99}, f"tool_b got wrong args: {received.get('tool_b')}"
+
+
+class TestAnthropicEmptyArguments:
+    """Anthropic tools with no arguments may stream only a start event (no input_json_delta).
+
+    The start chunk from any_llm sets arguments="" and no further delta arrives,
+    leaving the accumulated arguments as "".  json.loads("") raises JSONDecodeError;
+    the fix is to treat "" as "{}".
+    """
+
+    def _make_agent(self, tmp_path):
+        from make_agent.agent_core import Agent, AgentConfig
+        from make_agent.memory import Memory
+        from make_agent.tool_handler import ToolHandler
+
+        memory = Memory(tmp_path / "memory.db")
+        tool_handler = ToolHandler(memory=memory, skills_dir=str(tmp_path))
+        agent = Agent(
+            AgentConfig(system_prompt="You are a helper.", model="anthropic/claude-3-5-haiku-20241022", skills_dir=str(tmp_path)),
+            memory,
+            tool_handler,
+        )
+        agent._tool_handler._schemas.append(  # noqa: SLF001
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_skills",
+                    "description": "List all available skills.",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        )
+        agent._tool_handler._executors["list_skills"] = lambda **_: "skill1, skill2"  # noqa: SLF001
+        return agent
+
+    async def test_empty_arguments_string_does_not_crash(self, tmp_path):
+        """A tool call whose arguments accumulate to '' must not raise JSONDecodeError.
+
+        The error surfaces on the *second* LLM request when _convert_messages_for_anthropic
+        calls json.loads() on the stored arguments string — so we verify the full two-turn
+        round-trip completes successfully.
+        """
+        agent = self._make_agent(tmp_path)
+
+        with patch(
+            "make_agent.agent_core.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(
+                _make_tool_call_stream_empty_args("toolu_1", "list_skills"),
+                _make_text_stream("here are your skills"),
+            ),
+        ):
+            result = await agent.arun("list skills")
+
+        assert result == "here are your skills"
+        tool_msgs = [m for m in agent.messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 1
+        assert "malformed" not in tool_msgs[0]["content"]
+
+        # The stored assistant message must have valid JSON arguments so the
+        # next call to _convert_messages_for_anthropic doesn't raise.
+        assistant_msgs = [m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m]
+        assert assistant_msgs
+        stored_args = assistant_msgs[0]["tool_calls"][0]["function"]["arguments"]
+        import json
+        assert json.loads(stored_args) == {}, f"stored arguments must be valid JSON '{{}}', got {stored_args!r}"

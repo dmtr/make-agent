@@ -278,9 +278,20 @@ class Agent:
                     yield TokenEvent(delta.content)
                 if delta.tool_calls:
                     for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in tool_call_acc:
-                            tool_call_acc[idx] = {"id": tc_delta.id or "", "name": "", "arguments": ""}
+                        if tc_delta.id:
+                            # Tool call start event (identified by non-empty id).
+                            # Some providers (e.g. Anthropic via any_llm) hardcode
+                            # index=0 for every tool call, so use id-based lookup
+                            # instead of the index to correctly handle parallel calls.
+                            idx = next((k for k, v in tool_call_acc.items() if v["id"] == tc_delta.id), None)
+                            if idx is None:
+                                idx = max(tool_call_acc.keys(), default=-1) + 1
+                                tool_call_acc[idx] = {"id": tc_delta.id, "name": "", "arguments": ""}
+                        else:
+                            # Argument delta: belongs to the most recently started call.
+                            idx = max(tool_call_acc.keys(), default=tc_delta.index)
+                            if idx not in tool_call_acc:
+                                tool_call_acc[idx] = {"id": "", "name": "", "arguments": ""}
                         if tc_delta.function:
                             tool_call_acc[idx]["name"] += tc_delta.function.name or ""
                             tool_call_acc[idx]["arguments"] += tc_delta.function.arguments or ""
@@ -307,6 +318,13 @@ class Agent:
             if tool_call_acc or content_tool_calls:
                 if tool_call_acc:
                     sorted_tcs = [tool_call_acc[i] for i in sorted(tool_call_acc)]
+                    # Normalise empty arguments to "{}" so _convert_messages_for_anthropic
+                    # (which calls json.loads on the stored string) doesn't raise.
+                    # Anthropic omits input_json_delta events for tools with no arguments,
+                    # leaving the accumulated string as "".
+                    for tc in sorted_tcs:
+                        if not tc["arguments"]:
+                            tc["arguments"] = "{}"
                     assistant_msg: dict = {
                         "role": "assistant",
                         "content": content,
