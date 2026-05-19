@@ -18,6 +18,8 @@ from any_llm.types.completion import (
     Function,
 )
 
+from make_agent.protocols import MemoryProtocol, ToolHandlerProtocol
+
 from .export import export_conversation
 
 _DEFAULT_MAX_RETRIES = 5
@@ -190,11 +192,11 @@ class Agent:
     ``astream()`` to receive events as they are produced::
 
         config = AgentConfig(system_prompt="You are a helpful assistant.", model="anthropic/claude-haiku-4-5")
-        agent = Agent(config, memory=None)
+        agent = Agent(config, memory=memory, tool_handler=tool_handler)
         reply = await agent.arun("List the skills available.")
     """
 
-    def __init__(self, config: AgentConfig, memory: Any, tool_handler: Any) -> None:
+    def __init__(self, config: AgentConfig, memory: MemoryProtocol, tool_handler: ToolHandlerProtocol) -> None:
         self._model = config.model
         self._max_retries = config.max_retries
         self._max_tokens = config.max_tokens
@@ -419,7 +421,7 @@ class SessionNotFoundError(Exception):
 
 class AgentManager:
 
-    def __init__(self, memory: Any, tool_handler: Any) -> None:
+    def __init__(self, memory: MemoryProtocol, tool_handler: ToolHandlerProtocol) -> None:
         self._memory = memory
         self._tool_handler = tool_handler
         self._sessions: dict[str, Agent] = {}
