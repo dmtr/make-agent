@@ -61,6 +61,7 @@ def _sha256(path: Path) -> str:
 
 async def _llm_security_check(code: str, model: str) -> tuple[bool, str | None]:
     """Call the LLM to audit *code*. Returns ``(is_safe, reject_reason)``."""
+    logger.debug("Running LLM security check on code:\n%s", code)
     prompt = _SECURITY_PROMPT.format(code=code)
     try:
         stream = await any_llm.acompletion(
@@ -79,6 +80,7 @@ async def _llm_security_check(code: str, model: str) -> tuple[bool, str | None]:
         return False, f"LLM check error: {e}"
 
     upper = text.upper()
+    logger.debug("LLM security check result: %r", text)
     if upper.startswith("SAFE"):
         return True, None
     reason = text[len("UNSAFE:") :].strip() if upper.startswith("UNSAFE:") else text
