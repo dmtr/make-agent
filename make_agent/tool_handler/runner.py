@@ -44,7 +44,9 @@ def _is_valid_make_var_name(name: str) -> bool:
 
 def _param_schema(p: Param) -> dict[str, str]:
     """Return the JSON Schema fragment for a single tool parameter."""
-    json_type = p.type if p.type in ("string", "number", "integer", "boolean") else "string"
+    json_type = (
+        p.type if p.type in ("string", "number", "integer", "boolean") else "string"
+    )
     return {"type": json_type, "description": p.description}
 
 
@@ -73,7 +75,9 @@ def build_tools(makefile: Makefile) -> list[dict[str, Any]]:
     return tools
 
 
-def get_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> ToolExecutionResult:
+def get_tool_result(
+    stdout: str, stderr: str, exit_code: int | None, max_output: int = 0
+) -> ToolExecutionResult:
     """Build a :class:`ToolExecutionResult` from raw subprocess output.
 
     *max_output* limits how many characters of the final combined output are kept.
@@ -81,7 +85,9 @@ def get_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output:
     truncation notice is included within the limit.  ``0`` means no limit.
     """
     result = []
-    is_error = (exit_code != 0 if exit_code is not None else True) or bool(stderr.strip())
+    is_error = (exit_code != 0 if exit_code is not None else True) or bool(
+        stderr.strip()
+    )
     is_stdout_empty = stdout.strip() == ""
 
     if is_error:
@@ -136,7 +142,11 @@ async def run_tool(
         if not _is_valid_make_var_name(k):
             return get_tool_result("", f"{k!r} is not a valid make variable name", None)
         if k in os.environ:
-            return get_tool_result("", f"argument {k!r} shadows the system environment variable {k!r}", None)
+            return get_tool_result(
+                "",
+                f"argument {k!r} shadows the system environment variable {k!r}",
+                None,
+            )
 
     env = {**os.environ, **{k: str(v) for k, v in arguments.items()}}
     cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target]

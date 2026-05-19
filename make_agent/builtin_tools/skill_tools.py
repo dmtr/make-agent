@@ -48,7 +48,9 @@ def list_skills(skills_dir: str) -> str:
     path = Path(skills_dir)
     if not path.exists():
         return "No skills found (directory does not exist)"
-    skill_dirs = sorted(p for p in path.iterdir() if p.is_dir() and (p / "skill.mk").exists())
+    skill_dirs = sorted(
+        p for p in path.iterdir() if p.is_dir() and (p / "skill.mk").exists()
+    )
     if not skill_dirs:
         return "No skills found"
     entries = []
@@ -103,13 +105,17 @@ def execute_skill(
 
     env_vars: dict[str, str] = {}
     idx = 0
-    while idx < len(tokens) and "=" in tokens[idx] and not tokens[idx].startswith("make"):
+    while (
+        idx < len(tokens) and "=" in tokens[idx] and not tokens[idx].startswith("make")
+    ):
         token = tokens[idx]
         k, _, v = token.partition("=")
         if not _is_valid_make_var_name(k):
             return f"Error: {k!r} is not a valid make variable name"
         if k in os.environ:
-            return f"Error: parameter {k!r} shadows the system environment variable {k!r}"
+            return (
+                f"Error: parameter {k!r} shadows the system environment variable {k!r}"
+            )
         env_vars[k] = v
         idx += 1
 
@@ -218,7 +224,10 @@ SKILL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "The skill name (directory name)."},
+                    "name": {
+                        "type": "string",
+                        "description": "The skill name (directory name).",
+                    },
                 },
                 "required": ["name"],
             },
@@ -236,7 +245,10 @@ SKILL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "The skill name (directory name)."},
+                    "name": {
+                        "type": "string",
+                        "description": "The skill name (directory name).",
+                    },
                     "command": {
                         "type": "string",
                         "description": (
@@ -285,7 +297,10 @@ SKILL_SCHEMAS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "The skill name (directory name)."},
+                    "name": {
+                        "type": "string",
+                        "description": "The skill name (directory name).",
+                    },
                 },
                 "required": ["name"],
             },

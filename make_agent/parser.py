@@ -71,7 +71,7 @@ class Variable:
 @dataclass
 class Param:
     name: str
-    type: str          # JSON Schema primitive: string, number, integer, boolean
+    type: str  # JSON Schema primitive: string, number, integer, boolean
     description: str
 
 
@@ -170,7 +170,9 @@ def parse(text: str) -> Makefile:
         if state == _State.DEFINE:
             if line.startswith("endef") and line.strip() == "endef":
                 value = "\n".join(define_lines)
-                result.variables[define_name] = Variable(name=define_name, value=value, flavor="define")
+                result.variables[define_name] = Variable(
+                    name=define_name, value=value, flavor="define"
+                )
                 if define_name == "SYSTEM_PROMPT":
                     result.system_prompt = value.strip() or None
                 if define_name == "DESCRIPTION":
@@ -191,7 +193,12 @@ def parse(text: str) -> Makefile:
         # GNU Make inside a rule body and should not end recipe collection.
         if state == _State.RECIPE:
             stripped_peek = line.strip()
-            if stripped_peek.startswith("#") and stripped_peek not in ("# <tool>", "# <system>", "# </tool>", "# </system>"):
+            if stripped_peek.startswith("#") and stripped_peek not in (
+                "# <tool>",
+                "# <system>",
+                "# </tool>",
+                "# </system>",
+            ):
                 continue
             state = _State.NORMAL
             current_recipes = None
@@ -222,11 +229,13 @@ def parse(text: str) -> Makefile:
                 content = stripped[2:]
                 param_m = _PARAM_RE.match(content)
                 if param_m:
-                    tool_params.append(Param(
-                        name=param_m.group(1),
-                        type=param_m.group(2),
-                        description=param_m.group(3).strip(),
-                    ))
+                    tool_params.append(
+                        Param(
+                            name=param_m.group(1),
+                            type=param_m.group(2),
+                            description=param_m.group(3).strip(),
+                        )
+                    )
                 else:
                     tool_lines.append(content)
             elif stripped == "#":
@@ -276,9 +285,13 @@ def parse(text: str) -> Makefile:
             expanded = _expand_vars(raw_val, result.variables)
             flavor = _FLAVOR_MAP.get(op, "recursive")
             if op == "+=" and name in result.variables:
-                result.variables[name].value = (result.variables[name].value + " " + expanded).strip()
+                result.variables[name].value = (
+                    result.variables[name].value + " " + expanded
+                ).strip()
             else:
-                result.variables[name] = Variable(name=name, value=expanded, flavor=flavor)
+                result.variables[name] = Variable(
+                    name=name, value=expanded, flavor=flavor
+                )
             continue
 
         # ── Target rule ──────────────────────────────────────────────────────
@@ -316,7 +329,9 @@ def parse_file(path: str | Path) -> Makefile:
 
 # Matches $(NAME), ${NAME}, or $$NAME in recipe text.
 # The optional ``value `` prefix handles the ``$(value NAME)`` raw-literal form.
-_RECIPE_VAR_RE = re.compile(r"\$\((?:value\s+)?([^)]+)\)|\$\{(?:value\s+)?([^}]+)\}|\$\$(\w+)")
+_RECIPE_VAR_RE = re.compile(
+    r"\$\((?:value\s+)?([^)]+)\)|\$\{(?:value\s+)?([^}]+)\}|\$\$(\w+)"
+)
 
 
 def validate(makefile: Makefile) -> list[str]:
@@ -331,7 +346,10 @@ def validate(makefile: Makefile) -> list[str]:
         if not rule.params:
             continue
         recipe_text = "\n".join(rule.recipes)
-        used_vars = {m.group(1) or m.group(2) or m.group(3) for m in _RECIPE_VAR_RE.finditer(recipe_text)}
+        used_vars = {
+            m.group(1) or m.group(2) or m.group(3)
+            for m in _RECIPE_VAR_RE.finditer(recipe_text)
+        }
         for param in rule.params:
             if param.name not in used_vars:
                 errors.append(

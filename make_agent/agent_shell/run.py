@@ -13,7 +13,7 @@ from make_agent.agent_core import (
     AgentConfig,
     AgentManager,
 )
-from make_agent.app_dirs import default_skills_dir, project_dir
+from make_agent.app_dirs import project_dir
 from make_agent.memory import Memory
 from make_agent.tool_handler import ToolHandler
 
@@ -30,17 +30,10 @@ async def run(
     tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
-    skills_dir: str | None = None,
-    disabled_builtin_tools: frozenset[str] = frozenset(),
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
 ) -> None:
-    """Start the interactive shell (or send a single prompt and return).
-
-    Uses *system_prompt* as the agent's system instruction.  Enters a
-    :class:`MakeAgentShell` loop.  Press Ctrl-D or type ``/exit`` to leave.
-    When *prompt* is given the shell is bypassed: the prompt is sent to the
-    agent and the reply is printed.
-    """
+    """Start the interactive shell (or send a single prompt and return)."""
+    await tool_handler.setup(model)
     agent_config = AgentConfig(
         system_prompt=system_prompt,
         model=model,
@@ -48,8 +41,6 @@ async def run(
         tool_timeout=tool_timeout,
         max_tool_output=max_tool_output,
         max_tokens=max_tokens,
-        skills_dir=skills_dir or default_skills_dir(),
-        disabled_builtin_tools=disabled_builtin_tools,
         reasoning_effort=reasoning_effort,
         project_dir=project_dir(),
     )

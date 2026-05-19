@@ -5,7 +5,9 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+from make_agent.memory import Memory
 from make_agent.parser import parse
+from make_agent.skill_backend import MakefileSkillBackend
 from make_agent.tool_handler import ToolHandler, build_tools, run_tool
 
 
@@ -333,3 +335,34 @@ async def test_run_tool_truncates_output(tmp_path):
     result = await run_tool("big", {}, mf, max_output=100)
     assert len(result.output) == 100
     assert "omitted_chars" in result.output
+
+
+async def test_tool_handler_supports_async_backend_executors(tmp_path):
+    memory = Memory(tmp_path / "memory.db")
+    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
+    handler = ToolHandler(backend, memory)
+
+    async def _async_tool(**kwargs):
+        assert kwargs == {"name": "ok"}
+        return "async result"
+
+    handler._schemas.append(  # noqa: SLF001
+        {
+            "type": "function",
+            "function": {
+                "name": "async_tool",
+                "description": "Async tool.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                },
+            },
+        }
+    )
+    handler._executors["async_tool"] = _async_tool  # noqa: SLF001
+
+    result = await handler.execute("async_tool", {"name": "ok"})
+
+    assert result.output == "async result"
+    assert result.is_error is False

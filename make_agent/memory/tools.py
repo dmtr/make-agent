@@ -97,7 +97,13 @@ MEMORY_SCHEMAS: list[dict[str, Any]] = [
 def get_memory_executors(memory: Memory) -> dict[str, Any]:
     """Return a name → callable executor map for memory tools bound to *memory*."""
     return {
-        "search_user_memory": lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_user(query, limit, from_date, to_date),
-        "search_agent_memory": lambda query, limit=10, from_date=None, to_date=None, **_kw: memory.search_agent(query, limit, from_date, to_date),
-        "get_recent_messages": lambda limit=10, from_date=None, to_date=None, **_kw: memory.recent(limit, from_date, to_date),
+        "search_user_memory": lambda query, limit=10, from_date=None, to_date=None, **_kw: (
+            memory.search_user(query, limit, from_date, to_date)
+        ),
+        "search_agent_memory": lambda query, limit=10, from_date=None, to_date=None, **_kw: (
+            memory.search_agent(query, limit, from_date, to_date)
+        ),
+        "get_recent_messages": lambda limit=10, from_date=None, to_date=None, **_kw: (
+            memory.recent(limit, from_date, to_date)
+        ),
     }

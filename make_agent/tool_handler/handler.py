@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from pathlib import Path
 from typing import Any
 
-from make_agent.builtin_tools import BUILTIN_SCHEMAS, get_builtin_tools
 from make_agent.memory import MEMORY_SCHEMAS, Memory, get_memory_executors
+from make_agent.skill_backend import SkillBackend
 
 from .runner import ToolExecutionResult, get_tool_result
 
@@ -15,30 +15,38 @@ logger = logging.getLogger(__name__)
 
 
 class ToolHandler:
-    """Owns tool schemas, executor map, and dispatch for a single agent session.
-
-    Assembles the full list of tool schemas (built-ins + memory tools, minus any
-    disabled names) and the corresponding executor callables.  Call :meth:`execute`
-    to dispatch a named tool call and receive a :class:`ToolExecutionResult`.
-    """
+    """Owns tool schemas, executor map, and dispatch for a single agent session."""
 
     def __init__(
         self,
+        backend: SkillBackend,
         memory: Memory,
-        skills_dir: str,
         disabled: frozenset[str] = frozenset(),
-        tool_timeout: int = 600,
-        base_dir: Path | None = None,
     ) -> None:
-
-        _base_dir = base_dir if base_dir is not None else Path.cwd()
-        active_builtin_schemas = [s for s in BUILTIN_SCHEMAS if s["function"]["name"] not in disabled]
-        active_memory_schemas = [s for s in MEMORY_SCHEMAS if s["function"]["name"] not in disabled]
-        self._schemas: list[dict] = active_builtin_schemas + active_memory_schemas
-
-        builtin_executors = get_builtin_tools(skills_dir, disabled, tool_timeout, base_dir=_base_dir)
-        memory_executors = {k: v for k, v in get_memory_executors(memory).items() if k not in disabled}
-        self._executors: dict[str, Any] = {**builtin_executors, **memory_executors}
+        active_backend_schemas = [
+            schema
+            for schema in backend.schemas
+            if schema["function"]["name"] not in disabled
+        ]
+        active_memory_schemas = [
+            schema
+            for schema in MEMORY_SCHEMAS
+            if schema["function"]["name"] not in disabled
+        ]
+        self._schemas: list[dict] = active_backend_schemas + active_memory_schemas
+        self._executors: dict[str, Any] = {
+            **{
+                name: executor
+                for name, executor in backend.executors.items()
+                if name not in disabled
+            },
+            **{
+                name: executor
+                for name, executor in get_memory_executors(memory).items()
+                if name not in disabled
+            },
+        }
+        self._backend = backend
 
     get_tool_result = staticmethod(get_tool_result)
 
@@ -50,7 +58,7 @@ class ToolHandler:
     @property
     def tool_names(self) -> set[str]:
         """Set of tool names known to this handler."""
-        return {t["function"]["name"] for t in self._schemas}
+        return {tool["function"]["name"] for tool in self._schemas}
 
     @property
     def llm_tool_kwargs(self) -> dict:
@@ -59,21 +67,22 @@ class ToolHandler:
             return {"tools": self._schemas, "tool_choice": "auto"}
         return {}
 
+    async def setup(self, model: str) -> None:
+        await self._backend.setup(model)
+
     async def execute(
         self,
         name: str,
         arguments: dict,
         max_output: int = 0,
     ) -> ToolExecutionResult:
-        """Route *name* to its executor and return a :class:`ToolExecutionResult`.
-
-        Handles unknown tool names, argument type errors, and unexpected exceptions,
-        returning an error result in each case rather than propagating.
-        """
+        """Route *name* to its executor and return a :class:`ToolExecutionResult`."""
         if name not in self._executors:
             return get_tool_result("", f"unknown tool: {name}", None)
         try:
             raw = self._executors[name](**arguments)
+            if asyncio.iscoroutine(raw):
+                raw = await raw
             return get_tool_result(str(raw), "", 0, max_output)
         except TypeError as e:
             logger.error("argument type error when running tool %s: %s", name, e)

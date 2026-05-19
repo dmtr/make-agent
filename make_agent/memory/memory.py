@@ -1,6 +1,6 @@
 """Persistent conversation memory backed by SQLite with FTS5 full-text search.
 
-The database lives at ``~/.make-agent/<project-slug>/memory.db``.
+The database lives at ``~/.make-agent/<project-slug>/<mode>/memory.db``.
 
 Schema overview:
 - ``messages``      — base table (id, created_at, sender, message)
@@ -93,7 +93,9 @@ class Memory:
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         """Apply in-place schema migrations for existing databases."""
-        col_names = {row[1] for row in conn.execute("PRAGMA table_info(token_usage)").fetchall()}
+        col_names = {
+            row[1] for row in conn.execute("PRAGMA table_info(token_usage)").fetchall()
+        }
         if "agent" in col_names:
             conn.execute(
                 "CREATE TABLE token_usage_new AS SELECT id, created_at, session_id, model,"
@@ -184,7 +186,9 @@ class Memory:
         if not rows:
             return "No messages found."
         rows = list(reversed(rows))
-        return "\n".join(f"[{row['created_at']}] {row['sender']}: {row['message']}" for row in rows)
+        return "\n".join(
+            f"[{row['created_at']}] {row['sender']}: {row['message']}" for row in rows
+        )
 
     def record_token_usage(
         self,

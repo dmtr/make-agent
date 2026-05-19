@@ -91,7 +91,13 @@ def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
     """
     try:
         orig = e.original_exception
-        headers = orig.response.headers if orig is not None and hasattr(orig, "response") and orig.response is not None else {}
+        headers = (
+            orig.response.headers
+            if orig is not None
+            and hasattr(orig, "response")
+            and orig.response is not None
+            else {}
+        )
     except Exception:
         return None
     if ms := headers.get("retry-after-ms"):
@@ -134,7 +140,8 @@ async def _acompletion_with_retry(
                 raise
             wait = _parse_retry_after(e) or min(2**attempt, 60)
             print(
-                f"Rate limited, retrying in {wait:.0f}s" f" (attempt {attempt + 1}/{max_retries})...",
+                f"Rate limited, retrying in {wait:.0f}s"
+                f" (attempt {attempt + 1}/{max_retries})...",
                 flush=True,
             )
             await asyncio.sleep(wait)
@@ -160,7 +167,9 @@ def _parse_item(doc: Any) -> ChatCompletionMessageToolCall | None:
     return result
 
 
-def _parse_content_tool_calls(content: str) -> list[ChatCompletionMessageToolCall] | None:
+def _parse_content_tool_calls(
+    content: str,
+) -> list[ChatCompletionMessageToolCall] | None:
     """Parse tool calls embedded in message content (e.g. Gemma-style responses).
 
     Some models encode tool calls as a JSON array in ``content`` instead of
@@ -196,7 +205,12 @@ class Agent:
         reply = await agent.arun("List the skills available.")
     """
 
-    def __init__(self, config: AgentConfig, memory: MemoryProtocol, tool_handler: ToolHandlerProtocol) -> None:
+    def __init__(
+        self,
+        config: AgentConfig,
+        memory: MemoryProtocol,
+        tool_handler: ToolHandlerProtocol,
+    ) -> None:
         self._model = config.model
         self._max_retries = config.max_retries
         self._max_tokens = config.max_tokens
@@ -250,9 +264,13 @@ class Agent:
 
         while True:
             if model_turns >= _MAX_MODEL_TURNS_PER_REQUEST:
-                raise RuntimeError(f"aborted: exceeded {_MAX_MODEL_TURNS_PER_REQUEST} model turns in a single request")
+                raise RuntimeError(
+                    f"aborted: exceeded {_MAX_MODEL_TURNS_PER_REQUEST} model turns in a single request"
+                )
             if time.monotonic() - started_at >= _MAX_RUN_SECONDS_PER_REQUEST:
-                raise RuntimeError(f"aborted: exceeded {_MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
+                raise RuntimeError(
+                    f"aborted: exceeded {_MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request"
+                )
 
             stream = await _acompletion_with_retry(
                 self._model,
@@ -285,23 +303,44 @@ class Agent:
                             # Some providers (e.g. Anthropic via any_llm) hardcode
                             # index=0 for every tool call, so use id-based lookup
                             # instead of the index to correctly handle parallel calls.
-                            idx = next((k for k, v in tool_call_acc.items() if v["id"] == tc_delta.id), None)
+                            idx = next(
+                                (
+                                    k
+                                    for k, v in tool_call_acc.items()
+                                    if v["id"] == tc_delta.id
+                                ),
+                                None,
+                            )
                             if idx is None:
                                 idx = max(tool_call_acc.keys(), default=-1) + 1
-                                tool_call_acc[idx] = {"id": tc_delta.id, "name": "", "arguments": ""}
+                                tool_call_acc[idx] = {
+                                    "id": tc_delta.id,
+                                    "name": "",
+                                    "arguments": "",
+                                }
                         else:
                             # Argument delta: belongs to the most recently started call.
                             idx = max(tool_call_acc.keys(), default=tc_delta.index)
                             if idx not in tool_call_acc:
-                                tool_call_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                                tool_call_acc[idx] = {
+                                    "id": "",
+                                    "name": "",
+                                    "arguments": "",
+                                }
                         if tc_delta.function:
                             tool_call_acc[idx]["name"] += tc_delta.function.name or ""
-                            tool_call_acc[idx]["arguments"] += tc_delta.function.arguments or ""
+                            tool_call_acc[idx]["arguments"] += (
+                                tc_delta.function.arguments or ""
+                            )
                 if chunk.usage is not None:
                     usage = chunk.usage
 
             content = "".join(content_parts)
-            logger.debug("[model_response] content=%r tool_calls=%d", content[:120], len(tool_call_acc))
+            logger.debug(
+                "[model_response] content=%r tool_calls=%d",
+                content[:120],
+                len(tool_call_acc),
+            )
 
             if usage is not None:
                 self._memory.record_token_usage(
@@ -333,7 +372,10 @@ class Agent:
                             {
                                 "id": tc["id"],
                                 "type": "function",
-                                "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                                "function": {
+                                    "name": tc["name"],
+                                    "arguments": tc["arguments"],
+                                },
                             }
                             for tc in sorted_tcs
                         ],
@@ -342,7 +384,9 @@ class Agent:
                         ChatCompletionMessageFunctionToolCall(
                             id=tc["id"],
                             type="function",
-                            function=Function(name=tc["name"], arguments=tc["arguments"]),
+                            function=Function(
+                                name=tc["name"], arguments=tc["arguments"]
+                            ),
                         )
                         for tc in sorted_tcs
                     ]
@@ -354,26 +398,46 @@ class Agent:
 
                 for tc in tool_calls_to_run:
                     if tool_calls_executed >= _MAX_TOOL_CALLS_PER_REQUEST:
-                        raise RuntimeError(f"aborted: exceeded {_MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request")
+                        raise RuntimeError(
+                            f"aborted: exceeded {_MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request"
+                        )
                     tool_calls_executed += 1
                     target = tc.function.name
                     try:
                         arguments = json.loads(tc.function.arguments)
                     except json.JSONDecodeError as e:
-                        result = self._tool_handler.get_tool_result("", f"malformed JSON arguments: {e}", None)
+                        result = self._tool_handler.get_tool_result(
+                            "", f"malformed JSON arguments: {e}", None
+                        )
                         logger.error("[tool_result] %s -> %s", target, result.output)
-                        self._messages.append({"role": "tool", "tool_call_id": tc.id, "content": result.output})
+                        self._messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": result.output,
+                            }
+                        )
                         continue
 
                     logger.debug("[tool_call] %s args=%s", target, arguments)
                     yield ToolStartEvent(name=target, args=arguments)
 
-                    result = await self._tool_handler.execute(target, arguments, self._max_tool_output)
+                    result = await self._tool_handler.execute(
+                        target, arguments, self._max_tool_output
+                    )
 
                     logger.info("[tool_result] %s -> %s", target, result.output)
-                    yield ToolDoneEvent(name=target, output=result.output, is_error=result.is_error)
+                    yield ToolDoneEvent(
+                        name=target, output=result.output, is_error=result.is_error
+                    )
 
-                    self._messages.append({"role": "tool", "tool_call_id": tc.id, "content": result.output})
+                    self._messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result.output,
+                        }
+                    )
 
                     call_key = f"{target}:{tc.function.arguments}"
                     if result.is_error and call_key == last_fail_key:
@@ -420,8 +484,9 @@ class SessionNotFoundError(Exception):
 
 
 class AgentManager:
-
-    def __init__(self, memory: MemoryProtocol, tool_handler: ToolHandlerProtocol) -> None:
+    def __init__(
+        self, memory: MemoryProtocol, tool_handler: ToolHandlerProtocol
+    ) -> None:
         self._memory = memory
         self._tool_handler = tool_handler
         self._sessions: dict[str, Agent] = {}
@@ -432,7 +497,9 @@ class AgentManager:
 
     def create_session(self, config: AgentConfig) -> str:
         session_id = self.get_session_id()
-        agent = Agent(config._replace(session_id=session_id), self._memory, self._tool_handler)
+        agent = Agent(
+            config._replace(session_id=session_id), self._memory, self._tool_handler
+        )
         self._sessions[session_id] = agent
         return session_id
 
@@ -446,7 +513,9 @@ class AgentManager:
         agent = self.get_agent(session_id)
         return await agent.arun(message)
 
-    def astream_agent(self, session_id: str, message: str) -> AsyncGenerator[AgentEvent, None]:
+    def astream_agent(
+        self, session_id: str, message: str
+    ) -> AsyncGenerator[AgentEvent, None]:
         agent = self.get_agent(session_id)
         return agent.astream(message)
 

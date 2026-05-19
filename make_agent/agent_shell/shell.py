@@ -7,7 +7,13 @@ import readline
 import signal
 from typing import Any
 
-from make_agent.agent_core import AgentManager, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent
+from make_agent.agent_core import (
+    AgentManager,
+    DoneEvent,
+    TokenEvent,
+    ToolDoneEvent,
+    ToolStartEvent,
+)
 
 
 class MakeAgentShell:
@@ -31,7 +37,9 @@ class MakeAgentShell:
     def _setup_readline(self) -> None:
         """Configure readline so /cmd completions work."""
         try:
-            readline.set_completer_delims(readline.get_completer_delims().replace("/", ""))
+            readline.set_completer_delims(
+                readline.get_completer_delims().replace("/", "")
+            )
             readline.set_completer(self._completer)
             readline.parse_and_bind("tab: complete")
         except Exception:
@@ -58,7 +66,9 @@ class MakeAgentShell:
     def _cmd_stats(self) -> bool:
         stats = self._agent_manager.get_token_stats(self._session_id)
         if not stats:
-            print("No token usage stats available (memory not enabled or no LLM calls yet).")
+            print(
+                "No token usage stats available (memory not enabled or no LLM calls yet)."
+            )
             return False
         print(f"Token usage for session {self._session_id}:")
         print(f"  Model(s):      {', '.join(stats['models'])}")
@@ -70,7 +80,9 @@ class MakeAgentShell:
 
     def _cmd_help(self) -> bool:
         print("Commands: " + "  ".join(f"/{name}" for name in self._commands))
-        print("Any other input is sent to the agent. Press Ctrl-C to cancel a running turn.")
+        print(
+            "Any other input is sent to the agent. Press Ctrl-C to cancel a running turn."
+        )
         return False
 
     def _dispatch_command(self, line: str) -> bool:

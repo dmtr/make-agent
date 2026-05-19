@@ -7,7 +7,7 @@ import sqlite3
 from unittest.mock import MagicMock, patch
 
 import pytest
-from make_agent.builtin_tools import get_builtin_tools
+from make_agent.skill_backend import MakefileSkillBackend
 from make_agent.memory import MEMORY_SCHEMAS, Memory, get_memory_executors
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -408,7 +408,8 @@ class TestMemoryBuiltinTools:
         assert "I can recall things" in result
 
     def test_no_memory_tools_in_builtin_tools(self):
-        tools = get_builtin_tools("agents_dir")
+        backend = MakefileSkillBackend("agents_dir")
+        tools = backend.executors
         assert "search_user_memory" not in tools
         assert "search_agent_memory" not in tools
         assert "get_recent_messages" not in tools
@@ -446,7 +447,7 @@ class TestAgentAutoStorage:
         from make_agent.tool_handler import ToolHandler
 
         config = AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
-        tool_handler = ToolHandler(memory=mem, skills_dir=str(tmp_path))
+        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), mem)
         return Agent(config, mem, tool_handler)
 
     async def test_user_message_stored(self, tmp_path, mem):
@@ -506,7 +507,7 @@ class TestMemoryAlwaysActive:
         from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(memory=memory, skills_dir=str(tmp_path))
+        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
         manager = AgentManager(memory, tool_handler)
         config = AgentConfig(system_prompt="", model="openai/gpt-4o-mini", skills_dir=str(tmp_path), project_dir=tmp_path)
         session_id = manager.create_session(config)

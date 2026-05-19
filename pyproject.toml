@@ -46,7 +46,7 @@ Repository = "https://github.com/dmtr/make-agent"
 Issues = "https://github.com/dmtr/make-agent/issues"
 
 [tool.setuptools.package-data]
-make_agent = ["templates/*.mk"]
+make_agent = ["templates/*.mk", "templates/*/*.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
