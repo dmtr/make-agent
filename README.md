@@ -1,8 +1,6 @@
 # make-agent
 
-An AI agent whose system prompt and tools are defined in a Makefile.
-
-Each Makefile target annotated with a `# <tool>` comment block becomes a callable tool. The agent invokes targets via `make`, injecting parameters as environment variables. A `define SYSTEM_PROMPT` block sets the agent's system prompt.
+An AI agent powered by skills. Skills extend the agent with domain-specific instructions and optional tools. Two skill modes are supported: **python** (default) and **makefile**.
 
 ## Installation
 
@@ -10,256 +8,170 @@ Each Makefile target annotated with a `# <tool>` comment block becomes a callabl
 pip install makefile-agent
 ```
 
-Requires Python 3.11+ and a working `make` binary. Uses [any-llm-sdk](https://pypi.org/project/any-llm-sdk/) for model access, so any API keys (e.g. `ANTHROPIC_API_KEY`) must be set in the environment.
+Requires Python 3.11+ and a working `make` binary (for makefile mode). Uses [any-llm-sdk](https://pypi.org/project/any-llm-sdk/) for model access — set the appropriate API key (e.g. `ANTHROPIC_API_KEY`) in your environment.
 
 ## Usage
 
 ```
-ANTHROPIC_API_KEY=<key> uv run make_agent [run] [-f FILE] [--model MODEL] [--prompt PROMPT | --prompt-file FILE] [--with-memory]
+make_agent [run] --model MODEL [--skill-mode MODE] [--prompt PROMPT | --prompt-file FILE]
 ```
 
-- `-f FILE` — Makefile to load. Searched in the current directory first, then `~/.make-agent/<project>/agents/`. Defaults to the value in `settings.yaml`, or `./Makefile` if not set.
-- `--model MODEL` — any-llm model string. Defaults to the value in `settings.yaml`.
-- `--prompt PROMPT` — send a single prompt and exit instead of entering the interactive shell
-- `--prompt-file FILE` — send a single prompt read from `FILE` and exit
-- `--agents-dir DIR` — directory for specialist `.mk` files (default: `~/.make-agent/<project>/agents/`)
-- `--agent-model MODEL` — model used when running specialist agents via `run_agent` (default: same as `--model`)
-- `--with-memory` — enable persistent conversation memory (see [Memory](#memory))
-- `--disable-builtin-tools TOOLS` — comma-separated built-in tool names to disable, or `all`
-- `--max-tool-output CHARS` — truncate tool stdout to this many characters; `0` = unlimited (default: 16000)
-- `--max-tokens N` — max tokens in the model response (default: 4096)
-- `--reasoning-effort EFFORT` — reasoning effort level: `none|minimal|low|medium|high|xhigh|auto` (default: `auto`)
-- `--max-retries N` — max retry attempts on rate limit errors (default: 5)
-- `--tool-timeout SECONDS` — timeout for each tool subprocess (default: 600)
-- `--loglevel LEVEL` — set logging level to DEBUG, INFO, WARNING, ERROR, or CRITICAL (default: INFO)
+| Flag | Default | Description |
+|---|---|---|
+| `--model MODEL` | — (required) | any-llm model string |
+| `--skill-mode MODE` | `python` | Skill backend: `python` or `makefile` |
+| `--skills-dir DIR` | `~/.make-agent/<project>/<mode>/skills/` | Directory containing skills |
+| `--system PROMPT` | — | System prompt string (overrides SYSTEM.md discovery) |
+| `--system-file FILE` | — | Read system prompt from FILE (overrides SYSTEM.md discovery) |
+| `--prompt PROMPT` | — | Send a single prompt and exit (non-interactive) |
+| `--prompt-file FILE` | — | Read a single prompt from FILE and exit |
+| `--disable-builtin-tools TOOLS` | — | Comma-separated built-in tool names to disable, or `all` |
+| `--max-tool-output CHARS` | 16000 | Truncate tool output; `0` = unlimited |
+| `--max-tokens N` | 4096 | Max tokens in the model response |
+| `--reasoning-effort EFFORT` | `auto` | `none\|minimal\|low\|medium\|high\|xhigh\|auto` |
+| `--max-retries N` | 5 | Max retries on rate-limit errors |
+| `--tool-timeout SECONDS` | 600 | Timeout per tool call |
+| `--loglevel LEVEL` | `INFO` | `DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` |
 
-Without `--prompt`, the agent starts an interactive REPL. Use `/exit` or `/quit` (or press Ctrl-D) to leave.
+Without `--prompt`, the agent starts an interactive REPL. Press Ctrl-D or type `/exit` to leave.
 
-Interactive shell commands:
+Interactive commands: `/help`, `/export` (save conversation to HTML), `/stats` (token totals).
 
-- `/help` — show available shell commands
-- `/export` — export the current conversation to `conversation-<timestamp>.html`
-- `/stats` — show token usage totals for this session (when memory is enabled)
+## Project data
 
-### First run — setup wizard
-
-If no `settings.yaml` exists for the project and no Makefile is found automatically, the agent starts a setup wizard:
-
-```
-No settings.yaml found for this project.
-Let's create one. Press Enter to accept the default shown in brackets.
-
-  Created ~/.make-agent/Users_alice_proj_myapp/agents/orchestra.mk
-  Model (required): anthropic/claude-haiku-4-5-20251001
-
-Saved settings to ~/.make-agent/Users_alice_proj_myapp/settings.yaml
-```
-
-If specialist agents already exist in the agents directory, the wizard asks you to choose one instead of creating `orchestra.mk`.
-
-## Project settings
-
-All per-project data is stored under `~/.make-agent/`:
+All per-project data lives under `~/.make-agent/`:
 
 ```
 ~/.make-agent/
 └── <project-slug>/          # e.g. Users_alice_proj_myapp
-    ├── settings.yaml        # default model and Makefile
-    ├── memory.db            # conversation history (when memory is enabled)
-    ├── agents/              # specialist agent .mk files
+    ├── python/
+    │   ├── SYSTEM.md        # default system prompt (copied from template on first run)
+    │   ├── skills/          # skill directories
+    │   └── memory.db        # conversation history
+    ├── makefile/
+    │   ├── SYSTEM.md
+    │   ├── skills/
+    │   └── memory.db
     └── logs/
-        └── make-agent.log   # log output at the selected --loglevel
+        └── make-agent.log
 ```
 
-The **project slug** is the absolute path of the working directory with the leading `/` stripped and remaining `/` replaced by `_`.
+The **project slug** is the absolute working-directory path with the leading `/` stripped and remaining `/` replaced by `_`.
 
-### settings.yaml
+### System prompt discovery
 
-```yaml
-model: anthropic/claude-haiku-4-5-20251001
-makefile: ./my-agent.mk
-memory: true          # optional — enable persistent memory
-reasoning_effort: low # optional — none|minimal|low|medium|high|xhigh|auto
+Priority order (first match wins):
+
+1. `--system PROMPT` flag
+2. `--system-file FILE` flag
+3. `SYSTEM.md` in the current working directory
+4. `~/.make-agent/<project>/<mode>/SYSTEM.md` (created from a bundled template on first run)
+
+## Skill modes
+
+### Python mode (default)
+
+Each skill is a directory containing:
+
+- **`skill.md`** — instructions the agent reads before acting (required)
+- **`skill.py`** — optional Python module with `@target`-decorated tool functions
+
+```python
+# skill.py
+from make_agent import target
+
+@target
+def search_files(pattern: str, directory: str) -> str:
+    """Search files for a pattern and return matching lines.
+
+    :param pattern: Text pattern to search for
+    :param directory: Directory to search in
+    """
+    import subprocess
+    result = subprocess.run(["grep", "-rn", pattern, directory], capture_output=True, text=True)
+    return result.stdout or "No matches found"
 ```
 
-All fields are optional. CLI flags always take precedence over `settings.yaml` values.
-Use `--agent-model` if you want specialists called via `run_agent` to use a different model than the main agent.
+```markdown
+<!-- skill.md -->
+---
+description: "Searches files for a text pattern."
+---
 
-## Makefile format
+# File Search
+
+Use this skill to search file contents.
+
+## Available tools
+
+- `search_files(pattern, directory)` — search recursively for a pattern
+```
+
+Rules:
+- Every tool function must be decorated with `@target`.
+- Annotate parameters with Python type hints (`str`, `int`, `float`, `bool`).
+- Document parameters with `:param name: description` in the docstring.
+- Functions must be synchronous.
+- Call `validate_skill` after creating a skill with tools — it runs an LLM security check.
+
+### Makefile mode
+
+Each skill is a directory containing a single **`skill.mk`** file.
 
 ```makefile
-define SYSTEM_PROMPT
-You are a filesystem assistant.
+define DESCRIPTION
+Searches files for a text pattern.
 endef
 
-.PHONY: list-files greet
+.PHONY: search-files
 
-# <tool>
-# List files in a directory.
-# @param DIR string The directory path to list
-# </tool>
-list-files:
-	@ls -la "$$DIR"
-
-# <tool>
-# Greet someone.
-# @param NAME string The name to greet
-# </tool>
-greet:
-	@echo "Hello, $$NAME!"
+search-files:
+	@grep -rn "$$PATTERN" "$$DIR" || echo "No matches found"
 ```
 
-### Special comment blocks
-
-- `define SYSTEM_PROMPT ... endef` sets the system prompt passed to the model. The content is raw text — no `#` prefix needed. `endef` must be on its own line with no indentation.
-- `define DESCRIPTION ... endef` is optional metadata used by `list_agent` to describe a specialist.
-- `# <tool> ... # </tool>` marks the following target as an LLM-callable tool. Lines starting with `# @param NAME type description` declare parameters (JSON Schema primitives: `string`, `number`, `integer`, `boolean`). All other lines form the tool description.
-
-### Parameters and `$$PARAM`
-
-Every declared parameter is injected as an environment variable.  Recipes
-access it with shell syntax — `$$PARAM` in a Make recipe becomes `$PARAM` for
-the shell:
-
-- `$$PARAM` — canonical form, works for both single-line and multiline values.
-- `$(PARAM)` — also works for simple single-line values (Make auto-imports env vars).
-
-```makefile
-# <tool>
-# Write content to a file.
-# @param FILE_PATH string Destination file path
-# @param CONTENT string Content to write (may be multiline)
-# </tool>
-write-file:
-	@printf '%s' "$$CONTENT" > "$$FILE_PATH"
-```
-
-Targets without a `# <tool>` block are invisible to the model.
+The agent invokes targets via `make`, passing parameters as environment variables (`$$PARAM` in a recipe becomes `$PARAM` for the shell). The `define DESCRIPTION … endef` block is required and shown by `list_skills`.
 
 ## Built-in tools
 
-Every agent automatically receives four built-in tools alongside its Makefile-defined tools — no Makefile declaration needed:
+All modes include these skill management tools:
 
 | Tool | What it does |
 |---|---|
-| `list_agent` | Scan the agents directory and return each specialist's name and description |
-| `validate_agent` | Parse and validate a named specialist's Makefile, reporting any errors |
-| `create_agent` | Create or overwrite a specialist `.mk` file from a raw Makefile string |
-| `run_agent` | Delegate a task to a specialist agent and return its output |
+| `list_skills` | List available skills with descriptions |
+| `read_skill` | Return a skill's instructions |
+| `execute_skill` | Run a tool from a skill |
+| `create_skill` | Create or overwrite a skill |
+| `validate_skill` | Validate a skill (python: LLM security check; makefile: structure check) |
 
-The agents directory defaults to `~/.make-agent/<project>/agents/` and can be changed with `--agents-dir`.
+Makefile mode additionally includes:
 
-You can disable built-ins per Makefile with `DISABLED_BUILTINS`:
+| Tool | What it does |
+|---|---|
+| `write_file` | Write content to a file |
+| `edit_file` | Replace a string in a file |
 
-```makefile
-DISABLED_BUILTINS = run_agent,validate_agent
-# or: DISABLED_BUILTINS = all
-```
+Use `--disable-builtin-tools` to turn off specific tools (or `all`).
 
 ## Memory
 
-Agents can persist every conversation turn to a local SQLite database and search it in future sessions.
+Every conversation turn can be persisted to a local SQLite database (`memory.db`) and searched in future sessions.
 
-### Enabling memory
+Memory is always on — the database is created per mode at `~/.make-agent/<project>/<mode>/memory.db`.
 
-```bash
-# One-time flag
-make_agent --with-memory -f my-agent.mk
-
-# Always on for this project (settings.yaml)
-memory: true
-```
-
-The database is stored at `~/.make-agent/<project-slug>/memory.db`. Every user message and final agent reply is written automatically.
-
-The project directory layout becomes:
-
-```
-~/.make-agent/
-└── <project-slug>/
-    ├── settings.yaml
-    ├── memory.db        # conversation history (created on first use)
-    ├── agents/
-    └── logs/
-```
-
-### Memory tools
-
-When memory is enabled, three additional built-in tools are injected:
+When memory is enabled, three additional built-in tools are available:
 
 | Tool | What it does |
 |---|---|
-| `get_recent_messages(limit, from_date, to_date)` | Return recent messages in chronological order (optionally date-filtered) |
+| `get_recent_messages(limit, from_date, to_date)` | Return recent messages in chronological order |
 | `search_user_memory(query, limit, from_date, to_date)` | FTS5 keyword search over past user messages |
 | `search_agent_memory(query, limit, from_date, to_date)` | FTS5 keyword search over past agent replies |
 
 **FTS5 search tips** — the search is keyword-based, not semantic:
 
-- Use short keywords, not sentences: `"goal project"` not `"what is the goal of this project"`
+- Use short keywords: `"goal project"` not `"what is the goal of this project"`
 - Use `OR` for broader recall: `"goal OR objective OR purpose"`
 - Stop words (`the`, `of`, `is`, `a`) are not indexed — omit them
-- If a search returns nothing, retry with broader or alternative keywords
-- Use `get_recent_messages` when you need recent context and don't know which keywords to search for
-
-### Orchestrator pattern
-
-`examples/orchestra.mk` shows how to use the built-in tools to build a self-managing agent that creates and improves specialist agents at runtime:
-
-```bash
-# Interactive session
-make_agent -f examples/orchestra.mk
-
-# Single prompt
-make_agent -f examples/orchestra.mk --prompt "Summarise the git log for the last week"
-```
-
-For every task the orchestrator:
-
-1. Calls `list_agent` to discover available specialists.
-2. Delegates to an existing specialist with `run_agent`, or designs and saves a new one with `create_agent` first.
-3. Improves any specialist by calling `create_agent` with the same name — it overwrites the previous version.
-
-### Raw Makefile payload for `create_agent`
-
-```makefile
-define SYSTEM_PROMPT
-You are a specialist that searches source code for patterns.
-endef
-
-# Optional but recommended: shown by list_agent
-define DESCRIPTION
-Searches files for a text pattern and returns matches.
-endef
-
-.PHONY: search-files
-
-# <tool>
-# Search files for a text pattern and return matching lines.
-# @param PATTERN string The text pattern to search for
-# @param DIR string The directory to search in
-# </tool>
-search-files:
-	@grep -rn "$$PATTERN" "$$DIR" || echo "No matches found"
-```
-
-## Example
-
-`examples/orchestra.mk` is the orchestrator agent — it manages specialist agents using the built-in tools and also exposes three simple no-parameter tools for system information:
-
-```bash
-make_agent -f examples/orchestra.mk
-```
-
-| Tool | Recipe |
-|---|---|
-| `current-dir` | `pwd` |
-| `os-info` | `uname -a` |
-| `current-date` | `date` |
-
-Additional specialist examples are available in:
-
-- `examples/file-explorer.mk`
-- `examples/file-editor.mk`
+- Fall back to `get_recent_messages` when you don't know which keywords to search for
 
 ## Running tests
 
