@@ -11,5 +11,6 @@ wheels/
 
 .claude
 .agents
+.skills
 *.log
 docs/
