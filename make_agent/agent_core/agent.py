@@ -33,9 +33,6 @@ _MAX_RUN_SECONDS_PER_REQUEST = 900
 logger = logging.getLogger(__name__)
 
 
-# ── events ────────────────────────────────────────────────────────────────────
-
-
 @dataclass
 class TokenEvent:
     """A partial text token streamed from the LLM."""
@@ -344,9 +341,7 @@ class Agent:
                     try:
                         arguments = json.loads(tc.function.arguments)
                     except json.JSONDecodeError as e:
-                        from make_agent.tool_handler import ToolHandler  # local import avoids circular dep
-
-                        result = ToolHandler.get_tool_result("", f"malformed JSON arguments: {e}", None)
+                        result = self._tool_handler.get_tool_result("", f"malformed JSON arguments: {e}", None)
                         logger.error("[tool_result] %s -> %s", target, result.output)
                         self._messages.append({"role": "tool", "tool_call_id": tc.id, "content": result.output})
                         continue
