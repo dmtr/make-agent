@@ -14,3 +14,5 @@ wheels/
 .skills
 *.log
 docs/
+.todo_config.json
+conversation-*.html
