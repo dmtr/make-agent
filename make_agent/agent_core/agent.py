@@ -27,10 +27,18 @@ _DEFAULT_TOOL_TIMEOUT = 600  # seconds
 _DEFAULT_MAX_TOOL_OUTPUT = 16000  # characters; 0 = unlimited
 _DEFAULT_MAX_TOKENS = 4096
 _DEFAULT_REASONING_EFFORT = "auto"
+_DEFAULT_COMPACT_THRESHOLD = 80_000  # prompt tokens before auto-compact fires
 _MAX_REPEATED_FAILURES = 8
 _MAX_MODEL_TURNS_PER_REQUEST = 64
 _MAX_TOOL_CALLS_PER_REQUEST = 256
 _MAX_RUN_SECONDS_PER_REQUEST = 900
+
+_COMPACT_SKILL_TOOLS = frozenset({"list_skills", "read_skill"})
+_COMPACT_SUMMARY_SYSTEM = (
+    "Summarize this conversation concisely. Include: the user's goals, "
+    "tasks completed, key decisions made, and current state. "
+    "Be brief — the agent has persistent memory to look up details."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +89,7 @@ class AgentConfig(NamedTuple):
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT
     session_id: str | None = None
     project_dir: Path = Path()
+    compact_threshold: int = _DEFAULT_COMPACT_THRESHOLD
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -194,6 +203,96 @@ def _parse_content_tool_calls(
     return None
 
 
+def _prune_skill_messages(messages: list[dict]) -> list[dict]:
+    """Remove old list_skills/read_skill call+result pairs, keeping only the last of each.
+
+    Scans the message list for assistant tool-call messages that invoke
+    ``list_skills`` or ``read_skill``.  For each tool name, all but the most
+    recent call (and its corresponding ``tool`` result message) are dropped.
+    Assistant messages that still have other tool calls or text content are
+    kept intact with the removed calls stripped out.
+    """
+    # Pass 1: find the last tool_call_id for each skip-tool.
+    last_id_for: dict[str, str] = {}
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls") or []:
+            name = tc.get("function", {}).get("name", "")
+            if name in _COMPACT_SKILL_TOOLS:
+                last_id_for[name] = tc["id"]
+
+    if not last_id_for:
+        return list(messages)
+
+    # Pass 2: mark tool_call_ids to remove (all but the last per tool name).
+    ids_to_remove: set[str] = set()
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls") or []:
+            name = tc.get("function", {}).get("name", "")
+            if name in _COMPACT_SKILL_TOOLS and tc["id"] != last_id_for[name]:
+                ids_to_remove.add(tc["id"])
+
+    if not ids_to_remove:
+        return list(messages)
+
+    # Pass 3: rebuild the message list.
+    result: list[dict] = []
+    for msg in messages:
+        role = msg.get("role")
+
+        if role == "tool" and msg.get("tool_call_id") in ids_to_remove:
+            continue
+
+        if role == "assistant":
+            tool_calls = msg.get("tool_calls") or []
+            kept = [tc for tc in tool_calls if tc["id"] not in ids_to_remove]
+            if kept == tool_calls:
+                result.append(msg)
+            elif kept:
+                result.append({**msg, "tool_calls": kept})
+            else:
+                # All tool calls removed; keep only if there is text content.
+                content = msg.get("content") or ""
+                if content:
+                    result.append({k: v for k, v in msg.items() if k != "tool_calls"})
+        else:
+            result.append(msg)
+
+    return result
+
+
+async def _build_compact_summary(messages: list[dict], config: "AgentConfig") -> str:
+    """Call the LLM with a summarisation prompt and return the summary text.
+
+    The agent's original system message is replaced with the compact-summary
+    instruction so the model focuses on producing a brief narrative rather than
+    acting as the agent.
+    """
+    summary_messages: list[dict] = [
+        {"role": "system", "content": _COMPACT_SUMMARY_SYSTEM},
+        *[m for m in messages if m.get("role") != "system"],
+    ]
+    stream = await _acompletion_with_retry(
+        config.model,
+        summary_messages,
+        {},
+        config.max_retries,
+        config.max_tokens,
+        config.reasoning_effort,
+    )
+    parts: list[str] = []
+    async for chunk in stream:
+        if not chunk.choices:
+            continue
+        content = chunk.choices[0].delta.content
+        if content:
+            parts.append(content)
+    return "".join(parts)
+
+
 class Agent:
     """LLM agent that maintains conversation history and dispatches tool calls.
 
@@ -220,6 +319,8 @@ class Agent:
         self._reasoning_effort = config.reasoning_effort
         self._session_id = config.session_id
         self._tool_handler = tool_handler
+        self._config = config
+        self._last_prompt_tokens: int = 0
         self._messages: list[dict] = []
         if config.system_prompt:
             self._messages.append({"role": "system", "content": config.system_prompt})
@@ -343,6 +444,7 @@ class Agent:
             )
 
             if usage is not None:
+                self._last_prompt_tokens = usage.prompt_tokens
                 self._memory.record_token_usage(
                     self._session_id or "",
                     self._model,
@@ -513,15 +615,63 @@ class AgentManager:
         """Register a skill-execution confirmation callback on the tool handler."""
         self._tool_handler.set_confirm(confirm)  # type: ignore[union-attr]
 
-    async def arun_agent(self, session_id: str, message: str) -> str:
-        agent = self.get_agent(session_id)
-        return await agent.arun(message)
+    async def _compact_if_needed(self, session_id: str) -> None:
+        """Compact the session's conversation if it has exceeded the token threshold.
 
-    def astream_agent(
+        Prunes old ``list_skills``/``read_skill`` exchanges, asks the LLM for a
+        brief summary, then replaces the session agent with a fresh instance that
+        starts from the summary.
+        """
+        agent = self._sessions.get(session_id)
+        if agent is None:
+            return
+        threshold = agent._config.compact_threshold
+        if threshold <= 0 or agent._last_prompt_tokens < threshold:
+            return
+
+        logger.info(
+            "[compact] context at %d tokens (threshold %d), compacting...",
+            agent._last_prompt_tokens,
+            threshold,
+        )
+        print(
+            f"\n[Auto-compacting context ({agent._last_prompt_tokens:,} tokens ≥ "
+            f"{threshold:,} threshold)...]\n",
+            flush=True,
+        )
+
+        pruned = _prune_skill_messages(agent.messages)
+        summary = await _build_compact_summary(pruned, agent._config)
+
+        new_agent = Agent(agent._config, self._memory, self._tool_handler)
+        new_agent._messages.append(
+            {
+                "role": "user",
+                "content": f"[Conversation summary – continuing]\n{summary}",
+            }
+        )
+        new_agent._messages.append(
+            {
+                "role": "assistant",
+                "content": "Understood. Continuing from where we left off.",
+            }
+        )
+        self._sessions[session_id] = new_agent
+        logger.info("[compact] done, fresh agent created with summary")
+
+    async def arun_agent(self, session_id: str, message: str) -> str:
+        async for event in self.astream_agent(session_id, message):
+            if isinstance(event, DoneEvent):
+                return event.content
+        return ""
+
+    async def astream_agent(
         self, session_id: str, message: str
     ) -> AsyncGenerator[AgentEvent, None]:
+        await self._compact_if_needed(session_id)
         agent = self.get_agent(session_id)
-        return agent.astream(message)
+        async for event in agent.astream(message):
+            yield event
 
     def export_conversation(self, session_id: str) -> Path | None:
         agent = self.get_agent(session_id)

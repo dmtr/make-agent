@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import any_llm
 import pytest
-from make_agent.agent_core import _acompletion_with_retry, _parse_retry_after
+from make_agent.agent_core import _acompletion_with_retry, _parse_retry_after, _prune_skill_messages
 
 
 def _make_rate_limit_error(
@@ -492,3 +492,218 @@ class TestAnthropicEmptyArguments:
         stored_args = assistant_msgs[0]["tool_calls"][0]["function"]["arguments"]
         import json
         assert json.loads(stored_args) == {}, f"stored arguments must be valid JSON '{{}}', got {stored_args!r}"
+
+
+# ── _prune_skill_messages ─────────────────────────────────────────────────────
+
+
+def _tc(tc_id: str, name: str, args: str = "{}") -> dict:
+    """Build a single tool-call entry for an assistant message."""
+    return {"id": tc_id, "type": "function", "function": {"name": name, "arguments": args}}
+
+
+def _assistant_tc(*tool_calls, content: str = "") -> dict:
+    return {"role": "assistant", "content": content, "tool_calls": list(tool_calls)}
+
+
+def _tool_result(tc_id: str, content: str = "result") -> dict:
+    return {"role": "tool", "tool_call_id": tc_id, "content": content}
+
+
+def _user(content: str = "hello") -> dict:
+    return {"role": "user", "content": content}
+
+
+def _system(content: str = "system") -> dict:
+    return {"role": "system", "content": content}
+
+
+def _assistant_text(content: str = "ok") -> dict:
+    return {"role": "assistant", "content": content}
+
+
+class TestPruneSkillMessages:
+    def test_empty_messages_returns_empty(self):
+        assert _prune_skill_messages([]) == []
+
+    def test_no_skill_calls_unchanged(self):
+        msgs = [_system(), _user(), _assistant_text()]
+        assert _prune_skill_messages(msgs) == msgs
+
+    def test_single_list_skills_call_kept(self):
+        msgs = [
+            _user(),
+            _assistant_tc(_tc("t1", "list_skills")),
+            _tool_result("t1", "skill-a"),
+        ]
+        result = _prune_skill_messages(msgs)
+        assert result == msgs
+
+    def test_two_list_skills_calls_keeps_last(self):
+        msgs = [
+            _user("first"),
+            _assistant_tc(_tc("t1", "list_skills")),
+            _tool_result("t1", "old listing"),
+            _user("second"),
+            _assistant_tc(_tc("t2", "list_skills")),
+            _tool_result("t2", "new listing"),
+        ]
+        result = _prune_skill_messages(msgs)
+        ids_present = {m.get("tool_call_id") for m in result if m.get("role") == "tool"}
+        assert "t2" in ids_present
+        assert "t1" not in ids_present
+
+    def test_two_read_skill_calls_keeps_last(self):
+        msgs = [
+            _assistant_tc(_tc("r1", "read_skill", '{"name":"foo"}')),
+            _tool_result("r1", "old content"),
+            _assistant_tc(_tc("r2", "read_skill", '{"name":"foo"}')),
+            _tool_result("r2", "new content"),
+        ]
+        result = _prune_skill_messages(msgs)
+        ids_present = {m.get("tool_call_id") for m in result if m.get("role") == "tool"}
+        assert "r2" in ids_present
+        assert "r1" not in ids_present
+
+    def test_mixed_skill_and_other_tools_preserved(self):
+        msgs = [
+            _assistant_tc(_tc("t1", "list_skills"), _tc("e1", "execute_skill", '{"name":"x","command":"make"}')),
+            _tool_result("t1", "listing"),
+            _tool_result("e1", "executed"),
+            _assistant_tc(_tc("t2", "list_skills")),
+            _tool_result("t2", "new listing"),
+        ]
+        result = _prune_skill_messages(msgs)
+        ids_present = {m.get("tool_call_id") for m in result if m.get("role") == "tool"}
+        # Old list_skills dropped, execute_skill and new list_skills kept
+        assert "t1" not in ids_present
+        assert "e1" in ids_present
+        assert "t2" in ids_present
+
+    def test_assistant_msg_with_only_old_skill_call_is_dropped(self):
+        msgs = [
+            _assistant_tc(_tc("t1", "list_skills")),
+            _tool_result("t1", "old"),
+            _assistant_tc(_tc("t2", "list_skills")),
+            _tool_result("t2", "new"),
+        ]
+        result = _prune_skill_messages(msgs)
+        assistant_msgs = [m for m in result if m.get("role") == "assistant"]
+        # First assistant msg (only old list_skills) should be gone
+        assert len(assistant_msgs) == 1
+        assert assistant_msgs[0]["tool_calls"][0]["id"] == "t2"
+
+    def test_assistant_msg_with_text_and_old_skill_call_keeps_text(self):
+        msgs = [
+            _assistant_tc(_tc("t1", "list_skills"), content="thinking..."),
+            _tool_result("t1", "old"),
+            _assistant_tc(_tc("t2", "list_skills")),
+            _tool_result("t2", "new"),
+        ]
+        result = _prune_skill_messages(msgs)
+        assistant_msgs = [m for m in result if m.get("role") == "assistant"]
+        # The message with content "thinking..." should be kept without tool_calls
+        text_msgs = [m for m in assistant_msgs if "tool_calls" not in m]
+        assert any(m.get("content") == "thinking..." for m in text_msgs)
+
+    def test_system_user_messages_always_kept(self):
+        msgs = [
+            _system("system prompt"),
+            _user("user msg"),
+            _assistant_tc(_tc("t1", "list_skills")),
+            _tool_result("t1", "old"),
+            _assistant_tc(_tc("t2", "list_skills")),
+            _tool_result("t2", "new"),
+        ]
+        result = _prune_skill_messages(msgs)
+        assert result[0] == _system("system prompt")
+        assert result[1] == _user("user msg")
+
+
+# ── AgentManager auto-compact ─────────────────────────────────────────────────
+
+
+class TestAgentManagerAutoCompact:
+    def _make_manager_and_session(self, tmp_path, compact_threshold: int = 100):
+        from make_agent.agent_core import Agent, AgentConfig, AgentManager
+        from make_agent.memory import Memory
+        from make_agent.skill_backend import MakefileSkillBackend
+        from make_agent.tool_handler import ToolHandler
+
+        memory = Memory(tmp_path / "memory.db")
+        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        config = AgentConfig(
+            system_prompt="You are a helper.",
+            model="openai/gpt-4o-mini",
+            compact_threshold=compact_threshold,
+        )
+        manager = AgentManager(memory, tool_handler)
+        session_id = manager.create_session(config)
+        return manager, session_id
+
+    async def test_compact_not_triggered_below_threshold(self, tmp_path):
+        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=10_000)
+        agent_before = manager.get_agent(sid)
+        agent_before._last_prompt_tokens = 5_000  # below threshold
+
+        with patch(
+            "make_agent.agent_core.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(_make_text_stream("hello")),
+        ):
+            result = await manager.arun_agent(sid, "hi")
+
+        assert result == "hello"
+        # Agent should be the same object — no replacement happened
+        assert manager.get_agent(sid) is agent_before
+
+    async def test_compact_triggered_above_threshold(self, tmp_path):
+        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=100)
+        agent_before = manager.get_agent(sid)
+        agent_before._last_prompt_tokens = 200  # above threshold
+
+        summary_stream = _make_text_stream("Previous work: user asked to list skills.")
+        reply_stream = _make_text_stream("continuing now")
+
+        with patch(
+            "make_agent.agent_core.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(summary_stream, reply_stream),
+        ):
+            result = await manager.arun_agent(sid, "what did we do?")
+
+        assert result == "continuing now"
+        # Agent should be a fresh object
+        agent_after = manager.get_agent(sid)
+        assert agent_after is not agent_before
+
+    async def test_compact_injects_summary_into_fresh_agent(self, tmp_path):
+        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=100)
+        agent_before = manager.get_agent(sid)
+        agent_before._last_prompt_tokens = 200
+
+        summary_stream = _make_text_stream("Summary: user asked about skills.")
+        reply_stream = _make_text_stream("ok")
+
+        with patch(
+            "make_agent.agent_core.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(summary_stream, reply_stream),
+        ):
+            await manager.arun_agent(sid, "continue")
+
+        fresh_agent = manager.get_agent(sid)
+        contents = [m.get("content", "") for m in fresh_agent.messages]
+        assert any("Summary: user asked about skills." in c for c in contents)
+
+    async def test_compact_disabled_when_threshold_zero(self, tmp_path):
+        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=0)
+        agent_before = manager.get_agent(sid)
+        agent_before._last_prompt_tokens = 999_999  # way above any threshold
+
+        with patch(
+            "make_agent.agent_core.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(_make_text_stream("no compact")),
+        ):
+            result = await manager.arun_agent(sid, "hi")
+
+        assert result == "no compact"
+        assert manager.get_agent(sid) is agent_before
+

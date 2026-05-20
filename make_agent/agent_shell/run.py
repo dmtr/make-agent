@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from make_agent.agent_core import (
+    _DEFAULT_COMPACT_THRESHOLD,
     _DEFAULT_MAX_RETRIES,
     _DEFAULT_MAX_TOKENS,
     _DEFAULT_MAX_TOOL_OUTPUT,
@@ -31,6 +32,7 @@ async def run(
     max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
+    compact_threshold: int = _DEFAULT_COMPACT_THRESHOLD,
 ) -> None:
     """Start the interactive shell (or send a single prompt and return)."""
     await tool_handler.setup(model)
@@ -43,6 +45,7 @@ async def run(
         max_tokens=max_tokens,
         reasoning_effort=reasoning_effort,
         project_dir=project_dir(),
+        compact_threshold=compact_threshold,
     )
     agent_manager = AgentManager(memory, tool_handler)
     session_id = agent_manager.create_session(agent_config)

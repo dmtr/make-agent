@@ -42,6 +42,7 @@ def _run_args(**kwargs) -> argparse.Namespace:
         disable_builtin_tools=None,
         reasoning_effort="auto",
         skill_mode="python",
+        compact_threshold=80_000,
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)

@@ -6,7 +6,7 @@ import logging
 import sys
 from pathlib import Path
 
-from make_agent.agent_core import _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT
+from make_agent.agent_core import _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_COMPACT_THRESHOLD
 from make_agent.agent_shell import run
 from make_agent.app_dirs import default_skills_dir, ensure_mode_system_prompt, log_file, mode_dir, mode_memory_path
 from make_agent.builtin_tools import builtin_tool_names
@@ -124,6 +124,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
             max_tool_output=args.max_tool_output,
             max_tokens=args.max_tokens,
             reasoning_effort=args.reasoning_effort,
+            compact_threshold=args.compact_threshold,
         )
     )
 
@@ -234,6 +235,13 @@ def main() -> None:
         "Use 'skill.target' to trust a specific target (Python mode only). "
         "Unspecified skills prompt the user before each execution.",
     )
+    run_p.add_argument(
+        "--compact-threshold",
+        type=int,
+        default=_DEFAULT_COMPACT_THRESHOLD,
+        metavar="TOKENS",
+        help=f"Prompt-token count that triggers auto-compaction; 0 = disabled (default: {_DEFAULT_COMPACT_THRESHOLD:,})",
+    )
 
     parser.add_argument(
         "--model", default=None, metavar="MODEL", help=argparse.SUPPRESS
@@ -305,6 +313,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--trusted-skills", default=None, metavar="SKILLS", help=argparse.SUPPRESS
+    )
+    parser.add_argument(
+        "--compact-threshold",
+        type=int,
+        default=_DEFAULT_COMPACT_THRESHOLD,
+        metavar="TOKENS",
+        help=argparse.SUPPRESS,
     )
 
     args = parser.parse_args()
