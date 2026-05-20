@@ -264,16 +264,55 @@ def _prune_skill_messages(messages: list[dict]) -> list[dict]:
     return result
 
 
+def _flatten_messages_for_summary(messages: list[dict]) -> list[dict]:
+    """Convert a tool-rich message list into a plain user/assistant list safe for all providers.
+
+    Tool calls are rendered as inline text appended to the assistant message's
+    content.  ``tool`` result messages are folded into those descriptions.
+    The resulting list contains only ``user`` and ``assistant`` roles, so it
+    can be sent to any provider without supplying tool definitions.
+    """
+    # Index tool results by tool_call_id so they can be inlined.
+    tool_results: dict[str, str] = {}
+    for msg in messages:
+        if msg.get("role") == "tool":
+            tc_id = msg.get("tool_call_id", "")
+            if tc_id:
+                tool_results[tc_id] = (msg.get("content") or "")[:400]
+
+    result: list[dict] = []
+    for msg in messages:
+        role = msg.get("role", "")
+        if role in ("system", "tool"):
+            continue
+        if role == "user":
+            result.append({"role": "user", "content": msg.get("content") or ""})
+        elif role == "assistant":
+            parts: list[str] = []
+            if msg.get("content"):
+                parts.append(msg["content"])
+            for tc in msg.get("tool_calls") or []:
+                name = tc.get("function", {}).get("name", "?")
+                args = tc.get("function", {}).get("arguments", "{}")
+                res = tool_results.get(tc.get("id", ""), "(no result)")
+                parts.append(f"[{name}({args}) → {res}]")
+            if parts:
+                result.append({"role": "assistant", "content": "\n".join(parts)})
+    return result
+
+
 async def _build_compact_summary(messages: list[dict], config: "AgentConfig") -> str:
     """Call the LLM with a summarisation prompt and return the summary text.
 
     The agent's original system message is replaced with the compact-summary
     instruction so the model focuses on producing a brief narrative rather than
-    acting as the agent.
+    acting as the agent.  Tool-related messages are flattened to plain text so
+    no provider needs tool definitions for this call.
     """
+    flat = _flatten_messages_for_summary(messages)
     summary_messages: list[dict] = [
         {"role": "system", "content": _COMPACT_SUMMARY_SYSTEM},
-        *[m for m in messages if m.get("role") != "system"],
+        *flat,
     ]
     stream = await _acompletion_with_retry(
         config.model,
@@ -287,9 +326,9 @@ async def _build_compact_summary(messages: list[dict], config: "AgentConfig") ->
     async for chunk in stream:
         if not chunk.choices:
             continue
-        content = chunk.choices[0].delta.content
-        if content:
-            parts.append(content)
+        delta = chunk.choices[0].delta
+        if delta and delta.content:
+            parts.append(delta.content)
     return "".join(parts)
 
 

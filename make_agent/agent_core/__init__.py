@@ -15,6 +15,7 @@ from .agent import (
     ToolDoneEvent,
     ToolStartEvent,
     _acompletion_with_retry,
+    _flatten_messages_for_summary,
     _parse_retry_after,
     _prune_skill_messages,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "ToolDoneEvent",
     "ToolStartEvent",
     "_acompletion_with_retry",
+    "_flatten_messages_for_summary",
     "_parse_retry_after",
     "_prune_skill_messages",
     "_render_html",

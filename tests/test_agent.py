@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import any_llm
 import pytest
-from make_agent.agent_core import _acompletion_with_retry, _parse_retry_after, _prune_skill_messages
+from make_agent.agent_core import _acompletion_with_retry, _flatten_messages_for_summary, _parse_retry_after, _prune_skill_messages
 
 
 def _make_rate_limit_error(
@@ -618,6 +618,86 @@ class TestPruneSkillMessages:
         result = _prune_skill_messages(msgs)
         assert result[0] == _system("system prompt")
         assert result[1] == _user("user msg")
+
+
+# ── _flatten_messages_for_summary ─────────────────────────────────────────────
+
+
+class TestFlattenMessagesForSummary:
+    def test_empty_returns_empty(self):
+        assert _flatten_messages_for_summary([]) == []
+
+    def test_system_messages_dropped(self):
+        msgs = [_system("sys"), _user("hi"), _assistant_text("hello")]
+        result = _flatten_messages_for_summary(msgs)
+        assert not any(m.get("role") == "system" for m in result)
+
+    def test_user_messages_passed_through(self):
+        msgs = [_user("tell me something")]
+        result = _flatten_messages_for_summary(msgs)
+        assert result == [{"role": "user", "content": "tell me something"}]
+
+    def test_assistant_text_passed_through(self):
+        msgs = [_assistant_text("here you go")]
+        result = _flatten_messages_for_summary(msgs)
+        assert result == [{"role": "assistant", "content": "here you go"}]
+
+    def test_tool_role_messages_dropped(self):
+        msgs = [
+            _assistant_tc(_tc("t1", "execute_skill", '{"name":"x","command":"make"}')),
+            _tool_result("t1", "build output"),
+        ]
+        result = _flatten_messages_for_summary(msgs)
+        assert not any(m.get("role") == "tool" for m in result)
+
+    def test_tool_calls_inlined_into_assistant_content(self):
+        msgs = [
+            _assistant_tc(_tc("t1", "execute_skill", '{"name":"x"}')),
+            _tool_result("t1", "output text"),
+        ]
+        result = _flatten_messages_for_summary(msgs)
+        assert len(result) == 1
+        assert result[0]["role"] == "assistant"
+        assert "execute_skill" in result[0]["content"]
+        assert "output text" in result[0]["content"]
+
+    def test_assistant_with_text_and_tool_call_combines_both(self):
+        msgs = [
+            _assistant_tc(_tc("t1", "list_skills"), content="Let me check…"),
+            _tool_result("t1", "skill-a\nskill-b"),
+        ]
+        result = _flatten_messages_for_summary(msgs)
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert "Let me check…" in content
+        assert "list_skills" in content
+        assert "skill-a" in content
+
+    def test_no_tool_calls_no_text_assistant_dropped(self):
+        # An assistant message with no content and no tool_calls produces nothing.
+        msgs = [{"role": "assistant", "content": "", "tool_calls": []}]
+        result = _flatten_messages_for_summary(msgs)
+        assert result == []
+
+    def test_full_conversation_with_tools_only_user_and_assistant_remain(self):
+        msgs = [
+            _system("sys"),
+            _user("list skills"),
+            _assistant_tc(_tc("t1", "list_skills")),
+            _tool_result("t1", "brainstorming"),
+            _assistant_text("I see brainstorming."),
+            _user("run it"),
+            _assistant_tc(_tc("t2", "execute_skill", '{"name":"brainstorming","command":"make"}')),
+            _tool_result("t2", "done"),
+            _assistant_text("All done."),
+        ]
+        result = _flatten_messages_for_summary(msgs)
+        roles = [m["role"] for m in result]
+        assert "system" not in roles
+        assert "tool" not in roles
+        assert roles.count("user") == 2
+        # execute_skill result should be inlined
+        assert any("execute_skill" in m["content"] for m in result if m["role"] == "assistant")
 
 
 # ── AgentManager auto-compact ─────────────────────────────────────────────────
