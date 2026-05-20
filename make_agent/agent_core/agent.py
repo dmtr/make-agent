@@ -43,6 +43,13 @@ _COMPACT_SUMMARY_SYSTEM = (
 logger = logging.getLogger(__name__)
 
 
+class _CompactNeeded(Exception):
+    """Raised by Agent.astream to signal a mid-turn compact is required.
+
+    The manager catches this, compacts the context, and re-runs the turn
+    on the fresh agent.
+    """
+
 @dataclass
 class TokenEvent:
     """A partial text token streamed from the LLM."""
@@ -434,6 +441,16 @@ class Agent:
                     f"aborted: exceeded {_MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request"
                 )
 
+            # Mid-turn compact check: after the first LLM call this turn, if the
+            # context has grown past the threshold raise so the manager can compact
+            # and re-run the turn on a fresh agent before making another LLM call.
+            if (
+                model_turns > 0
+                and self._config.compact_threshold > 0
+                and self._last_prompt_tokens >= self._config.compact_threshold
+            ):
+                raise _CompactNeeded()
+
             stream = await _acompletion_with_retry(
                 self._model,
                 self._messages,
@@ -731,8 +748,16 @@ class AgentManager:
         if compact_event is not None:
             yield compact_event
         agent = self.get_agent(session_id)
-        async for event in agent.astream(message):
-            yield event
+        try:
+            async for event in agent.astream(message):
+                yield event
+        except _CompactNeeded:
+            compact_event = await self._compact_if_needed(session_id)
+            if compact_event is not None:
+                yield compact_event
+            agent = self.get_agent(session_id)
+            async for event in agent.astream(message):
+                yield event
 
     def export_conversation(self, session_id: str) -> Path | None:
         agent = self.get_agent(session_id)

@@ -39,8 +39,12 @@ def _make_empty_stream():
     return _stream()
 
 
-def _make_text_stream(content: str):
-    """Return an async iterator that yields a single text chunk."""
+def _make_text_stream(content: str, prompt_tokens: int = 0):
+    """Return an async iterator that yields a single text chunk.
+
+    If *prompt_tokens* is non-zero a trailing usage chunk is appended so that
+    ``Agent._last_prompt_tokens`` is updated after the stream is consumed.
+    """
 
     async def _stream():
         chunk = MagicMock()
@@ -49,11 +53,19 @@ def _make_text_stream(content: str):
         chunk.choices[0].delta.tool_calls = None
         chunk.usage = None
         yield chunk
+        if prompt_tokens:
+            usage_chunk = MagicMock()
+            usage_chunk.choices = []
+            usage_chunk.usage = MagicMock()
+            usage_chunk.usage.prompt_tokens = prompt_tokens
+            usage_chunk.usage.completion_tokens = 10
+            yield usage_chunk
 
     return _stream()
 
 
-def _make_tool_call_stream(tool_id: str, tool_name: str, arguments: str):
+def _make_tool_call_stream(tool_id: str, tool_name: str, arguments: str, prompt_tokens: int = 0):
+    """Return an async iterator that yields a single tool-call chunk."""
     """Return an async iterator that yields a single tool-call chunk."""
 
     async def _stream():
@@ -69,6 +81,13 @@ def _make_tool_call_stream(tool_id: str, tool_name: str, arguments: str):
         chunk.choices[0].delta.tool_calls = [tc_delta]
         chunk.usage = None
         yield chunk
+        if prompt_tokens:
+            usage_chunk = MagicMock()
+            usage_chunk.choices = []
+            usage_chunk.usage = MagicMock()
+            usage_chunk.usage.prompt_tokens = prompt_tokens
+            usage_chunk.usage.completion_tokens = 10
+            yield usage_chunk
 
     return _stream()
 
@@ -807,4 +826,44 @@ class TestAgentManagerAutoCompact:
         assert len(compact_events) == 1
         assert compact_events[0].prompt_tokens == 250
         assert compact_events[0].threshold == 100
+
+    async def test_mid_turn_compact_triggered_after_tool_call(self, tmp_path):
+        """If the context grows past the threshold mid-turn (after tool calls),
+        _CompactNeeded is raised, compaction runs, and the turn re-runs on the fresh agent."""
+        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=100)
+        agent_before = manager.get_agent(sid)
+        # Register a dummy tool so the tool-call stream resolves cleanly.
+        agent_before._tool_handler._schemas.append(  # noqa: SLF001
+            {
+                "type": "function",
+                "function": {
+                    "name": "say_hi",
+                    "description": "say hi",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        )
+        agent_before._tool_handler._executors["say_hi"] = lambda **_: "hi"  # noqa: SLF001
+
+        # Turn 1 (first LLM call): responds with a tool call and reports 200 tokens (> threshold).
+        # This causes _CompactNeeded to be raised before the second LLM call.
+        first_llm_call = _make_tool_call_stream("tc1", "say_hi", "{}", prompt_tokens=200)
+        # After compact, the fresh agent's turn: one LLM call that returns a text reply.
+        summary_stream = _make_text_stream("Summary of prior work.")
+        fresh_reply = _make_text_stream("done after compact")
+
+        events = []
+        with patch(
+            "make_agent.agent_core.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(first_llm_call, summary_stream, fresh_reply),
+        ):
+            async for event in manager.astream_agent(sid, "do something"):
+                events.append(event)
+
+        compact_events = [e for e in events if isinstance(e, CompactEvent)]
+        assert len(compact_events) == 1
+        assert compact_events[0].prompt_tokens == 200
+        assert compact_events[0].threshold == 100
+        # Fresh agent should have replaced the original
+        assert manager.get_agent(sid) is not agent_before
 
