@@ -7,6 +7,8 @@ import subprocess
 import sys
 from unittest.mock import patch
 
+import pytest
+
 import make_agent.main as main_module
 from make_agent.builtin_tools import builtin_tool_names
 from make_agent.skill_backend import MakefileSkillBackend, PythonSkillBackend
@@ -42,7 +44,11 @@ def _run_args(**kwargs) -> argparse.Namespace:
         disable_builtin_tools=None,
         reasoning_effort="auto",
         skill_mode="python",
-        compact_threshold=80_000,
+        compact_threshold=None,
+        compact_threshold_ratio=0.7,
+        compact_min_threshold=24_000,
+        compact_max_threshold=120_000,
+        compact_context_window=0,
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
@@ -60,9 +66,19 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "python-mode"),
-            patch.object(main_module, "mode_memory_path", return_value=tmp_path / "python-memory.db"),
-            patch.object(main_module, "default_skills_dir", return_value=tmp_path / "python-skills"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "python-mode"
+            ),
+            patch.object(
+                main_module,
+                "mode_memory_path",
+                return_value=tmp_path / "python-memory.db",
+            ),
+            patch.object(
+                main_module,
+                "default_skills_dir",
+                return_value=tmp_path / "python-skills",
+            ),
         ):
             main_module._cmd_run(args)
 
@@ -82,9 +98,19 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
-            patch.object(main_module, "mode_memory_path", return_value=tmp_path / "makefile-memory.db"),
-            patch.object(main_module, "default_skills_dir", return_value=tmp_path / "makefile-skills"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
+            patch.object(
+                main_module,
+                "mode_memory_path",
+                return_value=tmp_path / "makefile-memory.db",
+            ),
+            patch.object(
+                main_module,
+                "default_skills_dir",
+                return_value=tmp_path / "makefile-skills",
+            ),
         ):
             main_module._cmd_run(args)
 
@@ -96,7 +122,9 @@ class TestRunPromptInput:
 
     def test_custom_skills_dir_gets_mode_subfolder(self, tmp_path):
         custom_dir = tmp_path / "custom"
-        args = _run_args(prompt="do something", skill_mode="python", skills_dir=str(custom_dir))
+        args = _run_args(
+            prompt="do something", skill_mode="python", skills_dir=str(custom_dir)
+        )
         captured: dict = {}
 
         async def _fake_run(**kwargs):
@@ -105,8 +133,14 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "python-mode"),
-            patch.object(main_module, "mode_memory_path", return_value=tmp_path / "python-memory.db"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "python-mode"
+            ),
+            patch.object(
+                main_module,
+                "mode_memory_path",
+                return_value=tmp_path / "python-memory.db",
+            ),
         ):
             main_module._cmd_run(args)
 
@@ -116,7 +150,9 @@ class TestRunPromptInput:
 
     def test_custom_skills_dir_makefile_mode_gets_mode_subfolder(self, tmp_path):
         custom_dir = tmp_path / "custom"
-        args = _run_args(prompt="do something", skill_mode="makefile", skills_dir=str(custom_dir))
+        args = _run_args(
+            prompt="do something", skill_mode="makefile", skills_dir=str(custom_dir)
+        )
         captured: dict = {}
 
         async def _fake_run(**kwargs):
@@ -125,14 +161,59 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
-            patch.object(main_module, "mode_memory_path", return_value=tmp_path / "makefile-memory.db"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
+            patch.object(
+                main_module,
+                "mode_memory_path",
+                return_value=tmp_path / "makefile-memory.db",
+            ),
         ):
             main_module._cmd_run(args)
 
         backend = captured["tool_handler"]._backend  # noqa: SLF001
         assert isinstance(backend, MakefileSkillBackend)
         assert backend._skills_dir == str(custom_dir / "makefile")  # noqa: SLF001
+
+    def test_compact_adaptive_args_are_passed_to_run(self, tmp_path):
+        args = _run_args(
+            prompt="continue",
+            compact_threshold=None,
+            compact_context_window=200_000,
+            compact_threshold_ratio=0.65,
+            compact_min_threshold=20_000,
+            compact_max_threshold=100_000,
+        )
+        captured: dict = {}
+
+        async def _fake_run(**kwargs):
+            captured.update(kwargs)
+
+        with (
+            patch.object(main_module, "run", _fake_run),
+            patch.object(main_module, "ensure_mode_system_prompt"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "python-mode"
+            ),
+            patch.object(
+                main_module,
+                "mode_memory_path",
+                return_value=tmp_path / "python-memory.db",
+            ),
+            patch.object(
+                main_module,
+                "default_skills_dir",
+                return_value=tmp_path / "python-skills",
+            ),
+        ):
+            main_module._cmd_run(args)
+
+        assert captured["compact_threshold"] is None
+        assert captured["compact_context_window"] == 200_000
+        assert captured["compact_threshold_ratio"] == 0.65
+        assert captured["compact_min_threshold"] == 20_000
+        assert captured["compact_max_threshold"] == 100_000
 
     def test_prompt_and_prompt_file_are_mutually_exclusive(self, tmp_path):
         prompt_file = _write(tmp_path, "prompt.txt", "hello")
@@ -194,7 +275,9 @@ class TestResolveSystemPrompt:
     def test_returns_empty_string_when_nothing_found(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         args = _run_args(system=None, system_file=None)
-        with patch.object(main_module, "mode_dir", return_value=tmp_path / "nonexistent"):
+        with patch.object(
+            main_module, "mode_dir", return_value=tmp_path / "nonexistent"
+        ):
             result = main_module._resolve_system_prompt(args)
         assert result == ""
 
@@ -208,14 +291,38 @@ class TestResolveSystemPrompt:
 
 class TestParseDisabledTools:
     def test_all_returns_mode_specific_names(self):
-        assert main_module._parse_disabled_tools("all", "python") == builtin_tool_names("python")
-        assert main_module._parse_disabled_tools("all", "makefile") == builtin_tool_names("makefile")
+        assert main_module._parse_disabled_tools("all", "python") == builtin_tool_names(
+            "python"
+        )
+        assert main_module._parse_disabled_tools(
+            "all", "makefile"
+        ) == builtin_tool_names("makefile")
 
     def test_unknown_name_exits_for_mode(self):
         with patch.object(sys, "exit", side_effect=SystemExit) as mock_exit:
-            with patch.object(main_module, "builtin_tool_names", return_value=frozenset({"list_skills"})):
+            with patch.object(
+                main_module,
+                "builtin_tool_names",
+                return_value=frozenset({"list_skills"}),
+            ):
                 try:
                     main_module._parse_disabled_tools("write_file", "python")
                 except SystemExit:
                     pass
+        mock_exit.assert_called_once()
+
+
+class TestValidateCompactArgs:
+    def test_invalid_compact_threshold_ratio_exits(self):
+        args = _run_args(compact_threshold_ratio=0)
+        with patch.object(sys, "exit", side_effect=SystemExit) as mock_exit:
+            with pytest.raises(SystemExit):
+                main_module._validate_compact_args(args)
+        mock_exit.assert_called_once()
+
+    def test_invalid_compact_bounds_exit(self):
+        args = _run_args(compact_min_threshold=30_000, compact_max_threshold=20_000)
+        with patch.object(sys, "exit", side_effect=SystemExit) as mock_exit:
+            with pytest.raises(SystemExit):
+                main_module._validate_compact_args(args)
         mock_exit.assert_called_once()

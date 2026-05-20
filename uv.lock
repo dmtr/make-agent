@@ -38,7 +38,7 @@ wheels = [
 
 [[package]]
 name = "any-llm-sdk"
-version = "1.13.0"
+version = "1.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anthropic" },
@@ -49,9 +49,9 @@ dependencies = [
     { name = "rich" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/87/4b/dea4eeeb5e4e3e55fa6b37a7ec033a18a2527aabf565bd598071d6308fbd/any_llm_sdk-1.13.0.tar.gz", hash = "sha256:967c5f4dd099f5f6cc9673f2888d5550f6e821d25341d31133a05741c1ce903e", size = 153753, upload-time = "2026-03-23T10:27:29.843Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/85/2170dbb1a86141769b86f70972f1d1511777755b8e8ee01971e14c5352c3/any_llm_sdk-1.15.0.tar.gz", hash = "sha256:870393a6459a123352aa98f626b9f1d5b310fd171b12da1e6467596053244ae8", size = 140228, upload-time = "2026-05-19T08:39:16.066Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/a1/0106667efdf870595981a0fc3e807675d1f8ded8dc8c20e936e6c42bcd95/any_llm_sdk-1.13.0-py3-none-any.whl", hash = "sha256:7e456a843cec249ae1cb3a498aa89df5baff8aa62d76a24718babb3b8a51e495", size = 216557, upload-time = "2026-03-23T10:27:28.306Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/79/8c103226dc22e0915eef360dbc1adaa55f0dc0eaca1f9f9cd334562b149f/any_llm_sdk-1.15.0-py3-none-any.whl", hash = "sha256:5b4ee1ceb87024ff978138c03b0323ffc9d11b7c1d009c9db2fdff686443d396", size = 187948, upload-time = "2026-05-19T08:39:14.278Z" },
 ]
 
 [package.optional-dependencies]
@@ -266,7 +266,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "any-llm-sdk", extras = ["openai", "anthropic", "ollama", "openrouter"], specifier = "==1.13.0" },
+    { name = "any-llm-sdk", extras = ["openai", "anthropic", "ollama", "openrouter"], specifier = "==1.15.0" },
     { name = "pyyaml", specifier = ">=6" },
 ]
 

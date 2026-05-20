@@ -6,7 +6,16 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import any_llm
 import pytest
-from make_agent.agent_core import _acompletion_with_retry, _flatten_messages_for_summary, _parse_retry_after, _prune_skill_messages, CompactEvent
+from make_agent.agent_core import (
+    _acompletion_with_retry,
+    _compute_compact_threshold,
+    _flatten_messages_for_summary,
+    _parse_retry_after,
+    _prune_skill_messages,
+    AgentConfig,
+    CompactEvent,
+    DoneEvent,
+)
 
 
 def _make_rate_limit_error(
@@ -64,7 +73,9 @@ def _make_text_stream(content: str, prompt_tokens: int = 0):
     return _stream()
 
 
-def _make_tool_call_stream(tool_id: str, tool_name: str, arguments: str, prompt_tokens: int = 0):
+def _make_tool_call_stream(
+    tool_id: str, tool_name: str, arguments: str, prompt_tokens: int = 0
+):
     """Return an async iterator that yields a single tool-call chunk."""
     """Return an async iterator that yields a single tool-call chunk."""
 
@@ -158,7 +169,6 @@ def _make_tool_call_stream_empty_args(tool_id: str, tool_name: str):
     return _stream()
 
 
-
 def _mock_acompletion_with_retry(*streams):
     """Return an async callable that yields successive streams on each call."""
     streams_list = list(streams)
@@ -202,7 +212,10 @@ class TestParseRetryAfter:
 class TestACompletionWithRetry:
     async def test_succeeds_on_first_attempt(self):
         stream = _make_empty_stream()
-        with patch("make_agent.agent_core.agent.any_llm.acompletion", AsyncMock(return_value=stream)) as mock_c:
+        with patch(
+            "make_agent.agent_core.agent.any_llm.acompletion",
+            AsyncMock(return_value=stream),
+        ) as mock_c:
             result = await _acompletion_with_retry("model", [], {}, max_retries=3)
         assert result is stream
         mock_c.assert_called_once()
@@ -210,7 +223,10 @@ class TestACompletionWithRetry:
     async def test_retries_on_rate_limit_then_succeeds(self):
         err = _make_rate_limit_error(retry_after=10)
         stream = _make_empty_stream()
-        with patch("make_agent.agent_core.agent.any_llm.acompletion", AsyncMock(side_effect=[err, err, stream])):
+        with patch(
+            "make_agent.agent_core.agent.any_llm.acompletion",
+            AsyncMock(side_effect=[err, err, stream]),
+        ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
                 result = await _acompletion_with_retry("model", [], {}, max_retries=3)
         assert result is stream
@@ -220,7 +236,10 @@ class TestACompletionWithRetry:
     async def test_exponential_backoff_without_header(self):
         err = _make_rate_limit_error()
         stream = _make_empty_stream()
-        with patch("make_agent.agent_core.agent.any_llm.acompletion", AsyncMock(side_effect=[err, err, stream])):
+        with patch(
+            "make_agent.agent_core.agent.any_llm.acompletion",
+            AsyncMock(side_effect=[err, err, stream]),
+        ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
                 await _acompletion_with_retry("model", [], {}, max_retries=3)
         assert mock_sleep.call_args_list == [call(1), call(2)]
@@ -229,7 +248,10 @@ class TestACompletionWithRetry:
         err = _make_rate_limit_error()
         stream = _make_empty_stream()
         side_effects = [err] * 7 + [stream]
-        with patch("make_agent.agent_core.agent.any_llm.acompletion", AsyncMock(side_effect=side_effects)):
+        with patch(
+            "make_agent.agent_core.agent.any_llm.acompletion",
+            AsyncMock(side_effect=side_effects),
+        ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
                 await _acompletion_with_retry("model", [], {}, max_retries=10)
         waits = [c.args[0] for c in mock_sleep.call_args_list]
@@ -238,14 +260,20 @@ class TestACompletionWithRetry:
 
     async def test_raises_after_max_retries_exhausted(self):
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent_core.agent.any_llm.acompletion", AsyncMock(side_effect=err)):
+        with patch(
+            "make_agent.agent_core.agent.any_llm.acompletion",
+            AsyncMock(side_effect=err),
+        ):
             with patch("asyncio.sleep", AsyncMock()):
                 with pytest.raises(any_llm.RateLimitError):
                     await _acompletion_with_retry("model", [], {}, max_retries=2)
 
     async def test_total_calls_equals_max_retries_plus_one(self):
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent_core.agent.any_llm.acompletion", AsyncMock(side_effect=err)) as mock_c:
+        with patch(
+            "make_agent.agent_core.agent.any_llm.acompletion",
+            AsyncMock(side_effect=err),
+        ) as mock_c:
             with patch("asyncio.sleep", AsyncMock()):
                 with pytest.raises(any_llm.RateLimitError):
                     await _acompletion_with_retry("model", [], {}, max_retries=3)
@@ -253,7 +281,10 @@ class TestACompletionWithRetry:
 
     async def test_zero_max_retries_raises_immediately(self):
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent_core.agent.any_llm.acompletion", AsyncMock(side_effect=err)):
+        with patch(
+            "make_agent.agent_core.agent.any_llm.acompletion",
+            AsyncMock(side_effect=err),
+        ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
                 with pytest.raises(any_llm.RateLimitError):
                     await _acompletion_with_retry("model", [], {}, max_retries=0)
@@ -271,13 +302,27 @@ class TestAgentSafetyGuards:
         from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
-        agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), memory, tool_handler)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
+        agent = Agent(
+            AgentConfig(
+                system_prompt="You are a helper.",
+                model="openai/gpt-4o-mini",
+                skills_dir=str(tmp_path),
+            ),
+            memory,
+            tool_handler,
+        )
         # Inject a custom tool to give the agent a known tool set
         agent._tool_handler._schemas.append(  # noqa: SLF001
             {
                 "type": "function",
-                "function": {"name": "safe", "description": "A safe tool.", "parameters": {"type": "object", "properties": {}, "required": []}},
+                "function": {
+                    "name": "safe",
+                    "description": "A safe tool.",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
             }
         )
         agent._tool_handler._executors["safe"] = lambda **_: "ok"  # noqa: SLF001
@@ -307,7 +352,9 @@ class TestAgentSafetyGuards:
 
         with (
             patch("make_agent.agent_core.agent._MAX_MODEL_TURNS_PER_REQUEST", 2),
-            patch("make_agent.agent_core.agent._acompletion_with_retry", _always_tool_call),
+            patch(
+                "make_agent.agent_core.agent._acompletion_with_retry", _always_tool_call
+            ),
         ):
             with pytest.raises(RuntimeError, match="model turns"):
                 await agent.arun("loop forever")
@@ -324,13 +371,27 @@ class TestAssistantMessageContent:
         from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
-        agent = Agent(AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path)), memory, tool_handler)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
+        agent = Agent(
+            AgentConfig(
+                system_prompt="You are a helper.",
+                model="openai/gpt-4o-mini",
+                skills_dir=str(tmp_path),
+            ),
+            memory,
+            tool_handler,
+        )
         # Inject say_hi as a known builtin tool
         agent._tool_handler._schemas.append(  # noqa: SLF001
             {
                 "type": "function",
-                "function": {"name": "say_hi", "description": "Say hi.", "parameters": {"type": "object", "properties": {}, "required": []}},
+                "function": {
+                    "name": "say_hi",
+                    "description": "Say hi.",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
             }
         )
         agent._tool_handler._executors["say_hi"] = lambda **_: "hi"  # noqa: SLF001
@@ -345,10 +406,16 @@ class TestAssistantMessageContent:
             result = await agent.arun("call say_hi")
 
         assert result == "all done"
-        assistant_msgs = [m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m]
+        assistant_msgs = [
+            m
+            for m in agent.messages
+            if m.get("role") == "assistant" and "tool_calls" in m
+        ]
         assert assistant_msgs, "expected at least one assistant message with tool_calls"
         for msg in assistant_msgs:
-            assert msg["content"] is not None, "assistant message content must not be None (breaks Ollama)"
+            assert msg["content"] is not None, (
+                "assistant message content must not be None (breaks Ollama)"
+            )
             assert isinstance(msg["content"], str)
 
 
@@ -368,9 +435,15 @@ class TestAnthropicParallelToolCalls:
         from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
         agent = Agent(
-            AgentConfig(system_prompt="You are a helper.", model="anthropic/claude-3-5-sonnet-20241022", skills_dir=str(tmp_path)),
+            AgentConfig(
+                system_prompt="You are a helper.",
+                model="anthropic/claude-3-5-sonnet-20241022",
+                skills_dir=str(tmp_path),
+            ),
             memory,
             tool_handler,
         )
@@ -381,7 +454,11 @@ class TestAnthropicParallelToolCalls:
                     "function": {
                         "name": name,
                         "description": f"Tool {name}.",
-                        "parameters": {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]},
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"x": {"type": "integer"}},
+                            "required": ["x"],
+                        },
                     },
                 }
             )
@@ -407,7 +484,9 @@ class TestAnthropicParallelToolCalls:
 
         assert result == "done"
         tool_msgs = [m for m in agent.messages if m.get("role") == "tool"]
-        assert len(tool_msgs) == 2, f"expected 2 tool results, got {len(tool_msgs)}: {tool_msgs}"
+        assert len(tool_msgs) == 2, (
+            f"expected 2 tool results, got {len(tool_msgs)}: {tool_msgs}"
+        )
 
         tool_call_ids = {m["tool_call_id"] for m in tool_msgs}
         assert "toolu_A" in tool_call_ids
@@ -443,8 +522,12 @@ class TestAnthropicParallelToolCalls:
         ):
             await agent.arun("run both tools")
 
-        assert received.get("tool_a") == {"x": 42}, f"tool_a got wrong args: {received.get('tool_a')}"
-        assert received.get("tool_b") == {"x": 99}, f"tool_b got wrong args: {received.get('tool_b')}"
+        assert received.get("tool_a") == {"x": 42}, (
+            f"tool_a got wrong args: {received.get('tool_a')}"
+        )
+        assert received.get("tool_b") == {"x": 99}, (
+            f"tool_b got wrong args: {received.get('tool_b')}"
+        )
 
 
 class TestAnthropicEmptyArguments:
@@ -462,9 +545,15 @@ class TestAnthropicEmptyArguments:
         from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
         agent = Agent(
-            AgentConfig(system_prompt="You are a helper.", model="anthropic/claude-3-5-haiku-20241022", skills_dir=str(tmp_path)),
+            AgentConfig(
+                system_prompt="You are a helper.",
+                model="anthropic/claude-3-5-haiku-20241022",
+                skills_dir=str(tmp_path),
+            ),
             memory,
             tool_handler,
         )
@@ -506,11 +595,18 @@ class TestAnthropicEmptyArguments:
 
         # The stored assistant message must have valid JSON arguments so the
         # next call to _convert_messages_for_anthropic doesn't raise.
-        assistant_msgs = [m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m]
+        assistant_msgs = [
+            m
+            for m in agent.messages
+            if m.get("role") == "assistant" and "tool_calls" in m
+        ]
         assert assistant_msgs
         stored_args = assistant_msgs[0]["tool_calls"][0]["function"]["arguments"]
         import json
-        assert json.loads(stored_args) == {}, f"stored arguments must be valid JSON '{{}}', got {stored_args!r}"
+
+        assert json.loads(stored_args) == {}, (
+            f"stored arguments must be valid JSON '{{}}', got {stored_args!r}"
+        )
 
 
 # ── _prune_skill_messages ─────────────────────────────────────────────────────
@@ -518,7 +614,11 @@ class TestAnthropicEmptyArguments:
 
 def _tc(tc_id: str, name: str, args: str = "{}") -> dict:
     """Build a single tool-call entry for an assistant message."""
-    return {"id": tc_id, "type": "function", "function": {"name": name, "arguments": args}}
+    return {
+        "id": tc_id,
+        "type": "function",
+        "function": {"name": name, "arguments": args},
+    }
 
 
 def _assistant_tc(*tool_calls, content: str = "") -> dict:
@@ -586,7 +686,10 @@ class TestPruneSkillMessages:
 
     def test_mixed_skill_and_other_tools_preserved(self):
         msgs = [
-            _assistant_tc(_tc("t1", "list_skills"), _tc("e1", "execute_skill", '{"name":"x","command":"make"}')),
+            _assistant_tc(
+                _tc("t1", "list_skills"),
+                _tc("e1", "execute_skill", '{"name":"x","command":"make"}'),
+            ),
             _tool_result("t1", "listing"),
             _tool_result("e1", "executed"),
             _assistant_tc(_tc("t2", "list_skills")),
@@ -706,7 +809,9 @@ class TestFlattenMessagesForSummary:
             _tool_result("t1", "brainstorming"),
             _assistant_text("I see brainstorming."),
             _user("run it"),
-            _assistant_tc(_tc("t2", "execute_skill", '{"name":"brainstorming","command":"make"}')),
+            _assistant_tc(
+                _tc("t2", "execute_skill", '{"name":"brainstorming","command":"make"}')
+            ),
             _tool_result("t2", "done"),
             _assistant_text("All done."),
         ]
@@ -716,7 +821,9 @@ class TestFlattenMessagesForSummary:
         assert "tool" not in roles
         assert roles.count("user") == 2
         # execute_skill result should be inlined
-        assert any("execute_skill" in m["content"] for m in result if m["role"] == "assistant")
+        assert any(
+            "execute_skill" in m["content"] for m in result if m["role"] == "assistant"
+        )
 
 
 # ── AgentManager auto-compact ─────────────────────────────────────────────────
@@ -724,13 +831,15 @@ class TestFlattenMessagesForSummary:
 
 class TestAgentManagerAutoCompact:
     def _make_manager_and_session(self, tmp_path, compact_threshold: int = 100):
-        from make_agent.agent_core import Agent, AgentConfig, AgentManager
+        from make_agent.agent_core import AgentConfig, AgentManager
         from make_agent.memory import Memory
         from make_agent.skill_backend import MakefileSkillBackend
         from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
         config = AgentConfig(
             system_prompt="You are a helper.",
             model="openai/gpt-4o-mini",
@@ -741,7 +850,9 @@ class TestAgentManagerAutoCompact:
         return manager, session_id
 
     async def test_compact_not_triggered_below_threshold(self, tmp_path):
-        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=10_000)
+        manager, sid = self._make_manager_and_session(
+            tmp_path, compact_threshold=10_000
+        )
         agent_before = manager.get_agent(sid)
         agent_before._last_prompt_tokens = 5_000  # below threshold
 
@@ -847,7 +958,9 @@ class TestAgentManagerAutoCompact:
 
         # Turn 1 (first LLM call): responds with a tool call and reports 200 tokens (> threshold).
         # This causes _CompactNeeded to be raised before the second LLM call.
-        first_llm_call = _make_tool_call_stream("tc1", "say_hi", "{}", prompt_tokens=200)
+        first_llm_call = _make_tool_call_stream(
+            "tc1", "say_hi", "{}", prompt_tokens=200
+        )
         # After compact, the fresh agent's turn: one LLM call that returns a text reply.
         summary_stream = _make_text_stream("Summary of prior work.")
         fresh_reply = _make_text_stream("done after compact")
@@ -867,3 +980,87 @@ class TestAgentManagerAutoCompact:
         # Fresh agent should have replaced the original
         assert manager.get_agent(sid) is not agent_before
 
+
+class TestComputeCompactThreshold:
+    def test_explicit_threshold_overrides_adaptive(self):
+        config = AgentConfig(
+            system_prompt="",
+            model="openai/gpt-4o-mini",
+            compact_threshold=42,
+            compact_context_window=200_000,
+            compact_threshold_ratio=0.8,
+            compact_min_threshold=24_000,
+            compact_max_threshold=120_000,
+        )
+        assert _compute_compact_threshold(config) == 42
+
+    def test_unknown_context_window_uses_fixed_fallback(self):
+        config = AgentConfig(
+            system_prompt="",
+            model="openai/gpt-4o-mini",
+            compact_threshold=None,
+            compact_context_window=0,
+        )
+        assert _compute_compact_threshold(config) == 80_000
+
+    def test_adaptive_threshold_is_clamped(self):
+        low = AgentConfig(
+            system_prompt="",
+            model="openai/gpt-4o-mini",
+            compact_threshold=None,
+            compact_context_window=10_000,
+            compact_threshold_ratio=0.5,
+            compact_min_threshold=24_000,
+            compact_max_threshold=120_000,
+        )
+        high = AgentConfig(
+            system_prompt="",
+            model="openai/gpt-4o-mini",
+            compact_threshold=None,
+            compact_context_window=500_000,
+            compact_threshold_ratio=0.9,
+            compact_min_threshold=24_000,
+            compact_max_threshold=120_000,
+        )
+        assert _compute_compact_threshold(low) == 24_000
+        assert _compute_compact_threshold(high) == 120_000
+
+
+class TestAgentManagerAutoCompactRepeatedMidTurn(TestAgentManagerAutoCompact):
+    async def test_mid_turn_compact_can_repeat_until_turn_completes(self, tmp_path):
+        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=100)
+        agent_before = manager.get_agent(sid)
+        agent_before._tool_handler._schemas.append(  # noqa: SLF001
+            {
+                "type": "function",
+                "function": {
+                    "name": "say_hi",
+                    "description": "say hi",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        )
+        agent_before._tool_handler._executors["say_hi"] = lambda **_: "hi"  # noqa: SLF001
+
+        first_turn = _make_tool_call_stream("tc1", "say_hi", "{}", prompt_tokens=200)
+        first_summary = _make_text_stream("Summary #1")
+        second_turn = _make_tool_call_stream("tc2", "say_hi", "{}", prompt_tokens=220)
+        second_summary = _make_text_stream("Summary #2")
+        final_reply = _make_text_stream("done after two compacts")
+
+        events = []
+        with patch(
+            "make_agent.agent_core.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(
+                first_turn, first_summary, second_turn, second_summary, final_reply
+            ),
+        ):
+            async for event in manager.astream_agent(sid, "do something"):
+                events.append(event)
+
+        compact_events = [e for e in events if isinstance(e, CompactEvent)]
+        done_events = [e for e in events if isinstance(e, DoneEvent)]
+        assert len(compact_events) == 2
+        assert all(e.threshold == 100 for e in compact_events)
+        assert len(done_events) == 1
+        assert done_events[0].content == "done after two compacts"

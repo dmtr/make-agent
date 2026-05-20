@@ -28,10 +28,15 @@ _DEFAULT_MAX_TOOL_OUTPUT = 16000  # characters; 0 = unlimited
 _DEFAULT_MAX_TOKENS = 4096
 _DEFAULT_REASONING_EFFORT = "auto"
 _DEFAULT_COMPACT_THRESHOLD = 80_000  # prompt tokens before auto-compact fires
+_DEFAULT_COMPACT_THRESHOLD_RATIO = 0.7
+_DEFAULT_COMPACT_MIN_THRESHOLD = 24_000
+_DEFAULT_COMPACT_MAX_THRESHOLD = 120_000
+_DEFAULT_COMPACT_CONTEXT_WINDOW = 0
 _MAX_REPEATED_FAILURES = 8
 _MAX_MODEL_TURNS_PER_REQUEST = 64
 _MAX_TOOL_CALLS_PER_REQUEST = 256
 _MAX_RUN_SECONDS_PER_REQUEST = 900
+_MAX_COMPACTIONS_PER_REQUEST = 3
 
 _COMPACT_SKILL_TOOLS = frozenset({"list_skills", "read_skill"})
 _COMPACT_SUMMARY_SYSTEM = (
@@ -49,6 +54,7 @@ class _CompactNeeded(Exception):
     The manager catches this, compacts the context, and re-runs the turn
     on the fresh agent.
     """
+
 
 @dataclass
 class TokenEvent:
@@ -104,7 +110,31 @@ class AgentConfig(NamedTuple):
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT
     session_id: str | None = None
     project_dir: Path = Path()
-    compact_threshold: int = _DEFAULT_COMPACT_THRESHOLD
+    compact_threshold: int | None = None
+    compact_threshold_ratio: float = _DEFAULT_COMPACT_THRESHOLD_RATIO
+    compact_min_threshold: int = _DEFAULT_COMPACT_MIN_THRESHOLD
+    compact_max_threshold: int = _DEFAULT_COMPACT_MAX_THRESHOLD
+    compact_context_window: int = _DEFAULT_COMPACT_CONTEXT_WINDOW
+
+
+def _compute_compact_threshold(config: "AgentConfig") -> int:
+    """Return the effective compact threshold in prompt tokens.
+
+    Priority:
+    1. Explicit ``compact_threshold`` value (including ``0`` to disable).
+    2. Ratio-based threshold from ``compact_context_window`` with min/max clamps.
+    3. Fixed default threshold when context window is unknown.
+    """
+    if config.compact_threshold is not None:
+        return config.compact_threshold
+
+    if config.compact_context_window <= 0:
+        return _DEFAULT_COMPACT_THRESHOLD
+
+    adaptive = int(config.compact_context_window * config.compact_threshold_ratio)
+    adaptive = max(config.compact_min_threshold, adaptive)
+    adaptive = min(config.compact_max_threshold, adaptive)
+    return adaptive
 
 
 def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
@@ -388,6 +418,7 @@ class Agent:
         self._session_id = config.session_id
         self._tool_handler = tool_handler
         self._config = config
+        self._compact_threshold = _compute_compact_threshold(config)
         self._last_prompt_tokens: int = 0
         self._messages: list[dict] = []
         if config.system_prompt:
@@ -446,8 +477,8 @@ class Agent:
             # and re-run the turn on a fresh agent before making another LLM call.
             if (
                 model_turns > 0
-                and self._config.compact_threshold > 0
-                and self._last_prompt_tokens >= self._config.compact_threshold
+                and self._compact_threshold > 0
+                and self._last_prompt_tokens >= self._compact_threshold
             ):
                 raise _CompactNeeded()
 
@@ -704,7 +735,7 @@ class AgentManager:
         agent = self._sessions.get(session_id)
         if agent is None:
             return None
-        threshold = agent._config.compact_threshold
+        threshold = agent._compact_threshold
         if threshold <= 0 or agent._last_prompt_tokens < threshold:
             return None
 
@@ -714,7 +745,9 @@ class AgentManager:
             threshold,
         )
 
-        event = CompactEvent(prompt_tokens=agent._last_prompt_tokens, threshold=threshold)
+        event = CompactEvent(
+            prompt_tokens=agent._last_prompt_tokens, threshold=threshold
+        )
         pruned = _prune_skill_messages(agent.messages)
         summary = await _build_compact_summary(pruned, agent._config, self._memory)
 
@@ -744,20 +777,24 @@ class AgentManager:
     async def astream_agent(
         self, session_id: str, message: str
     ) -> AsyncGenerator[AgentEvent, None]:
-        compact_event = await self._compact_if_needed(session_id)
-        if compact_event is not None:
-            yield compact_event
-        agent = self.get_agent(session_id)
-        try:
-            async for event in agent.astream(message):
-                yield event
-        except _CompactNeeded:
+        compactions = 0
+        while True:
             compact_event = await self._compact_if_needed(session_id)
             if compact_event is not None:
+                compactions += 1
+                if compactions > _MAX_COMPACTIONS_PER_REQUEST:
+                    raise RuntimeError(
+                        f"aborted: exceeded {_MAX_COMPACTIONS_PER_REQUEST} context compactions in a single request"
+                    )
                 yield compact_event
+
             agent = self.get_agent(session_id)
-            async for event in agent.astream(message):
-                yield event
+            try:
+                async for event in agent.astream(message):
+                    yield event
+                return
+            except _CompactNeeded:
+                continue
 
     def export_conversation(self, session_id: str) -> Path | None:
         agent = self.get_agent(session_id)

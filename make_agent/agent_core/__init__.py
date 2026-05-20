@@ -1,5 +1,10 @@
 from .agent import (
+    _compute_compact_threshold,
+    _DEFAULT_COMPACT_CONTEXT_WINDOW,
+    _DEFAULT_COMPACT_MAX_THRESHOLD,
+    _DEFAULT_COMPACT_MIN_THRESHOLD,
     _DEFAULT_COMPACT_THRESHOLD,
+    _DEFAULT_COMPACT_THRESHOLD_RATIO,
     _DEFAULT_MAX_RETRIES,
     _DEFAULT_MAX_TOKENS,
     _DEFAULT_MAX_TOOL_OUTPUT,
@@ -23,7 +28,12 @@ from .agent import (
 from .export import _render_html, export_conversation
 
 __all__ = [
+    "_compute_compact_threshold",
+    "_DEFAULT_COMPACT_CONTEXT_WINDOW",
+    "_DEFAULT_COMPACT_MAX_THRESHOLD",
+    "_DEFAULT_COMPACT_MIN_THRESHOLD",
     "_DEFAULT_COMPACT_THRESHOLD",
+    "_DEFAULT_COMPACT_THRESHOLD_RATIO",
     "_DEFAULT_MAX_RETRIES",
     "_DEFAULT_MAX_TOKENS",
     "_DEFAULT_MAX_TOOL_OUTPUT",

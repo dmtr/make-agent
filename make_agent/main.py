@@ -6,9 +6,23 @@ import logging
 import sys
 from pathlib import Path
 
-from make_agent.agent_core import _DEFAULT_MAX_TOKENS, _DEFAULT_MAX_TOOL_OUTPUT, _DEFAULT_COMPACT_THRESHOLD
+from make_agent.agent_core import (
+    _DEFAULT_COMPACT_CONTEXT_WINDOW,
+    _DEFAULT_COMPACT_MAX_THRESHOLD,
+    _DEFAULT_COMPACT_MIN_THRESHOLD,
+    _DEFAULT_COMPACT_THRESHOLD,
+    _DEFAULT_COMPACT_THRESHOLD_RATIO,
+    _DEFAULT_MAX_TOKENS,
+    _DEFAULT_MAX_TOOL_OUTPUT,
+)
 from make_agent.agent_shell import run
-from make_agent.app_dirs import default_skills_dir, ensure_mode_system_prompt, log_file, mode_dir, mode_memory_path
+from make_agent.app_dirs import (
+    default_skills_dir,
+    ensure_mode_system_prompt,
+    log_file,
+    mode_dir,
+    mode_memory_path,
+)
 from make_agent.builtin_tools import builtin_tool_names
 from make_agent.memory import Memory
 from make_agent.skill_backend import MakefileSkillBackend, PythonSkillBackend
@@ -88,6 +102,23 @@ def _build_backend(skill_mode: str, skills_dir: str, tool_timeout: int):
     return PythonSkillBackend(skills_dir, tool_timeout)
 
 
+def _validate_compact_args(args: argparse.Namespace) -> None:
+    if args.compact_threshold is not None and args.compact_threshold < 0:
+        sys.exit("make-agent: --compact-threshold must be >= 0")
+    if args.compact_context_window < 0:
+        sys.exit("make-agent: --compact-context-window must be >= 0")
+    if args.compact_threshold_ratio <= 0 or args.compact_threshold_ratio > 1:
+        sys.exit("make-agent: --compact-threshold-ratio must be in (0, 1]")
+    if args.compact_min_threshold <= 0:
+        sys.exit("make-agent: --compact-min-threshold must be > 0")
+    if args.compact_max_threshold <= 0:
+        sys.exit("make-agent: --compact-max-threshold must be > 0")
+    if args.compact_max_threshold < args.compact_min_threshold:
+        sys.exit(
+            "make-agent: --compact-max-threshold must be >= --compact-min-threshold"
+        )
+
+
 def _cmd_run(args: argparse.Namespace) -> None:
     if args.model is None:
         sys.exit("make-agent: --model is required")
@@ -111,6 +142,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
     backend = _build_backend(args.skill_mode, skills_dir, args.tool_timeout)
     trusted_skills = _parse_trusted_skills(getattr(args, "trusted_skills", None))
     tool_handler = ToolHandler(backend, memory, disabled, trusted_skills)
+    _validate_compact_args(args)
 
     asyncio.run(
         run(
@@ -125,6 +157,10 @@ def _cmd_run(args: argparse.Namespace) -> None:
             max_tokens=args.max_tokens,
             reasoning_effort=args.reasoning_effort,
             compact_threshold=args.compact_threshold,
+            compact_threshold_ratio=args.compact_threshold_ratio,
+            compact_min_threshold=args.compact_min_threshold,
+            compact_max_threshold=args.compact_max_threshold,
+            compact_context_window=args.compact_context_window,
         )
     )
 
@@ -238,9 +274,39 @@ def main() -> None:
     run_p.add_argument(
         "--compact-threshold",
         type=int,
-        default=_DEFAULT_COMPACT_THRESHOLD,
+        default=None,
         metavar="TOKENS",
-        help=f"Prompt-token count that triggers auto-compaction; 0 = disabled (default: {_DEFAULT_COMPACT_THRESHOLD:,})",
+        help="Absolute prompt-token threshold for auto-compaction; overrides adaptive mode. "
+        f"0 = disabled (default adaptive fallback: {_DEFAULT_COMPACT_THRESHOLD:,})",
+    )
+    run_p.add_argument(
+        "--compact-context-window",
+        type=int,
+        default=_DEFAULT_COMPACT_CONTEXT_WINDOW,
+        metavar="TOKENS",
+        help="Known model context window in tokens for adaptive compact threshold "
+        "(default: 0 = unknown, use fixed fallback).",
+    )
+    run_p.add_argument(
+        "--compact-threshold-ratio",
+        type=float,
+        default=_DEFAULT_COMPACT_THRESHOLD_RATIO,
+        metavar="RATIO",
+        help=f"Adaptive compact threshold ratio of context window, in (0,1] (default: {_DEFAULT_COMPACT_THRESHOLD_RATIO})",
+    )
+    run_p.add_argument(
+        "--compact-min-threshold",
+        type=int,
+        default=_DEFAULT_COMPACT_MIN_THRESHOLD,
+        metavar="TOKENS",
+        help=f"Lower clamp for adaptive compact threshold (default: {_DEFAULT_COMPACT_MIN_THRESHOLD:,})",
+    )
+    run_p.add_argument(
+        "--compact-max-threshold",
+        type=int,
+        default=_DEFAULT_COMPACT_MAX_THRESHOLD,
+        metavar="TOKENS",
+        help=f"Upper clamp for adaptive compact threshold (default: {_DEFAULT_COMPACT_MAX_THRESHOLD:,})",
     )
 
     parser.add_argument(
@@ -317,7 +383,35 @@ def main() -> None:
     parser.add_argument(
         "--compact-threshold",
         type=int,
-        default=_DEFAULT_COMPACT_THRESHOLD,
+        default=None,
+        metavar="TOKENS",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--compact-context-window",
+        type=int,
+        default=_DEFAULT_COMPACT_CONTEXT_WINDOW,
+        metavar="TOKENS",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--compact-threshold-ratio",
+        type=float,
+        default=_DEFAULT_COMPACT_THRESHOLD_RATIO,
+        metavar="RATIO",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--compact-min-threshold",
+        type=int,
+        default=_DEFAULT_COMPACT_MIN_THRESHOLD,
+        metavar="TOKENS",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--compact-max-threshold",
+        type=int,
+        default=_DEFAULT_COMPACT_MAX_THRESHOLD,
         metavar="TOKENS",
         help=argparse.SUPPRESS,
     )

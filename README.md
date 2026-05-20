@@ -29,6 +29,11 @@ make_agent [run] --model MODEL [--skill-mode MODE] [--prompt PROMPT | --prompt-f
 | `--max-tool-output CHARS` | 16000 | Truncate tool output; `0` = unlimited |
 | `--max-tokens N` | 4096 | Max tokens in the model response |
 | `--reasoning-effort EFFORT` | `auto` | `none\|minimal\|low\|medium\|high\|xhigh\|auto` |
+| `--compact-threshold TOKENS` | adaptive | Absolute auto-compact threshold; `0` disables compaction |
+| `--compact-context-window TOKENS` | 0 | Known context window used for adaptive threshold (`0` = unknown) |
+| `--compact-threshold-ratio RATIO` | 0.7 | Adaptive threshold as a fraction of context window |
+| `--compact-min-threshold TOKENS` | 24000 | Lower clamp for adaptive threshold |
+| `--compact-max-threshold TOKENS` | 120000 | Upper clamp for adaptive threshold |
 | `--max-retries N` | 5 | Max retries on rate-limit errors |
 | `--tool-timeout SECONDS` | 600 | Timeout per tool call |
 | `--loglevel LEVEL` | `INFO` | `DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` |
