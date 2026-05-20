@@ -15,6 +15,7 @@ from make_agent.agent_core import (
     ToolDoneEvent,
     ToolStartEvent,
 )
+from make_agent.tool_display import ToolDisplayFormatter
 
 
 async def _confirm_skill(skill_name: str, target: str, kwargs: dict) -> bool:
@@ -47,9 +48,7 @@ class MakeAgentShell:
     def _setup_readline(self) -> None:
         """Configure readline so /cmd completions work."""
         try:
-            readline.set_completer_delims(
-                readline.get_completer_delims().replace("/", "")
-            )
+            readline.set_completer_delims(readline.get_completer_delims().replace("/", ""))
             readline.set_completer(self._completer)
             readline.parse_and_bind("tab: complete")
         except Exception:
@@ -76,9 +75,7 @@ class MakeAgentShell:
     def _cmd_stats(self) -> bool:
         stats = self._agent_manager.get_token_stats(self._session_id)
         if not stats:
-            print(
-                "No token usage stats available (memory not enabled or no LLM calls yet)."
-            )
+            print("No token usage stats available (memory not enabled or no LLM calls yet).")
             return False
         print(f"Token usage for session {self._session_id}:")
         print(f"  Model(s):      {', '.join(stats['models'])}")
@@ -90,9 +87,7 @@ class MakeAgentShell:
 
     def _cmd_help(self) -> bool:
         print("Commands: " + "  ".join(f"/{name}" for name in self._commands))
-        print(
-            "Any other input is sent to the agent. Press Ctrl-C to cancel a running turn."
-        )
+        print("Any other input is sent to the agent. Press Ctrl-C to cancel a running turn.")
         return False
 
     def _dispatch_command(self, line: str) -> bool:
@@ -111,16 +106,20 @@ class MakeAgentShell:
         async for event in self._agent_manager.astream_agent(self._session_id, message):
             if isinstance(event, CompactEvent):
                 print(
-                    f"\n[Auto-compacting context ({event.prompt_tokens:,} tokens ≥ "
-                    f"{event.threshold:,} threshold)...]\n",
+                    f"\n[Auto-compacting context ({event.prompt_tokens:,} tokens ≥ " f"{event.threshold:,} threshold)...]\n",
                     flush=True,
                 )
             elif isinstance(event, TokenEvent):
                 print(event.text, end="", flush=True)
             elif isinstance(event, ToolStartEvent):
-                print(f"\nRunning: {event.name}...", flush=True)
+                formatter = ToolDisplayFormatter()
+                print(f"\n{formatter.format_start(event.name, event.args)}", flush=True)
+                if event.description:
+                    print(f"  {event.description}\n", flush=True)
             elif isinstance(event, ToolDoneEvent):
-                pass  # tool output visible via agent logs; keep terminal clean
+                formatter = ToolDisplayFormatter()
+                output_preview = event.output[:200] if event.output else "(no output)"
+                print(f"{formatter.format_done(event.name, output_preview, event.is_error, event.duration_ms)}", flush=True)
             elif isinstance(event, DoneEvent):
                 print()  # trailing newline after streamed content
 
@@ -145,10 +144,7 @@ class MakeAgentShell:
         self._setup_readline()
         self._agent_manager.set_confirm_callback(_confirm_skill)
         loop = asyncio.get_running_loop()
-        print(
-            "Type your message. Prefix shell commands with /  "
-            "(e.g. /exit, /help). Press Ctrl-D or Ctrl-C twice to exit.\n"
-        )
+        print("Type your message. Prefix shell commands with /  " "(e.g. /exit, /help). Press Ctrl-D or Ctrl-C twice to exit.\n")
         while True:
             try:
                 line = await loop.run_in_executor(None, input, self.prompt)

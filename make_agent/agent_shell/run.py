@@ -14,6 +14,7 @@ from make_agent.agent_core import (
     _DEFAULT_MAX_TOOL_OUTPUT,
     _DEFAULT_REASONING_EFFORT,
     _DEFAULT_TOOL_TIMEOUT,
+    _DEFAULT_USE_PROMPT_CACHE,
     AgentConfig,
     AgentManager,
 )
@@ -40,6 +41,7 @@ async def run(
     compact_min_threshold: int = _DEFAULT_COMPACT_MIN_THRESHOLD,
     compact_max_threshold: int = _DEFAULT_COMPACT_MAX_THRESHOLD,
     compact_context_window: int = _DEFAULT_COMPACT_CONTEXT_WINDOW,
+    use_prompt_cache: bool = _DEFAULT_USE_PROMPT_CACHE,
 ) -> None:
     """Start the interactive shell (or send a single prompt and return)."""
     await tool_handler.setup(model)
@@ -57,6 +59,7 @@ async def run(
         compact_min_threshold=compact_min_threshold,
         compact_max_threshold=compact_max_threshold,
         compact_context_window=compact_context_window,
+        use_prompt_cache=use_prompt_cache,
     )
     agent_manager = AgentManager(memory, tool_handler)
     session_id = agent_manager.create_session(agent_config)

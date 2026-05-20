@@ -17,7 +17,6 @@ from any_llm.types.completion import (
     ChatCompletionMessageToolCall,
     Function,
 )
-
 from make_agent.protocols import MemoryProtocol, ToolHandlerProtocol
 
 from .export import export_conversation
@@ -32,6 +31,7 @@ _DEFAULT_COMPACT_THRESHOLD_RATIO = 0.7
 _DEFAULT_COMPACT_MIN_THRESHOLD = 24_000
 _DEFAULT_COMPACT_MAX_THRESHOLD = 120_000
 _DEFAULT_COMPACT_CONTEXT_WINDOW = 0
+_DEFAULT_USE_PROMPT_CACHE = False
 _MAX_REPEATED_FAILURES = 8
 _MAX_MODEL_TURNS_PER_REQUEST = 64
 _MAX_TOOL_CALLS_PER_REQUEST = 256
@@ -46,6 +46,12 @@ _COMPACT_SUMMARY_SYSTEM = (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_anthropic_model(model: str) -> bool:
+    """Return True if *model* targets Anthropic (supports cache_control blocks)."""
+    lower = model.lower()
+    return lower.startswith("anthropic/") or "claude" in lower
 
 
 class _CompactNeeded(Exception):
@@ -69,6 +75,7 @@ class ToolStartEvent:
 
     name: str
     args: dict
+    description: str = ""  # Tool description for structured display
 
 
 @dataclass
@@ -78,6 +85,7 @@ class ToolDoneEvent:
     name: str
     output: str
     is_error: bool
+    duration_ms: float | None = None  # Execution time in milliseconds
 
 
 @dataclass
@@ -115,6 +123,7 @@ class AgentConfig(NamedTuple):
     compact_min_threshold: int = _DEFAULT_COMPACT_MIN_THRESHOLD
     compact_max_threshold: int = _DEFAULT_COMPACT_MAX_THRESHOLD
     compact_context_window: int = _DEFAULT_COMPACT_CONTEXT_WINDOW
+    use_prompt_cache: bool = _DEFAULT_USE_PROMPT_CACHE
 
 
 def _compute_compact_threshold(config: "AgentConfig") -> int:
@@ -145,13 +154,7 @@ def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
     """
     try:
         orig = e.original_exception
-        headers = (
-            orig.response.headers
-            if orig is not None
-            and hasattr(orig, "response")
-            and orig.response is not None
-            else {}
-        )
+        headers = orig.response.headers if orig is not None and hasattr(orig, "response") and orig.response is not None else {}
     except Exception:
         return None
     if ms := headers.get("retry-after-ms"):
@@ -194,8 +197,7 @@ async def _acompletion_with_retry(
                 raise
             wait = _parse_retry_after(e) or min(2**attempt, 60)
             print(
-                f"Rate limited, retrying in {wait:.0f}s"
-                f" (attempt {attempt + 1}/{max_retries})...",
+                f"Rate limited, retrying in {wait:.0f}s" f" (attempt {attempt + 1}/{max_retries})...",
                 flush=True,
             )
             await asyncio.sleep(wait)
@@ -346,9 +348,7 @@ def _flatten_messages_for_summary(messages: list[dict]) -> list[dict]:
     return result
 
 
-async def _build_compact_summary(
-    messages: list[dict], config: "AgentConfig", memory: "MemoryProtocol"
-) -> str:
+async def _build_compact_summary(messages: list[dict], config: "AgentConfig", memory: "MemoryProtocol") -> str:
     """Call the LLM with a summarisation prompt and return the summary text.
 
     The agent's original system message is replaced with the compact-summary
@@ -422,7 +422,17 @@ class Agent:
         self._last_prompt_tokens: int = 0
         self._messages: list[dict] = []
         if config.system_prompt:
-            self._messages.append({"role": "system", "content": config.system_prompt})
+            if config.use_prompt_cache and _is_anthropic_model(config.model):
+                system_content: str | list = [
+                    {
+                        "type": "text",
+                        "text": config.system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+            else:
+                system_content = config.system_prompt
+            self._messages.append({"role": "system", "content": system_content})
             logger.debug("[system]\n%s", config.system_prompt)
 
     @property
@@ -441,6 +451,13 @@ class Agent:
     @property
     def model(self) -> str:
         return self._model
+
+    def _get_tool_description(self, tool_name: str) -> str:
+        """Find tool description from schemas."""
+        for schema in self._tool_handler.schemas:
+            if schema.get("function", {}).get("name") == tool_name:
+                return schema.get("function", {}).get("description", "")
+        return ""
 
     def __repr__(self) -> str:
         return f"Agent(model={self._model!r}, tools={self.tool_names!r})"
@@ -464,22 +481,14 @@ class Agent:
 
         while True:
             if model_turns >= _MAX_MODEL_TURNS_PER_REQUEST:
-                raise RuntimeError(
-                    f"aborted: exceeded {_MAX_MODEL_TURNS_PER_REQUEST} model turns in a single request"
-                )
+                raise RuntimeError(f"aborted: exceeded {_MAX_MODEL_TURNS_PER_REQUEST} model turns in a single request")
             if time.monotonic() - started_at >= _MAX_RUN_SECONDS_PER_REQUEST:
-                raise RuntimeError(
-                    f"aborted: exceeded {_MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request"
-                )
+                raise RuntimeError(f"aborted: exceeded {_MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
 
             # Mid-turn compact check: after the first LLM call this turn, if the
             # context has grown past the threshold raise so the manager can compact
             # and re-run the turn on a fresh agent before making another LLM call.
-            if (
-                model_turns > 0
-                and self._compact_threshold > 0
-                and self._last_prompt_tokens >= self._compact_threshold
-            ):
+            if model_turns > 0 and self._compact_threshold > 0 and self._last_prompt_tokens >= self._compact_threshold:
                 raise _CompactNeeded()
 
             stream = await _acompletion_with_retry(
@@ -514,11 +523,7 @@ class Agent:
                             # index=0 for every tool call, so use id-based lookup
                             # instead of the index to correctly handle parallel calls.
                             idx = next(
-                                (
-                                    k
-                                    for k, v in tool_call_acc.items()
-                                    if v["id"] == tc_delta.id
-                                ),
+                                (k for k, v in tool_call_acc.items() if v["id"] == tc_delta.id),
                                 None,
                             )
                             if idx is None:
@@ -539,9 +544,7 @@ class Agent:
                                 }
                         if tc_delta.function:
                             tool_call_acc[idx]["name"] += tc_delta.function.name or ""
-                            tool_call_acc[idx]["arguments"] += (
-                                tc_delta.function.arguments or ""
-                            )
+                            tool_call_acc[idx]["arguments"] += tc_delta.function.arguments or ""
                 if chunk.usage is not None:
                     usage = chunk.usage
 
@@ -595,9 +598,7 @@ class Agent:
                         ChatCompletionMessageFunctionToolCall(
                             id=tc["id"],
                             type="function",
-                            function=Function(
-                                name=tc["name"], arguments=tc["arguments"]
-                            ),
+                            function=Function(name=tc["name"], arguments=tc["arguments"]),
                         )
                         for tc in sorted_tcs
                     ]
@@ -609,17 +610,13 @@ class Agent:
 
                 for tc in tool_calls_to_run:
                     if tool_calls_executed >= _MAX_TOOL_CALLS_PER_REQUEST:
-                        raise RuntimeError(
-                            f"aborted: exceeded {_MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request"
-                        )
+                        raise RuntimeError(f"aborted: exceeded {_MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request")
                     tool_calls_executed += 1
                     target = tc.function.name
                     try:
                         arguments = json.loads(tc.function.arguments)
                     except json.JSONDecodeError as e:
-                        result = self._tool_handler.get_tool_result(
-                            "", f"malformed JSON arguments: {e}", None
-                        )
+                        result = self._tool_handler.get_tool_result("", f"malformed JSON arguments: {e}", None)
                         logger.error("[tool_result] %s -> %s", target, result.output)
                         self._messages.append(
                             {
@@ -631,16 +628,22 @@ class Agent:
                         continue
 
                     logger.debug("[tool_call] %s args=%s", target, arguments)
-                    yield ToolStartEvent(name=target, args=arguments)
-
-                    result = await self._tool_handler.execute(
-                        target, arguments, self._max_tool_output
+                    yield ToolStartEvent(
+                        name=target,
+                        args=arguments,
+                        description=self._get_tool_description(target),
                     )
+
+                    start_time = time.monotonic()
+                    result = await self._tool_handler.execute(
+                        target,
+                        arguments,
+                        self._max_tool_output,
+                    )
+                    duration_ms = (time.monotonic() - start_time) * 1000
 
                     logger.info("[tool_result] %s -> %s", target, result.output)
-                    yield ToolDoneEvent(
-                        name=target, output=result.output, is_error=result.is_error
-                    )
+                    yield ToolDoneEvent(name=target, output=result.output, is_error=result.is_error, duration_ms=duration_ms)
 
                     self._messages.append(
                         {
@@ -695,9 +698,7 @@ class SessionNotFoundError(Exception):
 
 
 class AgentManager:
-    def __init__(
-        self, memory: MemoryProtocol, tool_handler: ToolHandlerProtocol
-    ) -> None:
+    def __init__(self, memory: MemoryProtocol, tool_handler: ToolHandlerProtocol) -> None:
         self._memory = memory
         self._tool_handler = tool_handler
         self._sessions: dict[str, Agent] = {}
@@ -708,9 +709,7 @@ class AgentManager:
 
     def create_session(self, config: AgentConfig) -> str:
         session_id = self.get_session_id()
-        agent = Agent(
-            config._replace(session_id=session_id), self._memory, self._tool_handler
-        )
+        agent = Agent(config._replace(session_id=session_id), self._memory, self._tool_handler)
         self._sessions[session_id] = agent
         return session_id
 
@@ -745,9 +744,7 @@ class AgentManager:
             threshold,
         )
 
-        event = CompactEvent(
-            prompt_tokens=agent._last_prompt_tokens, threshold=threshold
-        )
+        event = CompactEvent(prompt_tokens=agent._last_prompt_tokens, threshold=threshold)
         pruned = _prune_skill_messages(agent.messages)
         summary = await _build_compact_summary(pruned, agent._config, self._memory)
 
@@ -774,18 +771,14 @@ class AgentManager:
                 return event.content
         return ""
 
-    async def astream_agent(
-        self, session_id: str, message: str
-    ) -> AsyncGenerator[AgentEvent, None]:
+    async def astream_agent(self, session_id: str, message: str) -> AsyncGenerator[AgentEvent, None]:
         compactions = 0
         while True:
             compact_event = await self._compact_if_needed(session_id)
             if compact_event is not None:
                 compactions += 1
                 if compactions > _MAX_COMPACTIONS_PER_REQUEST:
-                    raise RuntimeError(
-                        f"aborted: exceeded {_MAX_COMPACTIONS_PER_REQUEST} context compactions in a single request"
-                    )
+                    raise RuntimeError(f"aborted: exceeded {_MAX_COMPACTIONS_PER_REQUEST} context compactions in a single request")
                 yield compact_event
 
             agent = self.get_agent(session_id)

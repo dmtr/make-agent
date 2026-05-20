@@ -49,6 +49,7 @@ def _run_args(**kwargs) -> argparse.Namespace:
         compact_min_threshold=24_000,
         compact_max_threshold=120_000,
         compact_context_window=0,
+        prompt_cache=False,
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
@@ -214,6 +215,24 @@ class TestRunPromptInput:
         assert captured["compact_threshold_ratio"] == 0.65
         assert captured["compact_min_threshold"] == 20_000
         assert captured["compact_max_threshold"] == 100_000
+
+    def test_prompt_cache_flag_is_passed_to_run(self, tmp_path):
+        args = _run_args(prompt="continue", prompt_cache=True)
+        captured: dict = {}
+
+        async def _fake_run(**kwargs):
+            captured.update(kwargs)
+
+        with (
+            patch.object(main_module, "run", _fake_run),
+            patch.object(main_module, "ensure_mode_system_prompt"),
+            patch.object(main_module, "mode_dir", return_value=tmp_path / "python-mode"),
+            patch.object(main_module, "mode_memory_path", return_value=tmp_path / "python-memory.db"),
+            patch.object(main_module, "default_skills_dir", return_value=tmp_path / "python-skills"),
+        ):
+            main_module._cmd_run(args)
+
+        assert captured["use_prompt_cache"] is True
 
     def test_prompt_and_prompt_file_are_mutually_exclusive(self, tmp_path):
         prompt_file = _write(tmp_path, "prompt.txt", "hello")

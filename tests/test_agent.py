@@ -10,6 +10,7 @@ from make_agent.agent_core import (
     _acompletion_with_retry,
     _compute_compact_threshold,
     _flatten_messages_for_summary,
+    _is_anthropic_model,
     _parse_retry_after,
     _prune_skill_messages,
     AgentConfig,
@@ -1064,3 +1065,61 @@ class TestAgentManagerAutoCompactRepeatedMidTurn(TestAgentManagerAutoCompact):
         assert all(e.threshold == 100 for e in compact_events)
         assert len(done_events) == 1
         assert done_events[0].content == "done after two compacts"
+
+
+class TestIsAnthropicModel:
+    def test_anthropic_prefix(self):
+        assert _is_anthropic_model("anthropic/claude-opus-4-5") is True
+
+    def test_claude_substring(self):
+        assert _is_anthropic_model("claude-3-5-sonnet-20241022") is True
+
+    def test_openai_model_is_false(self):
+        assert _is_anthropic_model("openai/gpt-4o") is False
+
+    def test_gemini_model_is_false(self):
+        assert _is_anthropic_model("google/gemini-2.0-flash") is False
+
+    def test_case_insensitive(self):
+        assert _is_anthropic_model("Anthropic/Claude-Opus") is True
+
+
+class TestAgentSystemPromptCache:
+    def _make_agent(self, tmp_path, model: str, use_prompt_cache: bool):
+        from make_agent.agent_core import Agent
+        from make_agent.memory import Memory
+        from make_agent.skill_backend import PythonSkillBackend
+        from make_agent.tool_handler import ToolHandler
+
+        memory = Memory(tmp_path / "memory.db")
+        tool_handler = ToolHandler(PythonSkillBackend(str(tmp_path), 60), memory)
+        config = AgentConfig(
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            use_prompt_cache=use_prompt_cache,
+        )
+        return Agent(config, memory, tool_handler)
+
+    def test_no_cache_stores_plain_string(self, tmp_path):
+        agent = self._make_agent(tmp_path, "anthropic/claude-3-5-haiku-20241022", False)
+        system_msg = agent.messages[0]
+        assert system_msg["role"] == "system"
+        assert system_msg["content"] == "You are a helpful assistant."
+
+    def test_cache_anthropic_stores_content_block(self, tmp_path):
+        agent = self._make_agent(tmp_path, "anthropic/claude-3-5-haiku-20241022", True)
+        system_msg = agent.messages[0]
+        assert system_msg["role"] == "system"
+        content = system_msg["content"]
+        assert isinstance(content, list)
+        assert len(content) == 1
+        block = content[0]
+        assert block["type"] == "text"
+        assert block["text"] == "You are a helpful assistant."
+        assert block["cache_control"] == {"type": "ephemeral"}
+
+    def test_cache_non_anthropic_stores_plain_string(self, tmp_path):
+        agent = self._make_agent(tmp_path, "openai/gpt-4o", True)
+        system_msg = agent.messages[0]
+        assert system_msg["role"] == "system"
+        assert system_msg["content"] == "You are a helpful assistant."

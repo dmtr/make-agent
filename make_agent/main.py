@@ -14,6 +14,7 @@ from make_agent.agent_core import (
     _DEFAULT_COMPACT_THRESHOLD_RATIO,
     _DEFAULT_MAX_TOKENS,
     _DEFAULT_MAX_TOOL_OUTPUT,
+    _DEFAULT_USE_PROMPT_CACHE,
 )
 from make_agent.agent_shell import run
 from make_agent.app_dirs import (
@@ -161,6 +162,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
             compact_min_threshold=args.compact_min_threshold,
             compact_max_threshold=args.compact_max_threshold,
             compact_context_window=args.compact_context_window,
+            use_prompt_cache=args.prompt_cache,
         )
     )
 
@@ -308,7 +310,12 @@ def main() -> None:
         metavar="TOKENS",
         help=f"Upper clamp for adaptive compact threshold (default: {_DEFAULT_COMPACT_MAX_THRESHOLD:,})",
     )
-
+    run_p.add_argument(
+        "--prompt-cache",
+        action="store_true",
+        default=_DEFAULT_USE_PROMPT_CACHE,
+        help="Enable prompt caching for the system prompt (Anthropic models only)",
+    )
     parser.add_argument(
         "--model", default=None, metavar="MODEL", help=argparse.SUPPRESS
     )
@@ -415,7 +422,12 @@ def main() -> None:
         metavar="TOKENS",
         help=argparse.SUPPRESS,
     )
-
+    parser.add_argument(
+        "--prompt-cache",
+        action="store_true",
+        default=_DEFAULT_USE_PROMPT_CACHE,
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
     _init_logging(args.loglevel)
     _cmd_run(args)
