@@ -301,7 +301,9 @@ def _flatten_messages_for_summary(messages: list[dict]) -> list[dict]:
     return result
 
 
-async def _build_compact_summary(messages: list[dict], config: "AgentConfig") -> str:
+async def _build_compact_summary(
+    messages: list[dict], config: "AgentConfig", memory: "MemoryProtocol"
+) -> str:
     """Call the LLM with a summarisation prompt and return the summary text.
 
     The agent's original system message is replaced with the compact-summary
@@ -323,12 +325,24 @@ async def _build_compact_summary(messages: list[dict], config: "AgentConfig") ->
         config.reasoning_effort,
     )
     parts: list[str] = []
+    usage = None
     async for chunk in stream:
         if not chunk.choices:
+            if chunk.usage is not None:
+                usage = chunk.usage
             continue
         delta = chunk.choices[0].delta
         if delta and delta.content:
             parts.append(delta.content)
+        if chunk.usage is not None:
+            usage = chunk.usage
+    if usage is not None:
+        memory.record_token_usage(
+            config.session_id or "",
+            config.model,
+            usage.prompt_tokens,
+            usage.completion_tokens,
+        )
     return "".join(parts)
 
 
@@ -680,7 +694,7 @@ class AgentManager:
         )
 
         pruned = _prune_skill_messages(agent.messages)
-        summary = await _build_compact_summary(pruned, agent._config)
+        summary = await _build_compact_summary(pruned, agent._config, self._memory)
 
         new_agent = Agent(agent._config, self._memory, self._tool_handler)
         new_agent._messages.append(
