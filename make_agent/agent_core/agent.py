@@ -74,7 +74,15 @@ class DoneEvent:
     content: str
 
 
-AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent
+@dataclass
+class CompactEvent:
+    """Emitted when the context is compacted before a new agent turn."""
+
+    prompt_tokens: int
+    threshold: int
+
+
+AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent | CompactEvent
 
 
 class AgentConfig(NamedTuple):
@@ -668,31 +676,28 @@ class AgentManager:
         """Register a skill-execution confirmation callback on the tool handler."""
         self._tool_handler.set_confirm(confirm)  # type: ignore[union-attr]
 
-    async def _compact_if_needed(self, session_id: str) -> None:
+    async def _compact_if_needed(self, session_id: str) -> CompactEvent | None:
         """Compact the session's conversation if it has exceeded the token threshold.
 
         Prunes old ``list_skills``/``read_skill`` exchanges, asks the LLM for a
         brief summary, then replaces the session agent with a fresh instance that
-        starts from the summary.
+        starts from the summary.  Returns a :class:`CompactEvent` when compaction
+        was performed, ``None`` otherwise.
         """
         agent = self._sessions.get(session_id)
         if agent is None:
-            return
+            return None
         threshold = agent._config.compact_threshold
         if threshold <= 0 or agent._last_prompt_tokens < threshold:
-            return
+            return None
 
         logger.info(
             "[compact] context at %d tokens (threshold %d), compacting...",
             agent._last_prompt_tokens,
             threshold,
         )
-        print(
-            f"\n[Auto-compacting context ({agent._last_prompt_tokens:,} tokens ≥ "
-            f"{threshold:,} threshold)...]\n",
-            flush=True,
-        )
 
+        event = CompactEvent(prompt_tokens=agent._last_prompt_tokens, threshold=threshold)
         pruned = _prune_skill_messages(agent.messages)
         summary = await _build_compact_summary(pruned, agent._config, self._memory)
 
@@ -711,6 +716,7 @@ class AgentManager:
         )
         self._sessions[session_id] = new_agent
         logger.info("[compact] done, fresh agent created with summary")
+        return event
 
     async def arun_agent(self, session_id: str, message: str) -> str:
         async for event in self.astream_agent(session_id, message):
@@ -721,7 +727,9 @@ class AgentManager:
     async def astream_agent(
         self, session_id: str, message: str
     ) -> AsyncGenerator[AgentEvent, None]:
-        await self._compact_if_needed(session_id)
+        compact_event = await self._compact_if_needed(session_id)
+        if compact_event is not None:
+            yield compact_event
         agent = self.get_agent(session_id)
         async for event in agent.astream(message):
             yield event

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import any_llm
 import pytest
-from make_agent.agent_core import _acompletion_with_retry, _flatten_messages_for_summary, _parse_retry_after, _prune_skill_messages
+from make_agent.agent_core import _acompletion_with_retry, _flatten_messages_for_summary, _parse_retry_after, _prune_skill_messages, CompactEvent
 
 
 def _make_rate_limit_error(
@@ -786,4 +786,25 @@ class TestAgentManagerAutoCompact:
 
         assert result == "no compact"
         assert manager.get_agent(sid) is agent_before
+
+    async def test_compact_yields_compact_event(self, tmp_path):
+        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=100)
+        agent_before = manager.get_agent(sid)
+        agent_before._last_prompt_tokens = 250
+
+        summary_stream = _make_text_stream("summary text")
+        reply_stream = _make_text_stream("reply")
+
+        events = []
+        with patch(
+            "make_agent.agent_core.agent._acompletion_with_retry",
+            _mock_acompletion_with_retry(summary_stream, reply_stream),
+        ):
+            async for event in manager.astream_agent(sid, "continue"):
+                events.append(event)
+
+        compact_events = [e for e in events if isinstance(e, CompactEvent)]
+        assert len(compact_events) == 1
+        assert compact_events[0].prompt_tokens == 250
+        assert compact_events[0].threshold == 100
 
