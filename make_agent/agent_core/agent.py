@@ -34,6 +34,7 @@ _MAX_TOOL_CALLS_PER_REQUEST = 256
 _MAX_RUN_SECONDS_PER_REQUEST = 900
 
 logger = logging.getLogger(__name__)
+litellm.drop_params = True
 
 
 def _is_anthropic_model(model: str) -> bool:
