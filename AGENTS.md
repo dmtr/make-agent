@@ -18,7 +18,7 @@ All tests live in `tests/`. End-to-end tests are marked `@pytest.mark.e2e` and s
 
 - **Python 3.11+** required.
 - Dependency management via `uv`. The lockfile is `uv.lock`; update it with `uv lock` after changing `pyproject.toml`.
-- The project uses `any-llm-sdk` (not litellm) for LLM access.
+- The project uses `litellm` (not any-llm-sdk) for LLM access.
 - One CLI entry point: `make_agent` (the `run` subcommand is the default).
 - Two skill modes: `python` (default) and `makefile`, selected via `--skill-mode`.
 - Per-project data lives in `~/.make-agent/<project-slug>/<mode>/` — never write to the repo at runtime.

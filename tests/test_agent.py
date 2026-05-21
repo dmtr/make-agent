@@ -4,17 +4,13 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-import any_llm
+import litellm
 import pytest
 from make_agent.agent_core import (
     _acompletion_with_retry,
-    _compute_compact_threshold,
-    _flatten_messages_for_summary,
     _is_anthropic_model,
     _parse_retry_after,
-    _prune_skill_messages,
     AgentConfig,
-    CompactEvent,
     DoneEvent,
 )
 
@@ -22,7 +18,7 @@ from make_agent.agent_core import (
 def _make_rate_limit_error(
     retry_after: float | None = None,
     retry_after_ms: float | None = None,
-) -> any_llm.RateLimitError:
+) -> litellm.RateLimitError:
     headers: dict[str, str] = {}
     if retry_after is not None:
         headers["retry-after"] = str(retry_after)
@@ -30,12 +26,11 @@ def _make_rate_limit_error(
         headers["retry-after-ms"] = str(retry_after_ms)
     fake_response = MagicMock()
     fake_response.headers = headers
-    fake_orig = MagicMock()
-    fake_orig.response = fake_response
-    return any_llm.RateLimitError(
+    return litellm.RateLimitError(
         message="rate limit exceeded",
-        original_exception=fake_orig,
-        provider_name="anthropic",
+        llm_provider="anthropic",
+        model="test",
+        response=fake_response,
     )
 
 
@@ -202,11 +197,8 @@ class TestParseRetryAfter:
         assert _parse_retry_after(err) is None
 
     def test_none_response(self):
-        err = any_llm.RateLimitError(
-            message="rate limit exceeded",
-            original_exception=None,
-            provider_name="anthropic",
-        )
+        err = MagicMock()
+        err.response = None
         assert _parse_retry_after(err) is None
 
 
@@ -214,7 +206,7 @@ class TestACompletionWithRetry:
     async def test_succeeds_on_first_attempt(self):
         stream = _make_empty_stream()
         with patch(
-            "make_agent.agent_core.agent.any_llm.acompletion",
+            "make_agent.agent_core.agent.litellm.acompletion",
             AsyncMock(return_value=stream),
         ) as mock_c:
             result = await _acompletion_with_retry("model", [], {}, max_retries=3)
@@ -225,7 +217,7 @@ class TestACompletionWithRetry:
         err = _make_rate_limit_error(retry_after=10)
         stream = _make_empty_stream()
         with patch(
-            "make_agent.agent_core.agent.any_llm.acompletion",
+            "make_agent.agent_core.agent.litellm.acompletion",
             AsyncMock(side_effect=[err, err, stream]),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
@@ -238,7 +230,7 @@ class TestACompletionWithRetry:
         err = _make_rate_limit_error()
         stream = _make_empty_stream()
         with patch(
-            "make_agent.agent_core.agent.any_llm.acompletion",
+            "make_agent.agent_core.agent.litellm.acompletion",
             AsyncMock(side_effect=[err, err, stream]),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
@@ -250,7 +242,7 @@ class TestACompletionWithRetry:
         stream = _make_empty_stream()
         side_effects = [err] * 7 + [stream]
         with patch(
-            "make_agent.agent_core.agent.any_llm.acompletion",
+            "make_agent.agent_core.agent.litellm.acompletion",
             AsyncMock(side_effect=side_effects),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
@@ -262,32 +254,32 @@ class TestACompletionWithRetry:
     async def test_raises_after_max_retries_exhausted(self):
         err = _make_rate_limit_error(retry_after=1)
         with patch(
-            "make_agent.agent_core.agent.any_llm.acompletion",
+            "make_agent.agent_core.agent.litellm.acompletion",
             AsyncMock(side_effect=err),
         ):
             with patch("asyncio.sleep", AsyncMock()):
-                with pytest.raises(any_llm.RateLimitError):
+                with pytest.raises(litellm.RateLimitError):
                     await _acompletion_with_retry("model", [], {}, max_retries=2)
 
     async def test_total_calls_equals_max_retries_plus_one(self):
         err = _make_rate_limit_error(retry_after=1)
         with patch(
-            "make_agent.agent_core.agent.any_llm.acompletion",
+            "make_agent.agent_core.agent.litellm.acompletion",
             AsyncMock(side_effect=err),
         ) as mock_c:
             with patch("asyncio.sleep", AsyncMock()):
-                with pytest.raises(any_llm.RateLimitError):
+                with pytest.raises(litellm.RateLimitError):
                     await _acompletion_with_retry("model", [], {}, max_retries=3)
         assert mock_c.call_count == 4  # 1 initial + 3 retries
 
     async def test_zero_max_retries_raises_immediately(self):
         err = _make_rate_limit_error(retry_after=1)
         with patch(
-            "make_agent.agent_core.agent.any_llm.acompletion",
+            "make_agent.agent_core.agent.litellm.acompletion",
             AsyncMock(side_effect=err),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                with pytest.raises(any_llm.RateLimitError):
+                with pytest.raises(litellm.RateLimitError):
                     await _acompletion_with_retry("model", [], {}, max_retries=0)
         mock_sleep.assert_not_called()
 
@@ -640,431 +632,6 @@ def _system(content: str = "system") -> dict:
 
 def _assistant_text(content: str = "ok") -> dict:
     return {"role": "assistant", "content": content}
-
-
-class TestPruneSkillMessages:
-    def test_empty_messages_returns_empty(self):
-        assert _prune_skill_messages([]) == []
-
-    def test_no_skill_calls_unchanged(self):
-        msgs = [_system(), _user(), _assistant_text()]
-        assert _prune_skill_messages(msgs) == msgs
-
-    def test_single_list_skills_call_kept(self):
-        msgs = [
-            _user(),
-            _assistant_tc(_tc("t1", "list_skills")),
-            _tool_result("t1", "skill-a"),
-        ]
-        result = _prune_skill_messages(msgs)
-        assert result == msgs
-
-    def test_two_list_skills_calls_keeps_last(self):
-        msgs = [
-            _user("first"),
-            _assistant_tc(_tc("t1", "list_skills")),
-            _tool_result("t1", "old listing"),
-            _user("second"),
-            _assistant_tc(_tc("t2", "list_skills")),
-            _tool_result("t2", "new listing"),
-        ]
-        result = _prune_skill_messages(msgs)
-        ids_present = {m.get("tool_call_id") for m in result if m.get("role") == "tool"}
-        assert "t2" in ids_present
-        assert "t1" not in ids_present
-
-    def test_two_read_skill_calls_keeps_last(self):
-        msgs = [
-            _assistant_tc(_tc("r1", "read_skill", '{"name":"foo"}')),
-            _tool_result("r1", "old content"),
-            _assistant_tc(_tc("r2", "read_skill", '{"name":"foo"}')),
-            _tool_result("r2", "new content"),
-        ]
-        result = _prune_skill_messages(msgs)
-        ids_present = {m.get("tool_call_id") for m in result if m.get("role") == "tool"}
-        assert "r2" in ids_present
-        assert "r1" not in ids_present
-
-    def test_mixed_skill_and_other_tools_preserved(self):
-        msgs = [
-            _assistant_tc(
-                _tc("t1", "list_skills"),
-                _tc("e1", "execute_skill", '{"name":"x","command":"make"}'),
-            ),
-            _tool_result("t1", "listing"),
-            _tool_result("e1", "executed"),
-            _assistant_tc(_tc("t2", "list_skills")),
-            _tool_result("t2", "new listing"),
-        ]
-        result = _prune_skill_messages(msgs)
-        ids_present = {m.get("tool_call_id") for m in result if m.get("role") == "tool"}
-        # Old list_skills dropped, execute_skill and new list_skills kept
-        assert "t1" not in ids_present
-        assert "e1" in ids_present
-        assert "t2" in ids_present
-
-    def test_assistant_msg_with_only_old_skill_call_is_dropped(self):
-        msgs = [
-            _assistant_tc(_tc("t1", "list_skills")),
-            _tool_result("t1", "old"),
-            _assistant_tc(_tc("t2", "list_skills")),
-            _tool_result("t2", "new"),
-        ]
-        result = _prune_skill_messages(msgs)
-        assistant_msgs = [m for m in result if m.get("role") == "assistant"]
-        # First assistant msg (only old list_skills) should be gone
-        assert len(assistant_msgs) == 1
-        assert assistant_msgs[0]["tool_calls"][0]["id"] == "t2"
-
-    def test_assistant_msg_with_text_and_old_skill_call_keeps_text(self):
-        msgs = [
-            _assistant_tc(_tc("t1", "list_skills"), content="thinking..."),
-            _tool_result("t1", "old"),
-            _assistant_tc(_tc("t2", "list_skills")),
-            _tool_result("t2", "new"),
-        ]
-        result = _prune_skill_messages(msgs)
-        assistant_msgs = [m for m in result if m.get("role") == "assistant"]
-        # The message with content "thinking..." should be kept without tool_calls
-        text_msgs = [m for m in assistant_msgs if "tool_calls" not in m]
-        assert any(m.get("content") == "thinking..." for m in text_msgs)
-
-    def test_system_user_messages_always_kept(self):
-        msgs = [
-            _system("system prompt"),
-            _user("user msg"),
-            _assistant_tc(_tc("t1", "list_skills")),
-            _tool_result("t1", "old"),
-            _assistant_tc(_tc("t2", "list_skills")),
-            _tool_result("t2", "new"),
-        ]
-        result = _prune_skill_messages(msgs)
-        assert result[0] == _system("system prompt")
-        assert result[1] == _user("user msg")
-
-
-# ── _flatten_messages_for_summary ─────────────────────────────────────────────
-
-
-class TestFlattenMessagesForSummary:
-    def test_empty_returns_empty(self):
-        assert _flatten_messages_for_summary([]) == []
-
-    def test_system_messages_dropped(self):
-        msgs = [_system("sys"), _user("hi"), _assistant_text("hello")]
-        result = _flatten_messages_for_summary(msgs)
-        assert not any(m.get("role") == "system" for m in result)
-
-    def test_user_messages_passed_through(self):
-        msgs = [_user("tell me something")]
-        result = _flatten_messages_for_summary(msgs)
-        assert result == [{"role": "user", "content": "tell me something"}]
-
-    def test_assistant_text_passed_through(self):
-        msgs = [_assistant_text("here you go")]
-        result = _flatten_messages_for_summary(msgs)
-        assert result == [{"role": "assistant", "content": "here you go"}]
-
-    def test_tool_role_messages_dropped(self):
-        msgs = [
-            _assistant_tc(_tc("t1", "execute_skill", '{"name":"x","command":"make"}')),
-            _tool_result("t1", "build output"),
-        ]
-        result = _flatten_messages_for_summary(msgs)
-        assert not any(m.get("role") == "tool" for m in result)
-
-    def test_tool_calls_inlined_into_assistant_content(self):
-        msgs = [
-            _assistant_tc(_tc("t1", "execute_skill", '{"name":"x"}')),
-            _tool_result("t1", "output text"),
-        ]
-        result = _flatten_messages_for_summary(msgs)
-        assert len(result) == 1
-        assert result[0]["role"] == "assistant"
-        assert "execute_skill" in result[0]["content"]
-        assert "output text" in result[0]["content"]
-
-    def test_assistant_with_text_and_tool_call_combines_both(self):
-        msgs = [
-            _assistant_tc(_tc("t1", "list_skills"), content="Let me check…"),
-            _tool_result("t1", "skill-a\nskill-b"),
-        ]
-        result = _flatten_messages_for_summary(msgs)
-        assert len(result) == 1
-        content = result[0]["content"]
-        assert "Let me check…" in content
-        assert "list_skills" in content
-        assert "skill-a" in content
-
-    def test_no_tool_calls_no_text_assistant_dropped(self):
-        # An assistant message with no content and no tool_calls produces nothing.
-        msgs = [{"role": "assistant", "content": "", "tool_calls": []}]
-        result = _flatten_messages_for_summary(msgs)
-        assert result == []
-
-    def test_full_conversation_with_tools_only_user_and_assistant_remain(self):
-        msgs = [
-            _system("sys"),
-            _user("list skills"),
-            _assistant_tc(_tc("t1", "list_skills")),
-            _tool_result("t1", "brainstorming"),
-            _assistant_text("I see brainstorming."),
-            _user("run it"),
-            _assistant_tc(
-                _tc("t2", "execute_skill", '{"name":"brainstorming","command":"make"}')
-            ),
-            _tool_result("t2", "done"),
-            _assistant_text("All done."),
-        ]
-        result = _flatten_messages_for_summary(msgs)
-        roles = [m["role"] for m in result]
-        assert "system" not in roles
-        assert "tool" not in roles
-        assert roles.count("user") == 2
-        # execute_skill result should be inlined
-        assert any(
-            "execute_skill" in m["content"] for m in result if m["role"] == "assistant"
-        )
-
-
-# ── AgentManager auto-compact ─────────────────────────────────────────────────
-
-
-class TestAgentManagerAutoCompact:
-    def _make_manager_and_session(self, tmp_path, compact_threshold: int = 100):
-        from make_agent.agent_core import AgentConfig, AgentManager
-        from make_agent.memory import Memory
-        from make_agent.skill_backend import MakefileSkillBackend
-        from make_agent.tool_handler import ToolHandler
-
-        memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
-        config = AgentConfig(
-            system_prompt="You are a helper.",
-            model="openai/gpt-4o-mini",
-            compact_threshold=compact_threshold,
-        )
-        manager = AgentManager(memory, tool_handler)
-        session_id = manager.create_session(config)
-        return manager, session_id
-
-    async def test_compact_not_triggered_below_threshold(self, tmp_path):
-        manager, sid = self._make_manager_and_session(
-            tmp_path, compact_threshold=10_000
-        )
-        agent_before = manager.get_agent(sid)
-        agent_before._last_prompt_tokens = 5_000  # below threshold
-
-        with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
-            _mock_acompletion_with_retry(_make_text_stream("hello")),
-        ):
-            result = await manager.arun_agent(sid, "hi")
-
-        assert result == "hello"
-        # Agent should be the same object — no replacement happened
-        assert manager.get_agent(sid) is agent_before
-
-    async def test_compact_triggered_above_threshold(self, tmp_path):
-        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=100)
-        agent_before = manager.get_agent(sid)
-        agent_before._last_prompt_tokens = 200  # above threshold
-
-        summary_stream = _make_text_stream("Previous work: user asked to list skills.")
-        reply_stream = _make_text_stream("continuing now")
-
-        with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
-            _mock_acompletion_with_retry(summary_stream, reply_stream),
-        ):
-            result = await manager.arun_agent(sid, "what did we do?")
-
-        assert result == "continuing now"
-        # Agent should be a fresh object
-        agent_after = manager.get_agent(sid)
-        assert agent_after is not agent_before
-
-    async def test_compact_injects_summary_into_fresh_agent(self, tmp_path):
-        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=100)
-        agent_before = manager.get_agent(sid)
-        agent_before._last_prompt_tokens = 200
-
-        summary_stream = _make_text_stream("Summary: user asked about skills.")
-        reply_stream = _make_text_stream("ok")
-
-        with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
-            _mock_acompletion_with_retry(summary_stream, reply_stream),
-        ):
-            await manager.arun_agent(sid, "continue")
-
-        fresh_agent = manager.get_agent(sid)
-        contents = [m.get("content", "") for m in fresh_agent.messages]
-        assert any("Summary: user asked about skills." in c for c in contents)
-
-    async def test_compact_disabled_when_threshold_zero(self, tmp_path):
-        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=0)
-        agent_before = manager.get_agent(sid)
-        agent_before._last_prompt_tokens = 999_999  # way above any threshold
-
-        with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
-            _mock_acompletion_with_retry(_make_text_stream("no compact")),
-        ):
-            result = await manager.arun_agent(sid, "hi")
-
-        assert result == "no compact"
-        assert manager.get_agent(sid) is agent_before
-
-    async def test_compact_yields_compact_event(self, tmp_path):
-        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=100)
-        agent_before = manager.get_agent(sid)
-        agent_before._last_prompt_tokens = 250
-
-        summary_stream = _make_text_stream("summary text")
-        reply_stream = _make_text_stream("reply")
-
-        events = []
-        with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
-            _mock_acompletion_with_retry(summary_stream, reply_stream),
-        ):
-            async for event in manager.astream_agent(sid, "continue"):
-                events.append(event)
-
-        compact_events = [e for e in events if isinstance(e, CompactEvent)]
-        assert len(compact_events) == 1
-        assert compact_events[0].prompt_tokens == 250
-        assert compact_events[0].threshold == 100
-
-    async def test_mid_turn_compact_triggered_after_tool_call(self, tmp_path):
-        """If the context grows past the threshold mid-turn (after tool calls),
-        _CompactNeeded is raised, compaction runs, and the turn re-runs on the fresh agent."""
-        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=100)
-        agent_before = manager.get_agent(sid)
-        # Register a dummy tool so the tool-call stream resolves cleanly.
-        agent_before._tool_handler._schemas.append(  # noqa: SLF001
-            {
-                "type": "function",
-                "function": {
-                    "name": "say_hi",
-                    "description": "say hi",
-                    "parameters": {"type": "object", "properties": {}, "required": []},
-                },
-            }
-        )
-        agent_before._tool_handler._executors["say_hi"] = lambda **_: "hi"  # noqa: SLF001
-
-        # Turn 1 (first LLM call): responds with a tool call and reports 200 tokens (> threshold).
-        # This causes _CompactNeeded to be raised before the second LLM call.
-        first_llm_call = _make_tool_call_stream(
-            "tc1", "say_hi", "{}", prompt_tokens=200
-        )
-        # After compact, the fresh agent's turn: one LLM call that returns a text reply.
-        summary_stream = _make_text_stream("Summary of prior work.")
-        fresh_reply = _make_text_stream("done after compact")
-
-        events = []
-        with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
-            _mock_acompletion_with_retry(first_llm_call, summary_stream, fresh_reply),
-        ):
-            async for event in manager.astream_agent(sid, "do something"):
-                events.append(event)
-
-        compact_events = [e for e in events if isinstance(e, CompactEvent)]
-        assert len(compact_events) == 1
-        assert compact_events[0].prompt_tokens == 200
-        assert compact_events[0].threshold == 100
-        # Fresh agent should have replaced the original
-        assert manager.get_agent(sid) is not agent_before
-
-
-class TestComputeCompactThreshold:
-    def test_explicit_threshold_overrides_adaptive(self):
-        config = AgentConfig(
-            system_prompt="",
-            model="openai/gpt-4o-mini",
-            compact_threshold=42,
-            compact_context_window=200_000,
-            compact_threshold_ratio=0.8,
-            compact_min_threshold=24_000,
-            compact_max_threshold=120_000,
-        )
-        assert _compute_compact_threshold(config) == 42
-
-    def test_unknown_context_window_uses_fixed_fallback(self):
-        config = AgentConfig(
-            system_prompt="",
-            model="openai/gpt-4o-mini",
-            compact_threshold=None,
-            compact_context_window=0,
-        )
-        assert _compute_compact_threshold(config) == 80_000
-
-    def test_adaptive_threshold_is_clamped(self):
-        low = AgentConfig(
-            system_prompt="",
-            model="openai/gpt-4o-mini",
-            compact_threshold=None,
-            compact_context_window=10_000,
-            compact_threshold_ratio=0.5,
-            compact_min_threshold=24_000,
-            compact_max_threshold=120_000,
-        )
-        high = AgentConfig(
-            system_prompt="",
-            model="openai/gpt-4o-mini",
-            compact_threshold=None,
-            compact_context_window=500_000,
-            compact_threshold_ratio=0.9,
-            compact_min_threshold=24_000,
-            compact_max_threshold=120_000,
-        )
-        assert _compute_compact_threshold(low) == 24_000
-        assert _compute_compact_threshold(high) == 120_000
-
-
-class TestAgentManagerAutoCompactRepeatedMidTurn(TestAgentManagerAutoCompact):
-    async def test_mid_turn_compact_can_repeat_until_turn_completes(self, tmp_path):
-        manager, sid = self._make_manager_and_session(tmp_path, compact_threshold=100)
-        agent_before = manager.get_agent(sid)
-        agent_before._tool_handler._schemas.append(  # noqa: SLF001
-            {
-                "type": "function",
-                "function": {
-                    "name": "say_hi",
-                    "description": "say hi",
-                    "parameters": {"type": "object", "properties": {}, "required": []},
-                },
-            }
-        )
-        agent_before._tool_handler._executors["say_hi"] = lambda **_: "hi"  # noqa: SLF001
-
-        first_turn = _make_tool_call_stream("tc1", "say_hi", "{}", prompt_tokens=200)
-        first_summary = _make_text_stream("Summary #1")
-        second_turn = _make_tool_call_stream("tc2", "say_hi", "{}", prompt_tokens=220)
-        second_summary = _make_text_stream("Summary #2")
-        final_reply = _make_text_stream("done after two compacts")
-
-        events = []
-        with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
-            _mock_acompletion_with_retry(
-                first_turn, first_summary, second_turn, second_summary, final_reply
-            ),
-        ):
-            async for event in manager.astream_agent(sid, "do something"):
-                events.append(event)
-
-        compact_events = [e for e in events if isinstance(e, CompactEvent)]
-        done_events = [e for e in events if isinstance(e, DoneEvent)]
-        assert len(compact_events) == 2
-        assert all(e.threshold == 100 for e in compact_events)
-        assert len(done_events) == 1
-        assert done_events[0].content == "done after two compacts"
 
 
 class TestIsAnthropicModel:

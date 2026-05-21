@@ -44,11 +44,6 @@ def _run_args(**kwargs) -> argparse.Namespace:
         disable_builtin_tools=None,
         reasoning_effort="auto",
         skill_mode="python",
-        compact_threshold=None,
-        compact_threshold_ratio=0.7,
-        compact_min_threshold=24_000,
-        compact_max_threshold=120_000,
-        compact_context_window=0,
         prompt_cache=False,
     )
     defaults.update(kwargs)
@@ -177,45 +172,6 @@ class TestRunPromptInput:
         assert isinstance(backend, MakefileSkillBackend)
         assert backend._skills_dir == str(custom_dir / "makefile")  # noqa: SLF001
 
-    def test_compact_adaptive_args_are_passed_to_run(self, tmp_path):
-        args = _run_args(
-            prompt="continue",
-            compact_threshold=None,
-            compact_context_window=200_000,
-            compact_threshold_ratio=0.65,
-            compact_min_threshold=20_000,
-            compact_max_threshold=100_000,
-        )
-        captured: dict = {}
-
-        async def _fake_run(**kwargs):
-            captured.update(kwargs)
-
-        with (
-            patch.object(main_module, "run", _fake_run),
-            patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(
-                main_module, "mode_dir", return_value=tmp_path / "python-mode"
-            ),
-            patch.object(
-                main_module,
-                "mode_memory_path",
-                return_value=tmp_path / "python-memory.db",
-            ),
-            patch.object(
-                main_module,
-                "default_skills_dir",
-                return_value=tmp_path / "python-skills",
-            ),
-        ):
-            main_module._cmd_run(args)
-
-        assert captured["compact_threshold"] is None
-        assert captured["compact_context_window"] == 200_000
-        assert captured["compact_threshold_ratio"] == 0.65
-        assert captured["compact_min_threshold"] == 20_000
-        assert captured["compact_max_threshold"] == 100_000
-
     def test_prompt_cache_flag_is_passed_to_run(self, tmp_path):
         args = _run_args(prompt="continue", prompt_cache=True)
         captured: dict = {}
@@ -328,20 +284,4 @@ class TestParseDisabledTools:
                     main_module._parse_disabled_tools("write_file", "python")
                 except SystemExit:
                     pass
-        mock_exit.assert_called_once()
-
-
-class TestValidateCompactArgs:
-    def test_invalid_compact_threshold_ratio_exits(self):
-        args = _run_args(compact_threshold_ratio=0)
-        with patch.object(sys, "exit", side_effect=SystemExit) as mock_exit:
-            with pytest.raises(SystemExit):
-                main_module._validate_compact_args(args)
-        mock_exit.assert_called_once()
-
-    def test_invalid_compact_bounds_exit(self):
-        args = _run_args(compact_min_threshold=30_000, compact_max_threshold=20_000)
-        with patch.object(sys, "exit", side_effect=SystemExit) as mock_exit:
-            with pytest.raises(SystemExit):
-                main_module._validate_compact_args(args)
         mock_exit.assert_called_once()

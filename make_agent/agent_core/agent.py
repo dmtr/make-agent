@@ -11,39 +11,27 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, NamedTuple
 from uuid import uuid4
 
-import any_llm
-from any_llm.types.completion import (
-    ChatCompletionMessageFunctionToolCall,
-    ChatCompletionMessageToolCall,
-    Function,
-)
+import litellm
 from make_agent.protocols import MemoryProtocol, ToolHandlerProtocol
 
 from .export import export_conversation
+
+litellm.suppress_debug_info = True
+litellm.verbose = False
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
 
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_TOOL_TIMEOUT = 600  # seconds
 _DEFAULT_MAX_TOOL_OUTPUT = 16000  # characters; 0 = unlimited
 _DEFAULT_MAX_TOKENS = 4096
-_DEFAULT_REASONING_EFFORT = "auto"
-_DEFAULT_COMPACT_THRESHOLD = 80_000  # prompt tokens before auto-compact fires
-_DEFAULT_COMPACT_THRESHOLD_RATIO = 0.7
-_DEFAULT_COMPACT_MIN_THRESHOLD = 24_000
-_DEFAULT_COMPACT_MAX_THRESHOLD = 120_000
-_DEFAULT_COMPACT_CONTEXT_WINDOW = 0
+_DEFAULT_REASONING_EFFORT = "medium"
 _DEFAULT_USE_PROMPT_CACHE = False
 _MAX_REPEATED_FAILURES = 8
 _MAX_MODEL_TURNS_PER_REQUEST = 64
 _MAX_TOOL_CALLS_PER_REQUEST = 256
 _MAX_RUN_SECONDS_PER_REQUEST = 900
-_MAX_COMPACTIONS_PER_REQUEST = 3
-
-_COMPACT_SKILL_TOOLS = frozenset({"list_skills", "read_skill"})
-_COMPACT_SUMMARY_SYSTEM = (
-    "Summarize this conversation concisely. Include: the user's goals, "
-    "tasks completed, key decisions made, and current state. "
-    "Be brief — the agent has persistent memory to look up details."
-)
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +42,17 @@ def _is_anthropic_model(model: str) -> bool:
     return lower.startswith("anthropic/") or "claude" in lower
 
 
-class _CompactNeeded(Exception):
-    """Raised by Agent.astream to signal a mid-turn compact is required.
+@dataclass
+class _Function:
+    name: str
+    arguments: str
 
-    The manager catches this, compacts the context, and re-runs the turn
-    on the fresh agent.
-    """
+
+@dataclass
+class _ToolCall:
+    id: str
+    type: str
+    function: _Function
 
 
 @dataclass
@@ -95,15 +88,7 @@ class DoneEvent:
     content: str
 
 
-@dataclass
-class CompactEvent:
-    """Emitted when the context is compacted before a new agent turn."""
-
-    prompt_tokens: int
-    threshold: int
-
-
-AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent | CompactEvent
+AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent
 
 
 class AgentConfig(NamedTuple):
@@ -118,43 +103,17 @@ class AgentConfig(NamedTuple):
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT
     session_id: str | None = None
     project_dir: Path = Path()
-    compact_threshold: int | None = None
-    compact_threshold_ratio: float = _DEFAULT_COMPACT_THRESHOLD_RATIO
-    compact_min_threshold: int = _DEFAULT_COMPACT_MIN_THRESHOLD
-    compact_max_threshold: int = _DEFAULT_COMPACT_MAX_THRESHOLD
-    compact_context_window: int = _DEFAULT_COMPACT_CONTEXT_WINDOW
     use_prompt_cache: bool = _DEFAULT_USE_PROMPT_CACHE
 
 
-def _compute_compact_threshold(config: "AgentConfig") -> int:
-    """Return the effective compact threshold in prompt tokens.
-
-    Priority:
-    1. Explicit ``compact_threshold`` value (including ``0`` to disable).
-    2. Ratio-based threshold from ``compact_context_window`` with min/max clamps.
-    3. Fixed default threshold when context window is unknown.
-    """
-    if config.compact_threshold is not None:
-        return config.compact_threshold
-
-    if config.compact_context_window <= 0:
-        return _DEFAULT_COMPACT_THRESHOLD
-
-    adaptive = int(config.compact_context_window * config.compact_threshold_ratio)
-    adaptive = max(config.compact_min_threshold, adaptive)
-    adaptive = min(config.compact_max_threshold, adaptive)
-    return adaptive
-
-
-def _parse_retry_after(e: any_llm.RateLimitError) -> float | None:
+def _parse_retry_after(e: litellm.RateLimitError) -> float | None:
     """Return the wait time in seconds from a RateLimitError's response headers.
 
     Checks ``retry-after-ms`` (milliseconds) then ``retry-after`` (seconds).
     Returns ``None`` when neither header is present.
     """
     try:
-        orig = e.original_exception
-        headers = orig.response.headers if orig is not None and hasattr(orig, "response") and orig.response is not None else {}
+        headers = e.response.headers if hasattr(e, "response") and e.response is not None else {}
     except Exception:
         return None
     if ms := headers.get("retry-after-ms"):
@@ -172,7 +131,7 @@ async def _acompletion_with_retry(
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
 ) -> Any:
-    """Call ``any_llm.acompletion`` with streaming, retrying on rate limit.
+    """Call ``litellm.acompletion`` with streaming, retrying on rate limit.
 
     On each ``RateLimitError`` the wait time is read from the ``Retry-After``
     response header when present, otherwise exponential backoff is used
@@ -183,7 +142,7 @@ async def _acompletion_with_retry(
     """
     for attempt in range(max_retries + 1):
         try:
-            return await any_llm.acompletion(
+            return await litellm.acompletion(
                 model=model,
                 messages=messages,
                 max_tokens=max_tokens,
@@ -192,7 +151,7 @@ async def _acompletion_with_retry(
                 stream_options={"include_usage": True},
                 **tool_kwargs,
             )
-        except any_llm.RateLimitError as e:
+        except litellm.RateLimitError as e:
             if attempt == max_retries:
                 raise
             wait = _parse_retry_after(e) or min(2**attempt, 60)
@@ -203,8 +162,8 @@ async def _acompletion_with_retry(
             await asyncio.sleep(wait)
 
 
-def _parse_item(doc: Any) -> ChatCompletionMessageToolCall | None:
-    result: list[ChatCompletionMessageToolCall] = []
+def _parse_item(doc: Any) -> list[_ToolCall] | None:
+    result: list[_ToolCall] = []
     for item in doc:
         if not isinstance(item, dict) or item.get("type") != "function":
             return None
@@ -214,10 +173,10 @@ def _parse_item(doc: Any) -> ChatCompletionMessageToolCall | None:
         args = func.get("arguments", {})
         args_str = json.dumps(args) if isinstance(args, dict) else args
         result.append(
-            ChatCompletionMessageFunctionToolCall(
+            _ToolCall(
                 id=item.get("id", ""),
                 type="function",
-                function=Function(name=func["name"], arguments=args_str),
+                function=_Function(name=func["name"], arguments=args_str),
             )
         )
     return result
@@ -225,7 +184,7 @@ def _parse_item(doc: Any) -> ChatCompletionMessageToolCall | None:
 
 def _parse_content_tool_calls(
     content: str,
-) -> list[ChatCompletionMessageToolCall] | None:
+) -> list[_ToolCall] | None:
     """Parse tool calls embedded in message content (e.g. Gemma-style responses).
 
     Some models encode tool calls as a JSON array in ``content`` instead of
@@ -234,7 +193,7 @@ def _parse_content_tool_calls(
     ``arguments``.  ``arguments`` may be a dict (Gemma) or a JSON string
     (standard); both are normalised to a JSON string.
 
-    Returns a list of :class:`ChatCompletionMessageFunctionToolCall` objects,
+    Returns a list of :class:`_ToolCall` objects,
     or ``None`` if *content* does not match the expected format.
     """
     if not content or not content.strip().startswith("["):
@@ -248,147 +207,6 @@ def _parse_content_tool_calls(
         return _parse_item(parsed)
 
     return None
-
-
-def _prune_skill_messages(messages: list[dict]) -> list[dict]:
-    """Remove old list_skills/read_skill call+result pairs, keeping only the last of each.
-
-    Scans the message list for assistant tool-call messages that invoke
-    ``list_skills`` or ``read_skill``.  For each tool name, all but the most
-    recent call (and its corresponding ``tool`` result message) are dropped.
-    Assistant messages that still have other tool calls or text content are
-    kept intact with the removed calls stripped out.
-    """
-    # Pass 1: find the last tool_call_id for each skip-tool.
-    last_id_for: dict[str, str] = {}
-    for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
-        for tc in msg.get("tool_calls") or []:
-            name = tc.get("function", {}).get("name", "")
-            if name in _COMPACT_SKILL_TOOLS:
-                last_id_for[name] = tc["id"]
-
-    if not last_id_for:
-        return list(messages)
-
-    # Pass 2: mark tool_call_ids to remove (all but the last per tool name).
-    ids_to_remove: set[str] = set()
-    for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
-        for tc in msg.get("tool_calls") or []:
-            name = tc.get("function", {}).get("name", "")
-            if name in _COMPACT_SKILL_TOOLS and tc["id"] != last_id_for[name]:
-                ids_to_remove.add(tc["id"])
-
-    if not ids_to_remove:
-        return list(messages)
-
-    # Pass 3: rebuild the message list.
-    result: list[dict] = []
-    for msg in messages:
-        role = msg.get("role")
-
-        if role == "tool" and msg.get("tool_call_id") in ids_to_remove:
-            continue
-
-        if role == "assistant":
-            tool_calls = msg.get("tool_calls") or []
-            kept = [tc for tc in tool_calls if tc["id"] not in ids_to_remove]
-            if kept == tool_calls:
-                result.append(msg)
-            elif kept:
-                result.append({**msg, "tool_calls": kept})
-            else:
-                # All tool calls removed; keep only if there is text content.
-                content = msg.get("content") or ""
-                if content:
-                    result.append({k: v for k, v in msg.items() if k != "tool_calls"})
-        else:
-            result.append(msg)
-
-    return result
-
-
-def _flatten_messages_for_summary(messages: list[dict]) -> list[dict]:
-    """Convert a tool-rich message list into a plain user/assistant list safe for all providers.
-
-    Tool calls are rendered as inline text appended to the assistant message's
-    content.  ``tool`` result messages are folded into those descriptions.
-    The resulting list contains only ``user`` and ``assistant`` roles, so it
-    can be sent to any provider without supplying tool definitions.
-    """
-    # Index tool results by tool_call_id so they can be inlined.
-    tool_results: dict[str, str] = {}
-    for msg in messages:
-        if msg.get("role") == "tool":
-            tc_id = msg.get("tool_call_id", "")
-            if tc_id:
-                tool_results[tc_id] = (msg.get("content") or "")[:400]
-
-    result: list[dict] = []
-    for msg in messages:
-        role = msg.get("role", "")
-        if role in ("system", "tool"):
-            continue
-        if role == "user":
-            result.append({"role": "user", "content": msg.get("content") or ""})
-        elif role == "assistant":
-            parts: list[str] = []
-            if msg.get("content"):
-                parts.append(msg["content"])
-            for tc in msg.get("tool_calls") or []:
-                name = tc.get("function", {}).get("name", "?")
-                args = tc.get("function", {}).get("arguments", "{}")
-                res = tool_results.get(tc.get("id", ""), "(no result)")
-                parts.append(f"[{name}({args}) → {res}]")
-            if parts:
-                result.append({"role": "assistant", "content": "\n".join(parts)})
-    return result
-
-
-async def _build_compact_summary(messages: list[dict], config: "AgentConfig", memory: "MemoryProtocol") -> str:
-    """Call the LLM with a summarisation prompt and return the summary text.
-
-    The agent's original system message is replaced with the compact-summary
-    instruction so the model focuses on producing a brief narrative rather than
-    acting as the agent.  Tool-related messages are flattened to plain text so
-    no provider needs tool definitions for this call.
-    """
-    flat = _flatten_messages_for_summary(messages)
-    summary_messages: list[dict] = [
-        {"role": "system", "content": _COMPACT_SUMMARY_SYSTEM},
-        *flat,
-    ]
-    stream = await _acompletion_with_retry(
-        config.model,
-        summary_messages,
-        {},
-        config.max_retries,
-        config.max_tokens,
-        config.reasoning_effort,
-    )
-    parts: list[str] = []
-    usage = None
-    async for chunk in stream:
-        if not chunk.choices:
-            if chunk.usage is not None:
-                usage = chunk.usage
-            continue
-        delta = chunk.choices[0].delta
-        if delta and delta.content:
-            parts.append(delta.content)
-        if chunk.usage is not None:
-            usage = chunk.usage
-    if usage is not None:
-        memory.record_token_usage(
-            config.session_id or "",
-            config.model,
-            usage.prompt_tokens,
-            usage.completion_tokens,
-        )
-    return "".join(parts)
 
 
 class Agent:
@@ -418,8 +236,6 @@ class Agent:
         self._session_id = config.session_id
         self._tool_handler = tool_handler
         self._config = config
-        self._compact_threshold = _compute_compact_threshold(config)
-        self._last_prompt_tokens: int = 0
         self._messages: list[dict] = []
         if config.system_prompt:
             if config.use_prompt_cache and _is_anthropic_model(config.model):
@@ -485,12 +301,6 @@ class Agent:
             if time.monotonic() - started_at >= _MAX_RUN_SECONDS_PER_REQUEST:
                 raise RuntimeError(f"aborted: exceeded {_MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
 
-            # Mid-turn compact check: after the first LLM call this turn, if the
-            # context has grown past the threshold raise so the manager can compact
-            # and re-run the turn on a fresh agent before making another LLM call.
-            if model_turns > 0 and self._compact_threshold > 0 and self._last_prompt_tokens >= self._compact_threshold:
-                raise _CompactNeeded()
-
             stream = await _acompletion_with_retry(
                 self._model,
                 self._messages,
@@ -508,7 +318,7 @@ class Agent:
 
             async for chunk in stream:
                 if not chunk.choices:
-                    if chunk.usage is not None:
+                    if getattr(chunk, "usage", None) is not None:
                         usage = chunk.usage
                     continue
                 delta = chunk.choices[0].delta
@@ -545,7 +355,7 @@ class Agent:
                         if tc_delta.function:
                             tool_call_acc[idx]["name"] += tc_delta.function.name or ""
                             tool_call_acc[idx]["arguments"] += tc_delta.function.arguments or ""
-                if chunk.usage is not None:
+                if getattr(chunk, "usage", None) is not None:
                     usage = chunk.usage
 
             content = "".join(content_parts)
@@ -556,7 +366,6 @@ class Agent:
             )
 
             if usage is not None:
-                self._last_prompt_tokens = usage.prompt_tokens
                 self._memory.record_token_usage(
                     self._session_id or "",
                     self._model,
@@ -595,10 +404,10 @@ class Agent:
                         ],
                     }
                     tool_calls_to_run = [
-                        ChatCompletionMessageFunctionToolCall(
+                        _ToolCall(
                             id=tc["id"],
                             type="function",
-                            function=Function(name=tc["name"], arguments=tc["arguments"]),
+                            function=_Function(name=tc["name"], arguments=tc["arguments"]),
                         )
                         for tc in sorted_tcs
                     ]
@@ -723,48 +532,6 @@ class AgentManager:
         """Register a skill-execution confirmation callback on the tool handler."""
         self._tool_handler.set_confirm(confirm)  # type: ignore[union-attr]
 
-    async def _compact_if_needed(self, session_id: str) -> CompactEvent | None:
-        """Compact the session's conversation if it has exceeded the token threshold.
-
-        Prunes old ``list_skills``/``read_skill`` exchanges, asks the LLM for a
-        brief summary, then replaces the session agent with a fresh instance that
-        starts from the summary.  Returns a :class:`CompactEvent` when compaction
-        was performed, ``None`` otherwise.
-        """
-        agent = self._sessions.get(session_id)
-        if agent is None:
-            return None
-        threshold = agent._compact_threshold
-        if threshold <= 0 or agent._last_prompt_tokens < threshold:
-            return None
-
-        logger.info(
-            "[compact] context at %d tokens (threshold %d), compacting...",
-            agent._last_prompt_tokens,
-            threshold,
-        )
-
-        event = CompactEvent(prompt_tokens=agent._last_prompt_tokens, threshold=threshold)
-        pruned = _prune_skill_messages(agent.messages)
-        summary = await _build_compact_summary(pruned, agent._config, self._memory)
-
-        new_agent = Agent(agent._config, self._memory, self._tool_handler)
-        new_agent._messages.append(
-            {
-                "role": "user",
-                "content": f"[Conversation summary – continuing]\n{summary}",
-            }
-        )
-        new_agent._messages.append(
-            {
-                "role": "assistant",
-                "content": "Understood. Continuing from where we left off.",
-            }
-        )
-        self._sessions[session_id] = new_agent
-        logger.info("[compact] done, fresh agent created with summary")
-        return event
-
     async def arun_agent(self, session_id: str, message: str) -> str:
         async for event in self.astream_agent(session_id, message):
             if isinstance(event, DoneEvent):
@@ -772,22 +539,9 @@ class AgentManager:
         return ""
 
     async def astream_agent(self, session_id: str, message: str) -> AsyncGenerator[AgentEvent, None]:
-        compactions = 0
-        while True:
-            compact_event = await self._compact_if_needed(session_id)
-            if compact_event is not None:
-                compactions += 1
-                if compactions > _MAX_COMPACTIONS_PER_REQUEST:
-                    raise RuntimeError(f"aborted: exceeded {_MAX_COMPACTIONS_PER_REQUEST} context compactions in a single request")
-                yield compact_event
-
-            agent = self.get_agent(session_id)
-            try:
-                async for event in agent.astream(message):
-                    yield event
-                return
-            except _CompactNeeded:
-                continue
+        agent = self.get_agent(session_id)
+        async for event in agent.astream(message):
+            yield event
 
     def export_conversation(self, session_id: str) -> Path | None:
         agent = self.get_agent(session_id)

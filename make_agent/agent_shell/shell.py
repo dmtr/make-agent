@@ -9,7 +9,6 @@ from typing import Any
 
 from make_agent.agent_core import (
     AgentManager,
-    CompactEvent,
     DoneEvent,
     TokenEvent,
     ToolDoneEvent,
@@ -104,12 +103,7 @@ class MakeAgentShell:
     async def _stream_turn(self, message: str) -> None:
         """Stream one agent turn, printing events as they arrive."""
         async for event in self._agent_manager.astream_agent(self._session_id, message):
-            if isinstance(event, CompactEvent):
-                print(
-                    f"\n[Auto-compacting context ({event.prompt_tokens:,} tokens ≥ " f"{event.threshold:,} threshold)...]\n",
-                    flush=True,
-                )
-            elif isinstance(event, TokenEvent):
+            if isinstance(event, TokenEvent):
                 print(event.text, end="", flush=True)
             elif isinstance(event, ToolStartEvent):
                 formatter = ToolDisplayFormatter()

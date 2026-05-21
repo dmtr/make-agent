@@ -7,11 +7,6 @@ import sys
 from pathlib import Path
 
 from make_agent.agent_core import (
-    _DEFAULT_COMPACT_CONTEXT_WINDOW,
-    _DEFAULT_COMPACT_MAX_THRESHOLD,
-    _DEFAULT_COMPACT_MIN_THRESHOLD,
-    _DEFAULT_COMPACT_THRESHOLD,
-    _DEFAULT_COMPACT_THRESHOLD_RATIO,
     _DEFAULT_MAX_TOKENS,
     _DEFAULT_MAX_TOOL_OUTPUT,
     _DEFAULT_USE_PROMPT_CACHE,
@@ -32,15 +27,13 @@ from make_agent.tool_handler import ToolHandler
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SYSTEM_PROMPT_FILE = "SYSTEM.md"
-_REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "auto")
+_REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh")
 _SKILL_MODES = ("makefile", "python")
 
 
 def _init_logging(loglevel: str) -> None:
     level = getattr(logging, loglevel.upper(), logging.INFO)
-    logging.basicConfig(
-        filename=log_file(), level=level, format="%(asctime)s %(levelname)s %(message)s"
-    )
+    logging.basicConfig(filename=log_file(), level=level, format="%(asctime)s %(levelname)s %(message)s")
 
 
 def _resolve_system_prompt(args: argparse.Namespace) -> str:
@@ -62,9 +55,7 @@ def _resolve_system_prompt(args: argparse.Namespace) -> str:
     if cwd_system.exists():
         return cwd_system.read_text(encoding="utf-8")
 
-    project_system = (
-        mode_dir(getattr(args, "skill_mode", "python")) / _DEFAULT_SYSTEM_PROMPT_FILE
-    )
+    project_system = mode_dir(getattr(args, "skill_mode", "python")) / _DEFAULT_SYSTEM_PROMPT_FILE
     if project_system.exists():
         return project_system.read_text(encoding="utf-8")
 
@@ -81,10 +72,7 @@ def _parse_disabled_tools(value: str | None, mode: str) -> frozenset[str]:
     names = frozenset(name.strip() for name in value.split(",") if name.strip())
     unknown = names - available
     if unknown:
-        sys.exit(
-            "make-agent: unknown built-in tool(s): "
-            f"{', '.join(sorted(unknown))}. Valid names for {mode}: {', '.join(sorted(available))}"
-        )
+        sys.exit("make-agent: unknown built-in tool(s): " f"{', '.join(sorted(unknown))}. Valid names for {mode}: {', '.join(sorted(available))}")
     return names
 
 
@@ -101,23 +89,6 @@ def _build_backend(skill_mode: str, skills_dir: str, tool_timeout: int):
     if skill_mode == "makefile":
         return MakefileSkillBackend(skills_dir, tool_timeout, Path.cwd())
     return PythonSkillBackend(skills_dir, tool_timeout)
-
-
-def _validate_compact_args(args: argparse.Namespace) -> None:
-    if args.compact_threshold is not None and args.compact_threshold < 0:
-        sys.exit("make-agent: --compact-threshold must be >= 0")
-    if args.compact_context_window < 0:
-        sys.exit("make-agent: --compact-context-window must be >= 0")
-    if args.compact_threshold_ratio <= 0 or args.compact_threshold_ratio > 1:
-        sys.exit("make-agent: --compact-threshold-ratio must be in (0, 1]")
-    if args.compact_min_threshold <= 0:
-        sys.exit("make-agent: --compact-min-threshold must be > 0")
-    if args.compact_max_threshold <= 0:
-        sys.exit("make-agent: --compact-max-threshold must be > 0")
-    if args.compact_max_threshold < args.compact_min_threshold:
-        sys.exit(
-            "make-agent: --compact-max-threshold must be >= --compact-min-threshold"
-        )
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -143,7 +114,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
     backend = _build_backend(args.skill_mode, skills_dir, args.tool_timeout)
     trusted_skills = _parse_trusted_skills(getattr(args, "trusted_skills", None))
     tool_handler = ToolHandler(backend, memory, disabled, trusted_skills)
-    _validate_compact_args(args)
 
     asyncio.run(
         run(
@@ -157,11 +127,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
             max_tool_output=args.max_tool_output,
             max_tokens=args.max_tokens,
             reasoning_effort=args.reasoning_effort,
-            compact_threshold=args.compact_threshold,
-            compact_threshold_ratio=args.compact_threshold_ratio,
-            compact_min_threshold=args.compact_min_threshold,
-            compact_max_threshold=args.compact_max_threshold,
-            compact_context_window=args.compact_context_window,
             use_prompt_cache=args.prompt_cache,
         )
     )
@@ -175,9 +140,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     run_p = subparsers.add_parser("run", help="Start the interactive agent (default)")
-    run_p.add_argument(
-        "--model", default=None, metavar="MODEL", help="any-llm model string (required)"
-    )
+    run_p.add_argument("--model", default=None, metavar="MODEL", help="litellm model string (required)")
     system_g = run_p.add_mutually_exclusive_group()
     system_g.add_argument(
         "--system",
@@ -261,7 +224,7 @@ def main() -> None:
     run_p.add_argument(
         "--reasoning-effort",
         choices=_REASONING_EFFORT_VALUES,
-        default="auto",
+        default="medium",
         metavar="EFFORT",
         help=f"Reasoning effort level ({'/'.join(_REASONING_EFFORT_VALUES)}, default: auto)",
     )
@@ -274,65 +237,18 @@ def main() -> None:
         "Unspecified skills prompt the user before each execution.",
     )
     run_p.add_argument(
-        "--compact-threshold",
-        type=int,
-        default=None,
-        metavar="TOKENS",
-        help="Absolute prompt-token threshold for auto-compaction; overrides adaptive mode. "
-        f"0 = disabled (default adaptive fallback: {_DEFAULT_COMPACT_THRESHOLD:,})",
-    )
-    run_p.add_argument(
-        "--compact-context-window",
-        type=int,
-        default=_DEFAULT_COMPACT_CONTEXT_WINDOW,
-        metavar="TOKENS",
-        help="Known model context window in tokens for adaptive compact threshold "
-        "(default: 0 = unknown, use fixed fallback).",
-    )
-    run_p.add_argument(
-        "--compact-threshold-ratio",
-        type=float,
-        default=_DEFAULT_COMPACT_THRESHOLD_RATIO,
-        metavar="RATIO",
-        help=f"Adaptive compact threshold ratio of context window, in (0,1] (default: {_DEFAULT_COMPACT_THRESHOLD_RATIO})",
-    )
-    run_p.add_argument(
-        "--compact-min-threshold",
-        type=int,
-        default=_DEFAULT_COMPACT_MIN_THRESHOLD,
-        metavar="TOKENS",
-        help=f"Lower clamp for adaptive compact threshold (default: {_DEFAULT_COMPACT_MIN_THRESHOLD:,})",
-    )
-    run_p.add_argument(
-        "--compact-max-threshold",
-        type=int,
-        default=_DEFAULT_COMPACT_MAX_THRESHOLD,
-        metavar="TOKENS",
-        help=f"Upper clamp for adaptive compact threshold (default: {_DEFAULT_COMPACT_MAX_THRESHOLD:,})",
-    )
-    run_p.add_argument(
         "--prompt-cache",
         action="store_true",
         default=_DEFAULT_USE_PROMPT_CACHE,
         help="Enable prompt caching for the system prompt (Anthropic models only)",
     )
-    parser.add_argument(
-        "--model", default=None, metavar="MODEL", help=argparse.SUPPRESS
-    )
+    parser.add_argument("--model", default=None, metavar="MODEL", help=argparse.SUPPRESS)
     legacy_system_g = parser.add_mutually_exclusive_group()
-    legacy_system_g.add_argument(
-        "--system", default=None, metavar="PROMPT", help=argparse.SUPPRESS
-    )
-    legacy_system_g.add_argument(
-        "--system-file", default=None, metavar="FILE", help=argparse.SUPPRESS
-    )
+    legacy_system_g.add_argument("--system", default=None, metavar="PROMPT", help=argparse.SUPPRESS)
+    legacy_system_g.add_argument("--system-file", default=None, metavar="FILE", help=argparse.SUPPRESS)
     legacy_prompt_g = parser.add_mutually_exclusive_group()
-    legacy_prompt_g.add_argument(
-        "--prompt", default=None, metavar="PROMPT", help=argparse.SUPPRESS
-    )
-    legacy_prompt_g.add_argument(
-        "--prompt-file", default=None, metavar="FILE", help=argparse.SUPPRESS
-    )
+    legacy_prompt_g.add_argument("--prompt", default=None, metavar="PROMPT", help=argparse.SUPPRESS)
+    legacy_prompt_g.add_argument("--prompt-file", default=None, metavar="FILE", help=argparse.SUPPRESS)
     parser.add_argument(
         "--loglevel",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -340,9 +256,7 @@ def main() -> None:
         metavar="LEVEL",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
-        "--max-retries", type=int, default=5, metavar="N", help=argparse.SUPPRESS
-    )
+    parser.add_argument("--max-retries", type=int, default=5, metavar="N", help=argparse.SUPPRESS)
     parser.add_argument(
         "--tool-timeout",
         type=int,
@@ -357,9 +271,7 @@ def main() -> None:
         metavar="MODE",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
-        "--skills-dir", default=None, metavar="DIR", help=argparse.SUPPRESS
-    )
+    parser.add_argument("--skills-dir", default=None, metavar="DIR", help=argparse.SUPPRESS)
     parser.add_argument(
         "--max-tool-output",
         type=int,
@@ -374,54 +286,15 @@ def main() -> None:
         metavar="N",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
-        "--disable-builtin-tools", default=None, metavar="TOOLS", help=argparse.SUPPRESS
-    )
+    parser.add_argument("--disable-builtin-tools", default=None, metavar="TOOLS", help=argparse.SUPPRESS)
     parser.add_argument(
         "--reasoning-effort",
         choices=_REASONING_EFFORT_VALUES,
-        default="auto",
+        default="medium",
         metavar="EFFORT",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
-        "--trusted-skills", default=None, metavar="SKILLS", help=argparse.SUPPRESS
-    )
-    parser.add_argument(
-        "--compact-threshold",
-        type=int,
-        default=None,
-        metavar="TOKENS",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--compact-context-window",
-        type=int,
-        default=_DEFAULT_COMPACT_CONTEXT_WINDOW,
-        metavar="TOKENS",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--compact-threshold-ratio",
-        type=float,
-        default=_DEFAULT_COMPACT_THRESHOLD_RATIO,
-        metavar="RATIO",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--compact-min-threshold",
-        type=int,
-        default=_DEFAULT_COMPACT_MIN_THRESHOLD,
-        metavar="TOKENS",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--compact-max-threshold",
-        type=int,
-        default=_DEFAULT_COMPACT_MAX_THRESHOLD,
-        metavar="TOKENS",
-        help=argparse.SUPPRESS,
-    )
+    parser.add_argument("--trusted-skills", default=None, metavar="SKILLS", help=argparse.SUPPRESS)
     parser.add_argument(
         "--prompt-cache",
         action="store_true",
