@@ -759,7 +759,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "litellm" },
+    { name = "litellm", specifier = "==1.85.1" },
     { name = "pyyaml", specifier = ">=6" },
 ]
 
