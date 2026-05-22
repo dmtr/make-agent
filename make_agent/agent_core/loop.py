@@ -43,7 +43,12 @@ class _ToolCall:
 
 
 class CallBack:
-    """Base class for all agentic loop callbacks."""
+    """Base class for all agentic loop callbacks.
+
+    Callbacks represent events emitted during LLM conversation turns:
+    token streaming, tool requests, messages, and token usage.
+    The loop yields callbacks; AgentManager handles them and converts them to events.
+    """
 
     def __init__(self, message: str) -> None:
         self._message = message
@@ -65,11 +70,17 @@ class CallBack:
 
 
 class TokenCallback(CallBack):
-    """A partial token streamed from the LLM. Fire-and-forget; always ready."""
+    """A partial token streamed from the LLM. Fire-and-forget; always ready.
+
+    AgentManager converts this to a TokenEvent for external consumption.
+    """
 
 
 class MessageCallback(CallBack):
-    """LLM produced a final text response (no tool calls). Terminal."""
+    """LLM produced a final text response (no tool calls). Terminal.
+
+    AgentManager stores this message and converts it to a DoneEvent.
+    """
 
 
 class ToolCallback(CallBack):
@@ -186,7 +197,7 @@ def _parse_content_tool_calls(
 
 
 class AgenticLoop:
-    """LLM agent async iterator.
+    """LLM agent async iterator for streaming conversation turns.
 
     Maintains conversation history across turns. Call :meth:`astream` with a
     user message to begin a turn; then iterate with ``async for cb in loop``
@@ -194,10 +205,9 @@ class AgenticLoop:
     have :meth:`~ToolCallback.set_response` called before iteration can
     continue (done automatically by :class:`AgentManager`).
 
-    Use :meth:`arun` for a simple blocking call that returns the final reply::
-
-        loop = AgenticLoop(config, tool_handler=tool_handler)
-        reply = await loop.arun("List the skills available.")
+    Note: Memory storage (user input, messages, token usage) is handled by
+    :class:`AgentManager`, not by the loop itself. The loop focuses solely on
+    conversation management and tool dispatching.
     """
 
     def __init__(
@@ -486,9 +496,7 @@ class AgenticLoop:
         """
         async for cb in self.astream(user_input):
             if isinstance(cb, ToolCallback):
-                result = await self._tool_handler.execute(
-                    cb.tool_name, cb.tool_args, self._max_tool_output
-                )
+                result = await self._tool_handler.execute(cb.tool_name, cb.tool_args, self._max_tool_output)
                 cb.set_response(result.output, is_error=result.is_error)
             elif isinstance(cb, MessageCallback):
                 return cb.message
