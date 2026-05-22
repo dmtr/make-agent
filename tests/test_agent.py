@@ -206,7 +206,7 @@ class TestACompletionWithRetry:
     async def test_succeeds_on_first_attempt(self):
         stream = _make_empty_stream()
         with patch(
-            "make_agent.agent_core.agent.litellm.acompletion",
+            "make_agent.agent_core.provider.litellm.acompletion",
             AsyncMock(return_value=stream),
         ) as mock_c:
             result = await _acompletion_with_retry("model", [], {}, max_retries=3)
@@ -217,7 +217,7 @@ class TestACompletionWithRetry:
         err = _make_rate_limit_error(retry_after=10)
         stream = _make_empty_stream()
         with patch(
-            "make_agent.agent_core.agent.litellm.acompletion",
+            "make_agent.agent_core.provider.litellm.acompletion",
             AsyncMock(side_effect=[err, err, stream]),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
@@ -230,7 +230,7 @@ class TestACompletionWithRetry:
         err = _make_rate_limit_error()
         stream = _make_empty_stream()
         with patch(
-            "make_agent.agent_core.agent.litellm.acompletion",
+            "make_agent.agent_core.provider.litellm.acompletion",
             AsyncMock(side_effect=[err, err, stream]),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
@@ -242,7 +242,7 @@ class TestACompletionWithRetry:
         stream = _make_empty_stream()
         side_effects = [err] * 7 + [stream]
         with patch(
-            "make_agent.agent_core.agent.litellm.acompletion",
+            "make_agent.agent_core.provider.litellm.acompletion",
             AsyncMock(side_effect=side_effects),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
@@ -254,7 +254,7 @@ class TestACompletionWithRetry:
     async def test_raises_after_max_retries_exhausted(self):
         err = _make_rate_limit_error(retry_after=1)
         with patch(
-            "make_agent.agent_core.agent.litellm.acompletion",
+            "make_agent.agent_core.provider.litellm.acompletion",
             AsyncMock(side_effect=err),
         ):
             with patch("asyncio.sleep", AsyncMock()):
@@ -264,7 +264,7 @@ class TestACompletionWithRetry:
     async def test_total_calls_equals_max_retries_plus_one(self):
         err = _make_rate_limit_error(retry_after=1)
         with patch(
-            "make_agent.agent_core.agent.litellm.acompletion",
+            "make_agent.agent_core.provider.litellm.acompletion",
             AsyncMock(side_effect=err),
         ) as mock_c:
             with patch("asyncio.sleep", AsyncMock()):
@@ -275,7 +275,7 @@ class TestACompletionWithRetry:
     async def test_zero_max_retries_raises_immediately(self):
         err = _make_rate_limit_error(retry_after=1)
         with patch(
-            "make_agent.agent_core.agent.litellm.acompletion",
+            "make_agent.agent_core.provider.litellm.acompletion",
             AsyncMock(side_effect=err),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:

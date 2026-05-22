@@ -8,9 +8,6 @@ from .agent import (
     TokenEvent,
     ToolDoneEvent,
     ToolStartEvent,
-    _acompletion_with_retry,
-    _is_anthropic_model,
-    _parse_retry_after,
 )
 from .constants import (
     DEFAULT_MAX_RETRIES,
@@ -21,6 +18,7 @@ from .constants import (
     DEFAULT_USE_PROMPT_CACHE,
 )
 from .export import _render_html, export_conversation
+from .provider import _acompletion_with_retry, _is_anthropic_model, _parse_retry_after
 
 __all__ = [
     "DEFAULT_MAX_RETRIES",
