@@ -60,7 +60,7 @@ async def run(
         print(await agent_manager.arun_agent(session_id, prompt))
         return
 
-    shell = MakeAgentShell(agent_manager, session_id)
+    shell = MakeAgentShell(agent_manager, session_id, model=model, history_path=project_dir() / "history")
     try:
         await shell.run()
     except KeyboardInterrupt:

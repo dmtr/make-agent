@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import readline
 import signal
+from pathlib import Path
 from typing import Any
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
 
 from make_agent.agent_core import (
     AgentManager,
@@ -21,11 +26,21 @@ from make_agent.tool_display import ToolDisplayFormatter
 class MakeAgentShell:
     """Async interactive REPL that delegates all LLM interaction to an :class:`AgentManager`."""
 
-    prompt = "make-agent> "
+    PROMPT = "make-agent> "
 
-    def __init__(self, agent_manager: AgentManager, session_id: str) -> None:
+    def __init__(
+        self,
+        agent_manager: AgentManager,
+        session_id: str,
+        model: str,
+        history_path: Path,
+    ) -> None:
         self._agent_manager = agent_manager
         self._session_id = session_id
+        self._model = model
+        self._history_path = history_path
+        self._current_tool: str | None = None
+        self._token_count: int = 0
         self._commands: dict[str, Any] = {
             "exit": self._cmd_exit,
             "quit": self._cmd_exit,
@@ -34,23 +49,39 @@ class MakeAgentShell:
             "help": self._cmd_help,
         }
 
-    # ── readline completion ────────────────────────────────────────────────
+    # ── prompt-toolkit setup ───────────────────────────────────────────────
 
-    def _setup_readline(self) -> None:
-        """Configure readline so /cmd completions work."""
-        try:
-            readline.set_completer_delims(readline.get_completer_delims().replace("/", ""))
-            readline.set_completer(self._completer)
-            readline.parse_and_bind("tab: complete")
-        except Exception:
-            pass
+    def _build_session(self) -> PromptSession:
+        kb = KeyBindings()
 
-    def _completer(self, text: str, state: int) -> str | None:
-        if not text.startswith("/"):
-            return None
-        cmd_text = text[1:]
-        matches = ["/" + name for name in self._commands if name.startswith(cmd_text)]
-        return matches[state] if state < len(matches) else None
+        @kb.add("enter")
+        def _(event) -> None:
+            event.current_buffer.validate_and_handle()
+
+        @kb.add("escape", "enter")
+        def _(event) -> None:
+            event.current_buffer.insert_text("\n")
+
+        completer = WordCompleter(
+            ["/" + name for name in self._commands],
+            sentence=True,
+        )
+
+        return PromptSession(
+            history=FileHistory(str(self._history_path)),
+            completer=completer,
+            key_bindings=kb,
+            multiline=True,
+            bottom_toolbar=self._toolbar,
+        )
+
+    def _toolbar(self) -> str:
+        parts = [f"model: {self._model}"]
+        if self._current_tool:
+            parts.append(f"tool: {self._current_tool}")
+        if self._token_count > 0:
+            parts.append(f"tokens: {self._token_count}")
+        return " | ".join(parts)
 
     # ── command handlers ───────────────────────────────────────────────────
 
@@ -100,14 +131,19 @@ class MakeAgentShell:
             if isinstance(event, TokenEvent):
                 print(event.text, end="", flush=True)
             elif isinstance(event, ToolStartEvent):
+                self._current_tool = event.name
                 print(f"\n{formatter.format_start(event.name, event.args)}", flush=True)
                 if event.description:
                     print(f"  {event.description}\n", flush=True)
             elif isinstance(event, ToolDoneEvent):
+                self._current_tool = None
                 output_preview = event.output[:200] if event.output else "(no output)"
                 print(f"{formatter.format_done(event.name, output_preview, event.is_error, event.duration_ms)}", flush=True)
             elif isinstance(event, DoneEvent):
                 print()  # trailing newline after streamed content
+                stats = self._agent_manager.get_token_stats(self._session_id)
+                if stats:
+                    self._token_count = stats["total_tokens"]
             elif isinstance(event, ConfirmEvent):
                 args_repr = ", ".join(f"{k}={v!r}" for k, v in event.kwargs.items())
                 prompt = f"\nAllow {event.skill_name}/{event.target}({args_repr})? [y/N] "
@@ -135,13 +171,15 @@ class MakeAgentShell:
 
     async def run(self) -> None:
         """Start the interactive REPL loop."""
-        self._setup_readline()
-        loop = asyncio.get_running_loop()
-        print("Type your message. Prefix shell commands with /  " "(e.g. /exit, /help). Press Ctrl-D or Ctrl-C twice to exit.\n")
+        session = self._build_session()
+        print("Type your message. Prefix shell commands with /  " "(e.g. /exit, /help). Use Meta+Enter (Alt+Enter) for newlines. Press Ctrl-D or Ctrl-C to exit.\n")
         while True:
             try:
-                line = await loop.run_in_executor(None, input, self.prompt)
+                line = await session.prompt_async(self.PROMPT)
             except EOFError:
+                print()
+                break
+            except KeyboardInterrupt:
                 print()
                 break
             line = line.strip()

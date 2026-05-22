@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "litellm==1.85.1",
+    "prompt-toolkit==3.0.52",
     "pyyaml>=6",
 ]
 
