@@ -10,6 +10,7 @@ from .constants import (
 from .events import AgentEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import _render_html, export_conversation
 from .loop import AgentConfig, AgenticLoop, CallBack, MessageCallback, TokenCallback, ToolCallback, UsageCallback
+from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 from .provider import _acompletion_with_retry, _is_anthropic_model, _parse_retry_after
 
 __all__ = [
@@ -27,6 +28,10 @@ __all__ = [
     "AgentManager",
     "ConfirmEvent",
     "DoneEvent",
+    "MiddlewareBase",
+    "Request",
+    "Response",
+    "SessionMiddleware",
     "SessionNotFoundError",
     "TokenEvent",
     "ToolDoneEvent",

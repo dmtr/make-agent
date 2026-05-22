@@ -13,6 +13,7 @@ from make_agent.agent_core import (
     DEFAULT_USE_PROMPT_CACHE,
     AgentConfig,
     AgentManager,
+    SessionMiddleware,
 )
 from make_agent.app_dirs import project_dir
 from make_agent.memory import Memory
@@ -47,7 +48,7 @@ async def run(
         project_dir=project_dir(),
         use_prompt_cache=use_prompt_cache,
     )
-    agent_manager = AgentManager(memory, tool_handler)
+    agent_manager = AgentManager(tool_handler, middlewares=[SessionMiddleware(memory)])
     session_id = agent_manager.create_session(agent_config)
     if system_prompt:
         print("System prompt loaded.")

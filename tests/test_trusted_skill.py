@@ -172,18 +172,13 @@ async def _drain_events(manager: AgentManager, session_id: str, message: str) ->
 
 def _make_manager_with_loop(cbs: list[CallBack], trusted_skills: frozenset[str] = frozenset()) -> tuple[AgentManager, str]:
     """Create an AgentManager whose AgenticLoop yields *cbs* in order."""
-    memory = MagicMock()
-    memory.store = MagicMock()
-    memory.record_token_usage = MagicMock()
-    memory.get_session_stats = MagicMock(return_value={})
-
     tool_handler = MagicMock()
     tool_handler.is_skill_trusted = MagicMock(
         side_effect=lambda skill, target: "*" in trusted_skills or skill in trusted_skills
     )
     tool_handler.execute = AsyncMock(return_value=get_tool_result("result-output", "", 0))
 
-    manager = AgentManager(memory, tool_handler)
+    manager = AgentManager(tool_handler)
     session_id = manager.get_session_id()
 
     async def _fake_astream(msg: str):

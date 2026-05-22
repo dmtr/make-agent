@@ -443,12 +443,12 @@ class TestAgentAutoStorage:
     """Verify AgentManager.arun_agent() writes to memory automatically."""
 
     def _make_manager(self, tmp_path, mem):
-        from make_agent.agent_core import AgentConfig, AgentManager
+        from make_agent.agent_core import AgentConfig, AgentManager, SessionMiddleware
         from make_agent.tool_handler import ToolHandler
 
         config = AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
         tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), mem)
-        manager = AgentManager(mem, tool_handler)
+        manager = AgentManager(tool_handler, middlewares=[SessionMiddleware(mem)])
         session_id = manager.create_session(config)
         return manager, session_id
 
@@ -501,20 +501,20 @@ class TestAgentAutoStorage:
 
 
 class TestMemoryAlwaysActive:
-    """Verify memory is always created and active (no opt-in flag needed)."""
+    """Verify memory is always wired via SessionMiddleware (no opt-in flag needed)."""
 
     def test_create_session_always_creates_memory(self, tmp_path):
-        from make_agent.agent_core import AgentConfig, AgentManager
+        from make_agent.agent_core import AgentConfig, AgentManager, SessionMiddleware
         from make_agent.memory import Memory
         from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
         tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
-        manager = AgentManager(memory, tool_handler)
+        manager = AgentManager(tool_handler, middlewares=[SessionMiddleware(memory)])
         config = AgentConfig(system_prompt="", model="openai/gpt-4o-mini", skills_dir=str(tmp_path), project_dir=tmp_path)
         manager.create_session(config)
 
-        assert isinstance(manager._memory, Memory)
+        assert any(isinstance(mw, SessionMiddleware) and mw._memory is memory for mw in manager._middlewares)
 
 
 # ── Token usage ───────────────────────────────────────────────────────────────
