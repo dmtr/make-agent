@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 from make_agent.tool_handler.handler import ToolHandler, _SKILL_EXECUTION_TOOL
 from make_agent.tool_handler.runner import get_tool_result
 from make_agent.main import _parse_trusted_skills
-from make_agent.agent_core.agent import (
+from make_agent.agent_core import (
     AgentManager,
     AgenticLoop,
     CallBack,
@@ -17,6 +17,7 @@ from make_agent.agent_core.agent import (
     DoneEvent,
     MessageCallback,
     TokenCallback,
+    TokenEvent,
     ToolCallback,
     ToolDoneEvent,
     ToolStartEvent,
@@ -206,7 +207,6 @@ async def test_astream_events_token_and_done():
     cbs = [TokenCallback("hello "), TokenCallback("world"), MessageCallback("hello world")]
     manager, sid = _make_manager_with_loop(cbs)
     events = await _drain_events(manager, sid, "hi")
-    from make_agent.agent_core.agent import TokenEvent
     assert [type(e).__name__ for e in events] == ["TokenEvent", "TokenEvent", "DoneEvent"]
     assert events[0].text == "hello "
     assert events[2].content == "hello world"

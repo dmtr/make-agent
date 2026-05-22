@@ -440,18 +440,20 @@ class TestMemoryBuiltinTools:
 
 
 class TestAgentAutoStorage:
-    """Verify agent.arun() writes to memory automatically."""
+    """Verify AgentManager.arun_agent() writes to memory automatically."""
 
-    def _make_agent(self, tmp_path, mem):
-        from make_agent.agent_core import Agent, AgentConfig
+    def _make_manager(self, tmp_path, mem):
+        from make_agent.agent_core import AgentConfig, AgentManager
         from make_agent.tool_handler import ToolHandler
 
         config = AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
         tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), mem)
-        return Agent(config, mem, tool_handler)
+        manager = AgentManager(mem, tool_handler)
+        session_id = manager.create_session(config)
+        return manager, session_id
 
     async def test_user_message_stored(self, tmp_path, mem):
-        agent = self._make_agent(tmp_path, mem)
+        manager, session_id = self._make_manager(tmp_path, mem)
 
         async def _fake_acompletion(*args, **kwargs):
             async def _stream():
@@ -464,8 +466,8 @@ class TestAgentAutoStorage:
 
             return _stream()
 
-        with patch("make_agent.agent_core.agent._acompletion_with_retry", _fake_acompletion):
-            await agent.arun("hello from user")
+        with patch("make_agent.agent_core.loop._acompletion_with_retry", _fake_acompletion):
+            await manager.arun_agent(session_id, "hello from user")
 
         conn = mem._get_conn()
         row = conn.execute("SELECT sender, message FROM messages WHERE sender='user'").fetchone()
@@ -473,7 +475,7 @@ class TestAgentAutoStorage:
         assert row["message"] == "hello from user"
 
     async def test_agent_reply_stored(self, tmp_path, mem):
-        agent = self._make_agent(tmp_path, mem)
+        manager, session_id = self._make_manager(tmp_path, mem)
 
         async def _fake_acompletion(*args, **kwargs):
             async def _stream():
@@ -486,8 +488,8 @@ class TestAgentAutoStorage:
 
             return _stream()
 
-        with patch("make_agent.agent_core.agent._acompletion_with_retry", _fake_acompletion):
-            await agent.arun("hello from user")
+        with patch("make_agent.agent_core.loop._acompletion_with_retry", _fake_acompletion):
+            await manager.arun_agent(session_id, "hello from user")
 
         conn = mem._get_conn()
         row = conn.execute("SELECT sender, message FROM messages WHERE sender='agent'").fetchone()
@@ -510,10 +512,9 @@ class TestMemoryAlwaysActive:
         tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
         manager = AgentManager(memory, tool_handler)
         config = AgentConfig(system_prompt="", model="openai/gpt-4o-mini", skills_dir=str(tmp_path), project_dir=tmp_path)
-        session_id = manager.create_session(config)
-        agent = manager.get_agent(session_id)
+        manager.create_session(config)
 
-        assert isinstance(agent._memory, Memory)
+        assert isinstance(manager._memory, Memory)
 
 
 # ── Token usage ───────────────────────────────────────────────────────────────

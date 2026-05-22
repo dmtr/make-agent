@@ -304,7 +304,6 @@ class TestAgentSafetyGuards:
                 model="openai/gpt-4o-mini",
                 skills_dir=str(tmp_path),
             ),
-            memory,
             tool_handler,
         )
         # Inject a custom tool to give the agent a known tool set
@@ -325,7 +324,7 @@ class TestAgentSafetyGuards:
         agent = self._make_agent(tmp_path)
 
         with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
+            "make_agent.agent_core.loop._acompletion_with_retry",
             _mock_acompletion_with_retry(
                 _make_tool_call_stream("tc1", "hidden", "{}"),
                 _make_text_stream("done"),
@@ -344,9 +343,9 @@ class TestAgentSafetyGuards:
             return _make_tool_call_stream("tc1", "hidden", "{}")
 
         with (
-            patch("make_agent.agent_core.agent.MAX_MODEL_TURNS_PER_REQUEST", 2),
+            patch("make_agent.agent_core.loop.MAX_MODEL_TURNS_PER_REQUEST", 2),
             patch(
-                "make_agent.agent_core.agent._acompletion_with_retry", _always_tool_call
+                "make_agent.agent_core.loop._acompletion_with_retry", _always_tool_call
             ),
         ):
             with pytest.raises(RuntimeError, match="model turns"):
@@ -373,7 +372,6 @@ class TestAssistantMessageContent:
                 model="openai/gpt-4o-mini",
                 skills_dir=str(tmp_path),
             ),
-            memory,
             tool_handler,
         )
         # Inject say_hi as a known builtin tool
@@ -390,7 +388,7 @@ class TestAssistantMessageContent:
         agent._tool_handler._executors["say_hi"] = lambda **_: "hi"  # noqa: SLF001
 
         with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
+            "make_agent.agent_core.loop._acompletion_with_retry",
             _mock_acompletion_with_retry(
                 _make_tool_call_stream("tc1", "say_hi", "{}"),
                 _make_text_stream("all done"),
@@ -437,7 +435,6 @@ class TestAnthropicParallelToolCalls:
                 model="anthropic/claude-3-5-sonnet-20241022",
                 skills_dir=str(tmp_path),
             ),
-            memory,
             tool_handler,
         )
         for name in ("tool_a", "tool_b"):
@@ -470,7 +467,7 @@ class TestAnthropicParallelToolCalls:
         )
 
         with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
+            "make_agent.agent_core.loop._acompletion_with_retry",
             _mock_acompletion_with_retry(parallel_stream, _make_text_stream("done")),
         ):
             result = await agent.arun("run both tools")
@@ -510,7 +507,7 @@ class TestAnthropicParallelToolCalls:
         )
 
         with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
+            "make_agent.agent_core.loop._acompletion_with_retry",
             _mock_acompletion_with_retry(parallel_stream, _make_text_stream("done")),
         ):
             await agent.arun("run both tools")
@@ -547,7 +544,6 @@ class TestAnthropicEmptyArguments:
                 model="anthropic/claude-3-5-haiku-20241022",
                 skills_dir=str(tmp_path),
             ),
-            memory,
             tool_handler,
         )
         agent._tool_handler._schemas.append(  # noqa: SLF001
@@ -573,7 +569,7 @@ class TestAnthropicEmptyArguments:
         agent = self._make_agent(tmp_path)
 
         with patch(
-            "make_agent.agent_core.agent._acompletion_with_retry",
+            "make_agent.agent_core.loop._acompletion_with_retry",
             _mock_acompletion_with_retry(
                 _make_tool_call_stream_empty_args("toolu_1", "list_skills"),
                 _make_text_stream("here are your skills"),
@@ -665,7 +661,7 @@ class TestAgentSystemPromptCache:
             model=model,
             use_prompt_cache=use_prompt_cache,
         )
-        return Agent(config, memory, tool_handler)
+        return Agent(config, tool_handler)
 
     def test_no_cache_stores_plain_string(self, tmp_path):
         agent = self._make_agent(tmp_path, "anthropic/claude-3-5-haiku-20241022", False)

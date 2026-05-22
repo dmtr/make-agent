@@ -1,20 +1,4 @@
-from .agent import (
-    Agent,
-    AgentConfig,
-    AgentEvent,
-    AgenticLoop,
-    AgentManager,
-    CallBack,
-    ConfirmEvent,
-    DoneEvent,
-    MessageCallback,
-    SessionNotFoundError,
-    TokenCallback,
-    TokenEvent,
-    ToolCallback,
-    ToolDoneEvent,
-    ToolStartEvent,
-)
+from .agent import Agent, AgentManager, SessionNotFoundError
 from .constants import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
@@ -23,7 +7,9 @@ from .constants import (
     DEFAULT_TOOL_TIMEOUT,
     DEFAULT_USE_PROMPT_CACHE,
 )
+from .events import AgentEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import _render_html, export_conversation
+from .loop import AgentConfig, AgenticLoop, CallBack, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .provider import _acompletion_with_retry, _is_anthropic_model, _parse_retry_after
 
 __all__ = [
@@ -54,4 +40,6 @@ __all__ = [
     "MessageCallback",
     "TokenCallback",
     "ToolCallback",
+    "UsageCallback",
+    "UsageEvent",
 ]
