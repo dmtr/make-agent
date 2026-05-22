@@ -14,6 +14,18 @@ from uuid import uuid4
 import litellm
 from make_agent.protocols import MemoryProtocol, ToolHandlerProtocol
 
+from .constants import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_MAX_TOOL_OUTPUT,
+    DEFAULT_REASONING_EFFORT,
+    DEFAULT_TOOL_TIMEOUT,
+    DEFAULT_USE_PROMPT_CACHE,
+    MAX_MODEL_TURNS_PER_REQUEST,
+    MAX_REPEATED_FAILURES,
+    MAX_RUN_SECONDS_PER_REQUEST,
+    MAX_TOOL_CALLS_PER_REQUEST,
+)
 from .export import export_conversation
 
 litellm.suppress_debug_info = True
@@ -21,17 +33,6 @@ litellm.verbose = False
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
 logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
-
-_DEFAULT_MAX_RETRIES = 5
-_DEFAULT_TOOL_TIMEOUT = 600  # seconds
-_DEFAULT_MAX_TOOL_OUTPUT = 16000  # characters; 0 = unlimited
-_DEFAULT_MAX_TOKENS = 4096
-_DEFAULT_REASONING_EFFORT = "medium"
-_DEFAULT_USE_PROMPT_CACHE = False
-_MAX_REPEATED_FAILURES = 8
-_MAX_MODEL_TURNS_PER_REQUEST = 64
-_MAX_TOOL_CALLS_PER_REQUEST = 256
-_MAX_RUN_SECONDS_PER_REQUEST = 900
 
 logger = logging.getLogger(__name__)
 litellm.drop_params = True
@@ -95,16 +96,16 @@ AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent
 class AgentConfig(NamedTuple):
     system_prompt: str
     model: str
-    max_retries: int = _DEFAULT_MAX_RETRIES
-    tool_timeout: int = _DEFAULT_TOOL_TIMEOUT
-    max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT
-    max_tokens: int = _DEFAULT_MAX_TOKENS
+    max_retries: int = DEFAULT_MAX_RETRIES
+    tool_timeout: int = DEFAULT_TOOL_TIMEOUT
+    max_tool_output: int = DEFAULT_MAX_TOOL_OUTPUT
+    max_tokens: int = DEFAULT_MAX_TOKENS
     skills_dir: str = ""
     disabled_builtin_tools: frozenset[str] = frozenset()
-    reasoning_effort: str = _DEFAULT_REASONING_EFFORT
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT
     session_id: str | None = None
     project_dir: Path = Path()
-    use_prompt_cache: bool = _DEFAULT_USE_PROMPT_CACHE
+    use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE
 
 
 def _parse_retry_after(e: litellm.RateLimitError) -> float | None:
@@ -129,8 +130,8 @@ async def _acompletion_with_retry(
     messages: list[dict],
     tool_kwargs: dict[str, Any],
     max_retries: int,
-    max_tokens: int = _DEFAULT_MAX_TOKENS,
-    reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT,
 ) -> Any:
     """Call ``litellm.acompletion`` with streaming, retrying on rate limit.
 
@@ -297,10 +298,10 @@ class Agent:
         started_at = time.monotonic()
 
         while True:
-            if model_turns >= _MAX_MODEL_TURNS_PER_REQUEST:
-                raise RuntimeError(f"aborted: exceeded {_MAX_MODEL_TURNS_PER_REQUEST} model turns in a single request")
-            if time.monotonic() - started_at >= _MAX_RUN_SECONDS_PER_REQUEST:
-                raise RuntimeError(f"aborted: exceeded {_MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
+            if model_turns >= MAX_MODEL_TURNS_PER_REQUEST:
+                raise RuntimeError(f"aborted: exceeded {MAX_MODEL_TURNS_PER_REQUEST} model turns in a single request")
+            if time.monotonic() - started_at >= MAX_RUN_SECONDS_PER_REQUEST:
+                raise RuntimeError(f"aborted: exceeded {MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
 
             stream = await _acompletion_with_retry(
                 self._model,
@@ -419,8 +420,8 @@ class Agent:
                 self._messages.append(assistant_msg)
 
                 for tc in tool_calls_to_run:
-                    if tool_calls_executed >= _MAX_TOOL_CALLS_PER_REQUEST:
-                        raise RuntimeError(f"aborted: exceeded {_MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request")
+                    if tool_calls_executed >= MAX_TOOL_CALLS_PER_REQUEST:
+                        raise RuntimeError(f"aborted: exceeded {MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request")
                     tool_calls_executed += 1
                     target = tc.function.name
                     try:
@@ -473,7 +474,7 @@ class Agent:
                         last_fail_key = None
                         consecutive_failures = 0
 
-                if consecutive_failures >= _MAX_REPEATED_FAILURES:
+                if consecutive_failures >= MAX_REPEATED_FAILURES:
                     hint = (
                         "You have repeated the same failing tool call "
                         f"{consecutive_failures} times. The arguments appear to be "

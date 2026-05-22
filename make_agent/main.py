@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 
 from make_agent.agent_core import (
-    _DEFAULT_MAX_TOKENS,
-    _DEFAULT_MAX_TOOL_OUTPUT,
-    _DEFAULT_USE_PROMPT_CACHE,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_MAX_TOOL_OUTPUT,
+    DEFAULT_USE_PROMPT_CACHE,
 )
 from make_agent.agent_shell import run
 from make_agent.app_dirs import (
@@ -204,16 +204,16 @@ def main() -> None:
     run_p.add_argument(
         "--max-tool-output",
         type=int,
-        default=_DEFAULT_MAX_TOOL_OUTPUT,
+        default=DEFAULT_MAX_TOOL_OUTPUT,
         metavar="CHARS",
-        help=f"Max characters of stdout kept from each tool call; 0 = unlimited (default: {_DEFAULT_MAX_TOOL_OUTPUT})",
+        help=f"Max characters of stdout kept from each tool call; 0 = unlimited (default: {DEFAULT_MAX_TOOL_OUTPUT})",
     )
     run_p.add_argument(
         "--max-tokens",
         type=int,
-        default=_DEFAULT_MAX_TOKENS,
+        default=DEFAULT_MAX_TOKENS,
         metavar="N",
-        help=f"Max tokens in model response (default: {_DEFAULT_MAX_TOKENS})",
+        help=f"Max tokens in model response (default: {DEFAULT_MAX_TOKENS})",
     )
     run_p.add_argument(
         "--disable-builtin-tools",
@@ -239,7 +239,7 @@ def main() -> None:
     run_p.add_argument(
         "--prompt-cache",
         action="store_true",
-        default=_DEFAULT_USE_PROMPT_CACHE,
+        default=DEFAULT_USE_PROMPT_CACHE,
         help="Enable prompt caching for the system prompt (Anthropic models only)",
     )
     parser.add_argument("--model", default=None, metavar="MODEL", help=argparse.SUPPRESS)
@@ -275,14 +275,14 @@ def main() -> None:
     parser.add_argument(
         "--max-tool-output",
         type=int,
-        default=_DEFAULT_MAX_TOOL_OUTPUT,
+        default=DEFAULT_MAX_TOOL_OUTPUT,
         metavar="CHARS",
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=_DEFAULT_MAX_TOKENS,
+        default=DEFAULT_MAX_TOKENS,
         metavar="N",
         help=argparse.SUPPRESS,
     )
@@ -298,7 +298,7 @@ def main() -> None:
     parser.add_argument(
         "--prompt-cache",
         action="store_true",
-        default=_DEFAULT_USE_PROMPT_CACHE,
+        default=DEFAULT_USE_PROMPT_CACHE,
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args()

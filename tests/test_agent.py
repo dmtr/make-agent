@@ -344,7 +344,7 @@ class TestAgentSafetyGuards:
             return _make_tool_call_stream("tc1", "hidden", "{}")
 
         with (
-            patch("make_agent.agent_core.agent._MAX_MODEL_TURNS_PER_REQUEST", 2),
+            patch("make_agent.agent_core.agent.MAX_MODEL_TURNS_PER_REQUEST", 2),
             patch(
                 "make_agent.agent_core.agent._acompletion_with_retry", _always_tool_call
             ),

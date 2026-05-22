@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import Optional
 
 from make_agent.agent_core import (
-    _DEFAULT_MAX_RETRIES,
-    _DEFAULT_MAX_TOKENS,
-    _DEFAULT_MAX_TOOL_OUTPUT,
-    _DEFAULT_REASONING_EFFORT,
-    _DEFAULT_TOOL_TIMEOUT,
-    _DEFAULT_USE_PROMPT_CACHE,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_MAX_TOOL_OUTPUT,
+    DEFAULT_REASONING_EFFORT,
+    DEFAULT_TOOL_TIMEOUT,
+    DEFAULT_USE_PROMPT_CACHE,
     AgentConfig,
     AgentManager,
 )
@@ -27,12 +27,12 @@ async def run(
     memory: Memory,
     tool_handler: ToolHandler,
     prompt: Optional[str] = None,
-    max_retries: int = _DEFAULT_MAX_RETRIES,
-    tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    max_tool_output: int = _DEFAULT_MAX_TOOL_OUTPUT,
-    max_tokens: int = _DEFAULT_MAX_TOKENS,
-    reasoning_effort: str = _DEFAULT_REASONING_EFFORT,
-    use_prompt_cache: bool = _DEFAULT_USE_PROMPT_CACHE,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    tool_timeout: int = DEFAULT_TOOL_TIMEOUT,
+    max_tool_output: int = DEFAULT_MAX_TOOL_OUTPUT,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT,
+    use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE,
 ) -> None:
     """Start the interactive shell (or send a single prompt and return)."""
     await tool_handler.setup(model)
