@@ -169,7 +169,6 @@ class TestAgentManagerMiddlewareChain:
         cbs = [MessageCallback("final")]
         _mock_loop_with_cbs(manager, session_id, cbs)
 
-        events = [e async for e in manager.astream_events(session_id, "go")]
         assert calls == ["event:DoneEvent", "after:final"]
 
     async def test_chain_order_innermost_first(self):
