@@ -9,10 +9,9 @@ from typing import Any
 
 from make_agent.agent_core import (
     AgentManager,
-    DoneEvent,
-    TokenEvent,
-    ToolDoneEvent,
-    ToolStartEvent,
+    MessageCallback,
+    TokenCallback,
+    ToolCallback,
 )
 from make_agent.tool_display import ToolDisplayFormatter
 
@@ -102,19 +101,19 @@ class MakeAgentShell:
 
     async def _stream_turn(self, message: str) -> None:
         """Stream one agent turn, printing events as they arrive."""
-        async for event in self._agent_manager.astream_agent(self._session_id, message):
-            if isinstance(event, TokenEvent):
-                print(event.text, end="", flush=True)
-            elif isinstance(event, ToolStartEvent):
+        async for cb in self._agent_manager.astream_agent(self._session_id, message):
+            if isinstance(cb, TokenCallback):
+                print(cb.message, end="", flush=True)
+            elif isinstance(cb, ToolCallback):
                 formatter = ToolDisplayFormatter()
-                print(f"\n{formatter.format_start(event.name, event.args)}", flush=True)
-                if event.description:
-                    print(f"  {event.description}\n", flush=True)
-            elif isinstance(event, ToolDoneEvent):
-                formatter = ToolDisplayFormatter()
-                output_preview = event.output[:200] if event.output else "(no output)"
-                print(f"{formatter.format_done(event.name, output_preview, event.is_error, event.duration_ms)}", flush=True)
-            elif isinstance(event, DoneEvent):
+                if not cb.ready:
+                    print(f"\n{formatter.format_start(cb.tool_name, cb.tool_args)}", flush=True)
+                    if cb.description:
+                        print(f"  {cb.description}\n", flush=True)
+                else:
+                    output_preview = cb.output[:200] if cb.output else "(no output)"
+                    print(f"{formatter.format_done(cb.tool_name, output_preview, cb.is_error, cb.duration_ms)}", flush=True)
+            elif isinstance(cb, MessageCallback):
                 print()  # trailing newline after streamed content
 
     async def _run_turn(self, message: str) -> None:

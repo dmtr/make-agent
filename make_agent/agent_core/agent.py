@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncGenerator, NamedTuple
+from typing import Any, AsyncGenerator, AsyncIterator, NamedTuple
 from uuid import uuid4
 
 from make_agent.protocols import MemoryProtocol, ToolHandlerProtocol
@@ -43,35 +44,107 @@ class _ToolCall:
     function: _Function
 
 
+class CallBack:
+    """Base class for all agentic loop callbacks."""
+
+    def __init__(self, message: str) -> None:
+        self._message = message
+        self._response: str | None = None
+
+    @property
+    def message(self) -> str:
+        return self._message
+
+    @property
+    def ready(self) -> bool:
+        return True
+
+    def set_response(self, response: str, is_error: bool = False) -> None:
+        self._response = response
+
+    def __call__(self) -> str | None:
+        return self._response
+
+
+class TokenCallback(CallBack):
+    """A partial token streamed from the LLM. Fire-and-forget; always ready."""
+
+
+class MessageCallback(CallBack):
+    """LLM produced a final text response (no tool calls). Terminal."""
+
+
+class ToolCallback(CallBack):
+    """LLM requested a tool call. Blocks the loop until set_response() is called."""
+
+    def __init__(
+        self,
+        message: str,
+        tool_name: str,
+        tool_args: dict,
+        tool_call_id: str,
+        description: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.tool_name = tool_name
+        self.tool_args = tool_args
+        self.tool_call_id = tool_call_id
+        self.description = description
+        self.duration_ms: float | None = None
+        self._is_error: bool = False
+        self._event: asyncio.Event = asyncio.Event()
+
+    @property
+    def ready(self) -> bool:
+        return self._event.is_set()
+
+    @property
+    def is_error(self) -> bool:
+        return self._is_error
+
+    @property
+    def output(self) -> str:
+        return self._response or ""
+
+    def set_response(self, response: str, is_error: bool = False) -> None:
+        self._response = response
+        self._is_error = is_error
+        self._event.set()
+
+    async def wait(self) -> None:
+        await self._event.wait()
+
+
+# Deprecated event types kept for backward compatibility.
 @dataclass
 class TokenEvent:
-    """A partial text token streamed from the LLM."""
+    """Deprecated: use TokenCallback."""
 
     text: str
 
 
 @dataclass
 class ToolStartEvent:
-    """Emitted just before a tool call is executed."""
+    """Deprecated: use ToolCallback."""
 
     name: str
     args: dict
-    description: str = ""  # Tool description for structured display
+    description: str = ""
 
 
 @dataclass
 class ToolDoneEvent:
-    """Emitted after a tool call completes."""
+    """Deprecated: use ToolCallback (after set_response)."""
 
     name: str
     output: str
     is_error: bool
-    duration_ms: float | None = None  # Execution time in milliseconds
+    duration_ms: float | None = None
 
 
 @dataclass
 class DoneEvent:
-    """Emitted once the agent has a final text response (no more tool calls)."""
+    """Deprecated: use MessageCallback."""
 
     content: str
 
@@ -141,15 +214,19 @@ def _parse_content_tool_calls(
     return None
 
 
-class Agent:
-    """LLM agent that maintains conversation history and dispatches tool calls.
+class AgenticLoop:
+    """LLM agent async iterator.
 
-    Await ``arun()`` with a user message to get the assistant's reply, or use
-    ``astream()`` to receive events as they are produced::
+    Maintains conversation history across turns. Call :meth:`astream` with a
+    user message to begin a turn; then iterate with ``async for cb in loop``
+    to receive :class:`CallBack` objects.  :class:`ToolCallback` objects must
+    have :meth:`~ToolCallback.set_response` called before iteration can
+    continue (done automatically by :class:`AgentManager`).
 
-        config = AgentConfig(system_prompt="You are a helpful assistant.", model="anthropic/claude-haiku-4-5")
-        agent = Agent(config, memory=memory, tool_handler=tool_handler)
-        reply = await agent.arun("List the skills available.")
+    Use :meth:`arun` for a simple blocking call that returns the final reply::
+
+        loop = AgenticLoop(config, memory=memory, tool_handler=tool_handler)
+        reply = await loop.arun("List the skills available.")
     """
 
     def __init__(
@@ -169,6 +246,7 @@ class Agent:
         self._tool_handler = tool_handler
         self._config = config
         self._messages: list[dict] = []
+        self._gen: AsyncGenerator[CallBack, None] | None = None
         if config.system_prompt:
             if config.use_prompt_cache and _is_anthropic_model(config.model):
                 system_content: str | list = [
@@ -201,22 +279,33 @@ class Agent:
         return self._model
 
     def _get_tool_description(self, tool_name: str) -> str:
-        """Find tool description from schemas."""
         for schema in self._tool_handler.schemas:
             if schema.get("function", {}).get("name") == tool_name:
                 return schema.get("function", {}).get("description", "")
         return ""
 
     def __repr__(self) -> str:
-        return f"Agent(model={self._model!r}, tools={self.tool_names!r})"
+        return f"AgenticLoop(model={self._model!r}, tools={self.tool_names!r})"
 
-    async def astream(self, user_input: str) -> AsyncGenerator[AgentEvent, None]:
-        """Stream events produced while processing *user_input*.
+    def __aiter__(self) -> AsyncIterator[CallBack]:
+        return self
 
-        Yields :class:`TokenEvent` for each partial LLM token,
-        :class:`ToolStartEvent` / :class:`ToolDoneEvent` around each tool call,
-        and a final :class:`DoneEvent` when the agent is done.
-        """
+    async def __anext__(self) -> CallBack:
+        if self._gen is None:
+            raise StopAsyncIteration
+        try:
+            return await anext(self._gen)
+        except StopAsyncIteration:
+            self._gen = None
+            raise
+
+    def astream(self, user_input: str) -> AgenticLoop:
+        """Begin a new turn for *user_input*. Returns ``self`` for use in ``async for``."""
+        self._gen = self._run(user_input)
+        return self
+
+    async def _run(self, user_input: str) -> AsyncGenerator[CallBack, None]:
+        """Internal async generator: manages LLM turns, yields CallBack objects."""
         self._messages.append({"role": "user", "content": user_input})
         logger.debug("[user]\n%s", user_input)
         self._memory.store("user", user_input)
@@ -256,7 +345,7 @@ class Agent:
                 delta = chunk.choices[0].delta
                 if delta.content:
                     content_parts.append(delta.content)
-                    yield TokenEvent(delta.content)
+                    yield TokenCallback(delta.content)
                 if delta.tool_calls:
                     for tc_delta in delta.tool_calls:
                         if tc_delta.id:
@@ -357,47 +446,48 @@ class Agent:
                     try:
                         arguments = json.loads(tc.function.arguments)
                     except json.JSONDecodeError as e:
-                        result = self._tool_handler.get_tool_result("", f"malformed JSON arguments: {e}", None)
-                        logger.error("[tool_result] %s -> %s", target, result.output)
+                        error_output = self._tool_handler.get_tool_result("", f"malformed JSON arguments: {e}", None).output
+                        logger.error("[tool_result] %s -> %s", target, error_output)
                         self._messages.append(
                             {
                                 "role": "tool",
                                 "tool_call_id": tc.id,
-                                "content": result.output,
+                                "content": error_output,
                             }
                         )
+                        call_key = f"{target}:{tc.function.arguments}"
+                        if call_key == last_fail_key:
+                            consecutive_failures += 1
+                        else:
+                            last_fail_key = call_key
+                            consecutive_failures = 1
                         continue
 
                     logger.debug("[tool_call] %s args=%s", target, arguments)
-                    yield ToolStartEvent(
-                        name=target,
-                        args=arguments,
+                    tc_cb = ToolCallback(
+                        message=tc.function.arguments,
+                        tool_name=target,
+                        tool_args=arguments,
+                        tool_call_id=tc.id,
                         description=self._get_tool_description(target),
                     )
+                    yield tc_cb
+                    await tc_cb.wait()  # blocks until set_response() is called
 
-                    start_time = time.monotonic()
-                    result = await self._tool_handler.execute(
-                        target,
-                        arguments,
-                        self._max_tool_output,
-                    )
-                    duration_ms = (time.monotonic() - start_time) * 1000
-
-                    logger.info("[tool_result] %s -> %s", target, result.output)
-                    yield ToolDoneEvent(name=target, output=result.output, is_error=result.is_error, duration_ms=duration_ms)
-
+                    result_output = tc_cb.output
+                    logger.info("[tool_result] %s -> %s", target, result_output)
                     self._messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": result.output,
+                            "content": result_output,
                         }
                     )
 
                     call_key = f"{target}:{tc.function.arguments}"
-                    if result.is_error and call_key == last_fail_key:
+                    if tc_cb.is_error and call_key == last_fail_key:
                         consecutive_failures += 1
-                    elif result.is_error:
+                    elif tc_cb.is_error:
                         last_fail_key = call_key
                         consecutive_failures = 1
                     else:
@@ -419,19 +509,29 @@ class Agent:
                 self._messages.append({"role": "assistant", "content": content})
                 logger.debug("[assistant]\n%s", content)
                 self._memory.store("agent", content)
-                yield DoneEvent(content=content)
+                yield MessageCallback(content)
                 return
 
     async def arun(self, user_input: str) -> str:
         """Send *user_input* to the LLM and return the assistant's final reply.
 
-        Convenience wrapper around :meth:`astream` that discards intermediate
-        events and returns the final text.
+        Executes tool calls inline using the configured tool handler.
+        Convenience wrapper for scripts and tests; use :class:`AgentManager`
+        for full streaming and display control.
         """
-        async for event in self.astream(user_input):
-            if isinstance(event, DoneEvent):
-                return event.content
+        async for cb in self.astream(user_input):
+            if isinstance(cb, ToolCallback):
+                result = await self._tool_handler.execute(
+                    cb.tool_name, cb.tool_args, self._max_tool_output
+                )
+                cb.set_response(result.output, is_error=result.is_error)
+            elif isinstance(cb, MessageCallback):
+                return cb.message
         return ""
+
+
+# Backward-compatible alias.
+Agent = AgenticLoop
 
 
 class SessionNotFoundError(Exception):
@@ -442,7 +542,7 @@ class AgentManager:
     def __init__(self, memory: MemoryProtocol, tool_handler: ToolHandlerProtocol) -> None:
         self._memory = memory
         self._tool_handler = tool_handler
-        self._sessions: dict[str, Agent] = {}
+        self._sessions: dict[str, AgenticLoop] = {}
 
     @staticmethod
     def get_session_id() -> str:
@@ -450,11 +550,11 @@ class AgentManager:
 
     def create_session(self, config: AgentConfig) -> str:
         session_id = self.get_session_id()
-        agent = Agent(config._replace(session_id=session_id), self._memory, self._tool_handler)
-        self._sessions[session_id] = agent
+        loop = AgenticLoop(config._replace(session_id=session_id), self._memory, self._tool_handler)
+        self._sessions[session_id] = loop
         return session_id
 
-    def get_agent(self, session_id: str) -> Agent:
+    def get_agent(self, session_id: str) -> AgenticLoop:
         try:
             return self._sessions[session_id]
         except KeyError:
@@ -465,23 +565,39 @@ class AgentManager:
         self._tool_handler.set_confirm(confirm)  # type: ignore[union-attr]
 
     async def arun_agent(self, session_id: str, message: str) -> str:
-        async for event in self.astream_agent(session_id, message):
-            if isinstance(event, DoneEvent):
-                return event.content
+        async for cb in self.astream_agent(session_id, message):
+            if isinstance(cb, MessageCallback):
+                return cb.message
         return ""
 
-    async def astream_agent(self, session_id: str, message: str) -> AsyncGenerator[AgentEvent, None]:
-        agent = self.get_agent(session_id)
-        async for event in agent.astream(message):
-            yield event
+    async def astream_agent(self, session_id: str, message: str) -> AsyncGenerator[CallBack, None]:
+        """Stream callbacks for one agent turn, executing tool calls along the way.
+
+        Yields each :class:`ToolCallback` twice: once before execution (``ready``
+        is False) and once after (``ready`` is True, ``output`` and ``is_error``
+        are populated).  All other callbacks are yielded once.
+        """
+        loop = self.get_agent(session_id)
+        async for cb in loop.astream(message):
+            if isinstance(cb, ToolCallback):
+                yield cb  # before: ready=False, show "tool starting"
+                start_time = time.monotonic()
+                result = await self._tool_handler.execute(
+                    cb.tool_name, cb.tool_args, loop._max_tool_output
+                )
+                cb.set_response(result.output, is_error=result.is_error)
+                cb.duration_ms = (time.monotonic() - start_time) * 1000
+                yield cb  # after: ready=True, show "tool done"
+            else:
+                yield cb
 
     def export_conversation(self, session_id: str) -> Path | None:
-        agent = self.get_agent(session_id)
-        if agent.messages:
-            return export_conversation(agent.messages, agent.model)
+        loop = self.get_agent(session_id)
+        if loop.messages:
+            return export_conversation(loop.messages, loop.model)
         return None
 
     def get_token_stats(self, session_id: str) -> dict:
         """Return aggregated token usage for *session_id*, or an empty dict when unavailable."""
-        agent = self.get_agent(session_id)
-        return agent._memory.get_session_stats(session_id)
+        loop = self.get_agent(session_id)
+        return loop._memory.get_session_stats(session_id)

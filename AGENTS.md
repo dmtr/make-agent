@@ -23,7 +23,8 @@ All tests live in `tests/`. End-to-end tests are marked `@pytest.mark.e2e` and s
 - Two skill modes: `python` (default) and `makefile`, selected via `--skill-mode`.
 - Per-project data lives in `~/.make-agent/<project-slug>/<mode>/` — never write to the repo at runtime.
 - Bundled system-prompt templates live in `make_agent/templates/<mode>/SYSTEM.md` and are copied to the mode dir on first run.
-- `settings.yaml` is not used — all configuration is via CLI flags.
 - `builtin_tool_names(mode)` returns the tool set for a given mode; file tools (`write_file`, `edit_file`) are makefile-only.
 - Ruff is the linter and formatter. Rule `E741` (ambiguous variable names) is ignored.
 - Always run `uv run pytest` and `uv run ruff check make_agent/` before finishing a change.
+- Always use CONSTANTS name with ALL_CAPS for global constants, no underscores at the constant beginning or end. For example: `MAX_RETRIES = 5`.
+
