@@ -1,13 +1,26 @@
-"""Tests for the trusted-skill confirmation mechanism in ToolHandler."""
+"""Tests for the trusted-skill confirmation mechanism."""
 
 from __future__ import annotations
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from make_agent.tool_handler.handler import ToolHandler, _SKILL_EXECUTION_TOOL
 from make_agent.tool_handler.runner import get_tool_result
 from make_agent.main import _parse_trusted_skills
+from make_agent.agent_core.agent import (
+    AgentManager,
+    AgenticLoop,
+    CallBack,
+    ConfirmEvent,
+    DoneEvent,
+    MessageCallback,
+    TokenCallback,
+    ToolCallback,
+    ToolDoneEvent,
+    ToolStartEvent,
+)
 
 
 # ── _parse_trusted_skills ──────────────────────────────────────────────────────
@@ -43,7 +56,7 @@ def test_parse_trusted_skills_all_case_insensitive():
     assert _parse_trusted_skills("ALL") == frozenset(["*"])
 
 
-# ── ToolHandler._is_trusted ────────────────────────────────────────────────────
+# ── ToolHandler.is_skill_trusted ───────────────────────────────────────────────
 
 
 def _make_handler(trusted_skills: frozenset[str] = frozenset()) -> ToolHandler:
@@ -61,38 +74,38 @@ def _make_handler(trusted_skills: frozenset[str] = frozenset()) -> ToolHandler:
 
 def test_is_trusted_empty_set():
     h = _make_handler(frozenset())
-    assert not h._is_trusted("web-fetch", "fetch")
+    assert not h.is_skill_trusted("web-fetch", "fetch")
 
 
 def test_is_trusted_specific_match():
     h = _make_handler(frozenset(["web-fetch"]))
-    assert h._is_trusted("web-fetch", "fetch")
-    assert not h._is_trusted("search", "query")
+    assert h.is_skill_trusted("web-fetch", "fetch")
+    assert not h.is_skill_trusted("search", "query")
 
 
 def test_is_trusted_wildcard():
     h = _make_handler(frozenset(["*"]))
-    assert h._is_trusted("web-fetch", "fetch")
-    assert h._is_trusted("any-skill", "run")
+    assert h.is_skill_trusted("web-fetch", "fetch")
+    assert h.is_skill_trusted("any-skill", "run")
 
 
 def test_is_trusted_dot_notation_specific_target():
     h = _make_handler(frozenset(["web.fetch"]))
-    assert h._is_trusted("web", "fetch")
-    assert not h._is_trusted("web", "search")
-    assert not h._is_trusted("other", "fetch")
+    assert h.is_skill_trusted("web", "fetch")
+    assert not h.is_skill_trusted("web", "search")
+    assert not h.is_skill_trusted("other", "fetch")
 
 
 def test_is_trusted_dot_notation_does_not_trust_whole_skill():
     h = _make_handler(frozenset(["web.fetch"]))
-    assert not h._is_trusted("web", "search")
+    assert not h.is_skill_trusted("web", "search")
 
 
 def test_is_trusted_skill_level_trusts_all_targets():
     h = _make_handler(frozenset(["web"]))
-    assert h._is_trusted("web", "fetch")
-    assert h._is_trusted("web", "search")
-    assert not h._is_trusted("other", "fetch")
+    assert h.is_skill_trusted("web", "fetch")
+    assert h.is_skill_trusted("web", "search")
+    assert not h.is_skill_trusted("other", "fetch")
 
 
 def test_is_trusted_backend_ast_trust():
@@ -104,7 +117,7 @@ def test_is_trusted_backend_ast_trust():
     memory = MagicMock()
     memory.store = MagicMock()
     h = ToolHandler(backend, memory, trusted_skills=frozenset())
-    assert h._is_trusted("web", "fetch")
+    assert h.is_skill_trusted("web", "fetch")
 
 
 def test_is_trusted_backend_ast_untrusted():
@@ -116,7 +129,7 @@ def test_is_trusted_backend_ast_untrusted():
     memory = MagicMock()
     memory.store = MagicMock()
     h = ToolHandler(backend, memory, trusted_skills=frozenset())
-    assert not h._is_trusted("web", "fetch")
+    assert not h.is_skill_trusted("web", "fetch")
 
 
 def test_is_trusted_backend_ast_none():
@@ -128,99 +141,130 @@ def test_is_trusted_backend_ast_none():
     memory = MagicMock()
     memory.store = MagicMock()
     h = ToolHandler(backend, memory, trusted_skills=frozenset())
-    assert not h._is_trusted("web", "fetch")
+    assert not h.is_skill_trusted("web", "fetch")
 
 
-# ── ToolHandler.execute — skill confirmation ───────────────────────────────────
+# ── AgentManager.astream_events — skill confirmation ──────────────────────────
 
 
-async def test_execute_skill_trusted_skips_confirm():
-    """Trusted skills execute without calling the confirm callback."""
-    handler = _make_handler(frozenset(["web-fetch"]))
-    confirm = AsyncMock(return_value=False)  # would deny if called
-    handler.set_confirm(confirm)
-
-    await handler.execute(
-        _SKILL_EXECUTION_TOOL,
-        {"name": "web-fetch", "target": "fetch_page", "kwargs": {}},
+def _make_tool_callback(
+    tool_name: str, tool_args: dict, tool_call_id: str = "tc-1"
+) -> ToolCallback:
+    return ToolCallback(
+        message="{}",
+        tool_name=tool_name,
+        tool_args=tool_args,
+        tool_call_id=tool_call_id,
+        description="",
     )
 
-    confirm.assert_not_called()
+
+async def _drain_events(manager: AgentManager, session_id: str, message: str) -> list:
+    """Collect all AgentEvents from one turn, auto-allowing any ConfirmEvent."""
+    events = []
+    async for event in manager.astream_events(session_id, message):
+        events.append(event)
+        if isinstance(event, ConfirmEvent):
+            event.allow()
+    return events
 
 
-async def test_execute_skill_untrusted_confirm_allowed():
-    """Untrusted skill executes when confirm returns True."""
-    handler = _make_handler(frozenset())
-    confirm = AsyncMock(return_value=True)
-    handler.set_confirm(confirm)
-
-    result = await handler.execute(
-        _SKILL_EXECUTION_TOOL,
-        {"name": "web-fetch", "target": "fetch_page", "kwargs": {"url": "http://x"}},
-    )
-
-    confirm.assert_awaited_once_with("web-fetch", "fetch_page", {"url": "http://x"})
-    assert not result.is_error
-
-
-async def test_execute_skill_untrusted_confirm_denied():
-    """Untrusted skill is blocked when confirm returns False."""
-    handler = _make_handler(frozenset())
-    confirm = AsyncMock(return_value=False)
-    handler.set_confirm(confirm)
-
-    result = await handler.execute(
-        _SKILL_EXECUTION_TOOL,
-        {"name": "web-fetch", "target": "fetch_page", "kwargs": {}},
-    )
-
-    confirm.assert_awaited_once()
-    assert result.is_error
-    assert "User denied execution" in result.output
-    assert "web-fetch/fetch_page" in result.output
-
-
-async def test_execute_skill_untrusted_no_confirm_callback_denies():
-    """When no confirm callback is set, untrusted skills are denied."""
-    handler = _make_handler(frozenset())
-    # no set_confirm called
-
-    result = await handler.execute(
-        _SKILL_EXECUTION_TOOL,
-        {"name": "web-fetch", "target": "fetch_page", "kwargs": {}},
-    )
-
-    assert result.is_error
-    assert "User denied execution" in result.output
-
-
-async def test_execute_skill_trust_all_skips_confirm():
-    """Wildcard trust skips confirmation for any skill."""
-    handler = _make_handler(frozenset(["*"]))
-    confirm = AsyncMock(return_value=False)
-    handler.set_confirm(confirm)
-
-    await handler.execute(
-        _SKILL_EXECUTION_TOOL,
-        {"name": "anything", "target": "do_it", "kwargs": {}},
-    )
-
-    confirm.assert_not_called()
-
-
-async def test_execute_non_skill_tool_bypasses_trust_check():
-    """Non-execute_skill tools are never gated by the trust mechanism."""
-    backend = MagicMock()
-    backend.schemas = []
-    backend.executors = {"list_skills": MagicMock(return_value="skill-list")}
-    backend.get_skill_trusted = MagicMock(return_value=None)
+def _make_manager_with_loop(cbs: list[CallBack], trusted_skills: frozenset[str] = frozenset()) -> tuple[AgentManager, str]:
+    """Create an AgentManager whose AgenticLoop yields *cbs* in order."""
     memory = MagicMock()
     memory.store = MagicMock()
-    handler = ToolHandler(backend, memory, trusted_skills=frozenset())
-    confirm = AsyncMock(return_value=False)
-    handler.set_confirm(confirm)
+    memory.record_token_usage = MagicMock()
+    memory.get_session_stats = MagicMock(return_value={})
 
-    result = await handler.execute("list_skills", {})
+    tool_handler = MagicMock()
+    tool_handler.is_skill_trusted = MagicMock(
+        side_effect=lambda skill, target: "*" in trusted_skills or skill in trusted_skills
+    )
+    tool_handler.execute = AsyncMock(return_value=get_tool_result("result-output", "", 0))
 
-    confirm.assert_not_called()
-    assert not result.is_error
+    manager = AgentManager(memory, tool_handler)
+    session_id = manager.get_session_id()
+
+    async def _fake_astream(msg: str):
+        for cb in cbs:
+            if isinstance(cb, ToolCallback):
+                yield cb
+                await cb.wait()
+            else:
+                yield cb
+
+    loop_mock = MagicMock(spec=AgenticLoop)
+    loop_mock.astream = _fake_astream
+    loop_mock._max_tool_output = 0
+    manager._sessions[session_id] = loop_mock
+    manager._tool_handler = tool_handler
+    return manager, session_id
+
+
+async def test_astream_events_token_and_done():
+    """TokenCallback → TokenEvent; MessageCallback → DoneEvent."""
+    cbs = [TokenCallback("hello "), TokenCallback("world"), MessageCallback("hello world")]
+    manager, sid = _make_manager_with_loop(cbs)
+    events = await _drain_events(manager, sid, "hi")
+    from make_agent.agent_core.agent import TokenEvent
+    assert [type(e).__name__ for e in events] == ["TokenEvent", "TokenEvent", "DoneEvent"]
+    assert events[0].text == "hello "
+    assert events[2].content == "hello world"
+
+
+async def test_astream_events_trusted_skill_no_confirm():
+    """Trusted skill executes without emitting ConfirmEvent."""
+    cb = _make_tool_callback("execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}})
+    cbs = [cb, MessageCallback("done")]
+    manager, sid = _make_manager_with_loop(cbs, trusted_skills=frozenset(["web-fetch"]))
+    events = await _drain_events(manager, sid, "go")
+    assert not any(isinstance(e, ConfirmEvent) for e in events)
+    assert any(isinstance(e, ToolStartEvent) for e in events)
+    assert any(isinstance(e, ToolDoneEvent) for e in events)
+
+
+async def test_astream_events_untrusted_skill_confirm_allowed():
+    """Untrusted skill emits ConfirmEvent; if allowed, tool executes."""
+    cb = _make_tool_callback("execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}})
+    cbs = [cb, MessageCallback("done")]
+    manager, sid = _make_manager_with_loop(cbs, trusted_skills=frozenset())
+
+    events: list = []
+    async for event in manager.astream_events(sid, "go"):
+        events.append(event)
+        if isinstance(event, ConfirmEvent):
+            event.allow()
+
+    assert any(isinstance(e, ConfirmEvent) for e in events)
+    assert any(isinstance(e, ToolStartEvent) for e in events)
+    assert any(isinstance(e, ToolDoneEvent) for e in events)
+    manager._tool_handler.execute.assert_awaited_once()
+
+
+async def test_astream_events_untrusted_skill_confirm_denied():
+    """Untrusted skill denied: tool is skipped, no ToolStartEvent/ToolDoneEvent."""
+    cb = _make_tool_callback("execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}})
+    cbs = [cb, MessageCallback("done")]
+    manager, sid = _make_manager_with_loop(cbs, trusted_skills=frozenset())
+
+    events: list = []
+    async for event in manager.astream_events(sid, "go"):
+        events.append(event)
+        if isinstance(event, ConfirmEvent):
+            event.deny()
+
+    assert any(isinstance(e, ConfirmEvent) for e in events)
+    assert not any(isinstance(e, ToolStartEvent) for e in events)
+    assert not any(isinstance(e, ToolDoneEvent) for e in events)
+    manager._tool_handler.execute.assert_not_awaited()
+
+
+async def test_astream_events_non_skill_tool_no_confirm():
+    """Non-execute_skill tools are never gated by the trust mechanism."""
+    cb = _make_tool_callback("list_skills", {"filter": ""})
+    cbs = [cb, MessageCallback("done")]
+    manager, sid = _make_manager_with_loop(cbs)
+    events = await _drain_events(manager, sid, "go")
+    assert not any(isinstance(e, ConfirmEvent) for e in events)
+    assert any(isinstance(e, ToolStartEvent) for e in events)
+    manager._tool_handler.is_skill_trusted.assert_not_called()

@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncGenerator, AsyncIterator, NamedTuple
 from uuid import uuid4
@@ -115,17 +115,16 @@ class ToolCallback(CallBack):
         await self._event.wait()
 
 
-# Deprecated event types kept for backward compatibility.
 @dataclass
 class TokenEvent:
-    """Deprecated: use TokenCallback."""
+    """A partial token streamed from the LLM."""
 
     text: str
 
 
 @dataclass
 class ToolStartEvent:
-    """Deprecated: use ToolCallback."""
+    """The LLM requested a tool call; execution is about to begin."""
 
     name: str
     args: dict
@@ -134,7 +133,7 @@ class ToolStartEvent:
 
 @dataclass
 class ToolDoneEvent:
-    """Deprecated: use ToolCallback (after set_response)."""
+    """A tool call completed."""
 
     name: str
     output: str
@@ -144,12 +143,37 @@ class ToolDoneEvent:
 
 @dataclass
 class DoneEvent:
-    """Deprecated: use MessageCallback."""
+    """The LLM produced a final text response (no tool calls)."""
 
     content: str
 
 
-AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent
+@dataclass
+class ConfirmEvent:
+    """An untrusted skill requires user confirmation before execution.
+
+    The manager awaits :meth:`wait` after yielding this event.  The shell
+    (or any consumer) must call :meth:`allow` or :meth:`deny` to unblock it.
+    """
+
+    skill_name: str
+    target: str
+    kwargs: dict
+    _future: asyncio.Future[bool] = field(default_factory=lambda: asyncio.get_event_loop().create_future(), repr=False)
+
+    def allow(self) -> None:
+        if not self._future.done():
+            self._future.set_result(True)
+
+    def deny(self) -> None:
+        if not self._future.done():
+            self._future.set_result(False)
+
+    async def wait(self) -> bool:
+        return await self._future
+
+
+AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent | ConfirmEvent
 
 
 class AgentConfig(NamedTuple):
@@ -560,36 +584,60 @@ class AgentManager:
         except KeyError:
             raise SessionNotFoundError(f"Session with id {session_id} not found.")
 
-    def set_confirm_callback(self, confirm: Any) -> None:
-        """Register a skill-execution confirmation callback on the tool handler."""
-        self._tool_handler.set_confirm(confirm)  # type: ignore[union-attr]
-
     async def arun_agent(self, session_id: str, message: str) -> str:
-        async for cb in self.astream_agent(session_id, message):
-            if isinstance(cb, MessageCallback):
-                return cb.message
+        """Run one agent turn and return the final reply text."""
+        async for event in self.astream_events(session_id, message):
+            if isinstance(event, DoneEvent):
+                return event.content
         return ""
 
-    async def astream_agent(self, session_id: str, message: str) -> AsyncGenerator[CallBack, None]:
-        """Stream callbacks for one agent turn, executing tool calls along the way.
+    async def astream_events(
+        self, session_id: str, message: str
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Stream :class:`AgentEvent` objects for one agent turn.
 
-        Yields each :class:`ToolCallback` twice: once before execution (``ready``
-        is False) and once after (``ready`` is True, ``output`` and ``is_error``
-        are populated).  All other callbacks are yielded once.
+        Tool execution and skill confirmation are handled internally.
+        Yields :class:`ConfirmEvent` for untrusted skills — the consumer must
+        call :meth:`~ConfirmEvent.allow` or :meth:`~ConfirmEvent.deny` to
+        unblock the generator.
         """
         loop = self.get_agent(session_id)
         async for cb in loop.astream(message):
-            if isinstance(cb, ToolCallback):
-                yield cb  # before: ready=False, show "tool starting"
+            if isinstance(cb, TokenCallback):
+                yield TokenEvent(text=cb.message)
+            elif isinstance(cb, MessageCallback):
+                yield DoneEvent(content=cb.message)
+            elif isinstance(cb, ToolCallback):
+                if cb.tool_name == "execute_skill":
+                    skill_name = cb.tool_args.get("name", "")
+                    target = cb.tool_args.get("target") or cb.tool_args.get("command", "")
+                    if not self._tool_handler.is_skill_trusted(skill_name, target):
+                        kwargs = cb.tool_args.get("kwargs") or {}
+                        confirm = ConfirmEvent(skill_name=skill_name, target=target, kwargs=kwargs)
+                        yield confirm
+                        allowed = await confirm.wait()
+                        if not allowed:
+                            denial = f"User denied execution of '{skill_name}/{target}'"
+                            cb.set_response(denial)
+                            continue
+                yield ToolStartEvent(
+                    name=cb.tool_name,
+                    args=cb.tool_args,
+                    description=cb.description,
+                )
                 start_time = time.monotonic()
                 result = await self._tool_handler.execute(
                     cb.tool_name, cb.tool_args, loop._max_tool_output
                 )
                 cb.set_response(result.output, is_error=result.is_error)
-                cb.duration_ms = (time.monotonic() - start_time) * 1000
-                yield cb  # after: ready=True, show "tool done"
-            else:
-                yield cb
+                duration_ms = (time.monotonic() - start_time) * 1000
+                cb.duration_ms = duration_ms
+                yield ToolDoneEvent(
+                    name=cb.tool_name,
+                    output=result.output,
+                    is_error=result.is_error,
+                    duration_ms=duration_ms,
+                )
 
     def export_conversation(self, session_id: str) -> Path | None:
         loop = self.get_agent(session_id)

@@ -9,24 +9,17 @@ from typing import Any
 
 from make_agent.agent_core import (
     AgentManager,
-    MessageCallback,
-    TokenCallback,
-    ToolCallback,
+    ConfirmEvent,
+    DoneEvent,
+    TokenEvent,
+    ToolDoneEvent,
+    ToolStartEvent,
 )
 from make_agent.tool_display import ToolDisplayFormatter
 
 
-async def _confirm_skill(skill_name: str, target: str, kwargs: dict) -> bool:
-    """Prompt the user to allow or deny a skill execution. Returns True to allow."""
-    loop = asyncio.get_running_loop()
-    args_repr = ", ".join(f"{k}={v!r}" for k, v in (kwargs or {}).items())
-    prompt = f"\nAllow {skill_name}/{target}({args_repr})? [y/N] "
-    answer = await loop.run_in_executor(None, input, prompt)
-    return answer.strip().lower() in ("y", "yes")
-
-
 class MakeAgentShell:
-    """Async interactive REPL that delegates all LLM interaction to an :class:`Agent`."""
+    """Async interactive REPL that delegates all LLM interaction to an :class:`AgentManager`."""
 
     prompt = "make-agent> "
 
@@ -101,20 +94,28 @@ class MakeAgentShell:
 
     async def _stream_turn(self, message: str) -> None:
         """Stream one agent turn, printing events as they arrive."""
-        async for cb in self._agent_manager.astream_agent(self._session_id, message):
-            if isinstance(cb, TokenCallback):
-                print(cb.message, end="", flush=True)
-            elif isinstance(cb, ToolCallback):
-                formatter = ToolDisplayFormatter()
-                if not cb.ready:
-                    print(f"\n{formatter.format_start(cb.tool_name, cb.tool_args)}", flush=True)
-                    if cb.description:
-                        print(f"  {cb.description}\n", flush=True)
-                else:
-                    output_preview = cb.output[:200] if cb.output else "(no output)"
-                    print(f"{formatter.format_done(cb.tool_name, output_preview, cb.is_error, cb.duration_ms)}", flush=True)
-            elif isinstance(cb, MessageCallback):
+        loop = asyncio.get_running_loop()
+        formatter = ToolDisplayFormatter()
+        async for event in self._agent_manager.astream_events(self._session_id, message):
+            if isinstance(event, TokenEvent):
+                print(event.text, end="", flush=True)
+            elif isinstance(event, ToolStartEvent):
+                print(f"\n{formatter.format_start(event.name, event.args)}", flush=True)
+                if event.description:
+                    print(f"  {event.description}\n", flush=True)
+            elif isinstance(event, ToolDoneEvent):
+                output_preview = event.output[:200] if event.output else "(no output)"
+                print(f"{formatter.format_done(event.name, output_preview, event.is_error, event.duration_ms)}", flush=True)
+            elif isinstance(event, DoneEvent):
                 print()  # trailing newline after streamed content
+            elif isinstance(event, ConfirmEvent):
+                args_repr = ", ".join(f"{k}={v!r}" for k, v in event.kwargs.items())
+                prompt = f"\nAllow {event.skill_name}/{event.target}({args_repr})? [y/N] "
+                answer = await loop.run_in_executor(None, input, prompt)
+                if answer.strip().lower() in ("y", "yes"):
+                    event.allow()
+                else:
+                    event.deny()
 
     async def _run_turn(self, message: str) -> None:
         """Run one agent turn with per-turn Ctrl-C cancellation."""
@@ -135,7 +136,6 @@ class MakeAgentShell:
     async def run(self) -> None:
         """Start the interactive REPL loop."""
         self._setup_readline()
-        self._agent_manager.set_confirm_callback(_confirm_skill)
         loop = asyncio.get_running_loop()
         print("Type your message. Prefix shell commands with /  " "(e.g. /exit, /help). Press Ctrl-D or Ctrl-C twice to exit.\n")
         while True:

@@ -29,7 +29,7 @@ class MemoryProtocol(Protocol):
 
 
 class ToolHandlerProtocol(Protocol):
-    """Minimal tool-dispatch interface consumed by Agent."""
+    """Minimal tool-dispatch interface consumed by Agent and AgentManager."""
 
     @property
     def tool_names(self) -> Iterable[str]: ...
@@ -51,3 +51,5 @@ class ToolHandlerProtocol(Protocol):
         exit_code: int | None,
         max_output: int = 0,
     ) -> ToolExecutionResult: ...
+
+    def is_skill_trusted(self, skill_name: str, target: str) -> bool: ...

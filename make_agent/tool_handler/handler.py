@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from make_agent.memory import MEMORY_SCHEMAS, Memory, get_memory_executors
 from make_agent.skill_backend import SkillBackend
@@ -14,8 +14,6 @@ from .runner import ToolExecutionResult, get_tool_result
 logger = logging.getLogger(__name__)
 
 _SKILL_EXECUTION_TOOL = "execute_skill"
-
-ConfirmCallback = Callable[[str, str, dict], Awaitable[bool]]
 
 
 class ToolHandler:
@@ -53,15 +51,11 @@ class ToolHandler:
         }
         self._backend = backend
         self._trusted_skills = trusted_skills
-        self._confirm: ConfirmCallback | None = None
 
     get_tool_result = staticmethod(get_tool_result)
 
-    def set_confirm(self, confirm: ConfirmCallback) -> None:
-        """Register an async callback invoked before executing an untrusted skill."""
-        self._confirm = confirm
-
-    def _is_trusted(self, skill_name: str, target: str) -> bool:
+    def is_skill_trusted(self, skill_name: str, target: str) -> bool:
+        """Return True if *skill_name*/*target* may execute without user confirmation."""
         if "*" in self._trusted_skills:
             return True
         if f"{skill_name}.{target}" in self._trusted_skills:
@@ -98,18 +92,6 @@ class ToolHandler:
         max_output: int = 0,
     ) -> ToolExecutionResult:
         """Route *name* to its executor and return a :class:`ToolExecutionResult`."""
-        if name == _SKILL_EXECUTION_TOOL:
-            skill_name = arguments.get("name", "")
-            target = arguments.get("target") or arguments.get("command", "")
-            if not self._is_trusted(skill_name, target):
-                kwargs = arguments.get("kwargs") or {}
-                if self._confirm is not None:
-                    allowed = await self._confirm(skill_name, target, kwargs)
-                else:
-                    allowed = False
-                if not allowed:
-                    denial = f"User denied execution of '{skill_name}/{target}'"
-                    return get_tool_result("", denial, None)
         if name not in self._executors:
             return get_tool_result("", f"unknown tool: {name}", None)
         try:
