@@ -7,7 +7,6 @@ import subprocess
 import sys
 from unittest.mock import patch
 
-import pytest
 
 import make_agent.main as main_module
 from make_agent.builtin_tools import builtin_tool_names

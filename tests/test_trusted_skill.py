@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from make_agent.tool_handler.handler import ToolHandler, _SKILL_EXECUTION_TOOL
+from make_agent.tool_handler.handler import ToolHandler
 from make_agent.tool_handler.runner import get_tool_result
 from make_agent.main import _parse_trusted_skills
 from make_agent.agent_core import (
@@ -14,10 +12,8 @@ from make_agent.agent_core import (
     AgenticLoop,
     CallBack,
     ConfirmEvent,
-    DoneEvent,
     MessageCallback,
     TokenCallback,
-    TokenEvent,
     ToolCallback,
     ToolDoneEvent,
     ToolStartEvent,
@@ -66,7 +62,6 @@ def _make_handler(trusted_skills: frozenset[str] = frozenset()) -> ToolHandler:
     backend.executors = {}
     memory = MagicMock()
     memory.store = MagicMock()
-    from make_agent.memory import MEMORY_SCHEMAS, get_memory_executors
     backend.schemas = []
     backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
     backend.get_skill_trusted = MagicMock(return_value=None)

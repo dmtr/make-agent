@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from make_agent.agent_core import (
-    AgentConfig,
     AgentManager,
     DoneEvent,
     MessageCallback,
@@ -15,7 +13,6 @@ from make_agent.agent_core import (
     TokenCallback,
     TokenEvent,
     UsageCallback,
-    UsageEvent,
 )
 from make_agent.agent_core.middleware import MiddlewareBase, Request, Response
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from make_agent.skill_registry import _ast_trust_check
 
