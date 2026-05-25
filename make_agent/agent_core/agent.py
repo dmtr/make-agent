@@ -2,13 +2,33 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import AsyncIterator, Callable
 from uuid import uuid4
 
 from make_agent.protocols import ToolHandlerProtocol
 
+from .bridge import (
+    ApprovalRequested,
+    CancelTurn,
+    DenySkill,
+    ApproveSkill,
+    ManagerError,
+    ShellCommand,
+    ShellEvent,
+    Shutdown,
+    StartTurn,
+    StatusChanged,
+    ToolFinished,
+    ToolStarted,
+    TokenEmitted,
+    TurnCancelled,
+    TurnFinished,
+    TurnStarted,
+)
 from .events import AgentEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import export_conversation
 from .loop import AgentConfig, AgenticLoop, MessageCallback, TokenCallback, ToolCallback, UsageCallback
@@ -168,3 +188,144 @@ class AgentManager:
             if isinstance(mw, SessionMiddleware):
                 return mw._memory.get_session_stats(session_id)
         return {}
+
+    # ── queue bridge ──────────────────────────────────────────────────────────
+
+    async def run_shell_bridge(
+        self,
+        session_id: str,
+        command_queue: asyncio.Queue[ShellCommand],
+        event_queue: asyncio.Queue[ShellEvent],
+    ) -> None:
+        """Run the manager-owned bridge that mediates between the shell and a session.
+
+        Reads :class:`ShellCommand` items from *command_queue* and writes
+        :class:`ShellEvent` items to *event_queue*.  Runs until a
+        :class:`Shutdown` command is received.
+
+        Only one active turn per session is allowed.  A :class:`StartTurn`
+        received while a turn is running is rejected with a
+        :class:`ManagerError`.
+        """
+        active_turn_task: asyncio.Task[None] | None = None
+        pending_approvals: dict[str, asyncio.Future[bool]] = {}
+
+        while True:
+            cmd = await command_queue.get()
+
+            if isinstance(cmd, Shutdown):
+                if active_turn_task and not active_turn_task.done():
+                    active_turn_task.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await active_turn_task
+                break
+
+            elif isinstance(cmd, StartTurn):
+                if active_turn_task and not active_turn_task.done():
+                    await event_queue.put(
+                        ManagerError(
+                            message="Turn already active; send CancelTurn first",
+                            turn_id=cmd.turn_id,
+                        )
+                    )
+                    continue
+                active_turn_task = asyncio.create_task(
+                    self._execute_bridge_turn(
+                        session_id,
+                        cmd.message,
+                        cmd.turn_id,
+                        event_queue,
+                        pending_approvals,
+                    )
+                )
+
+            elif isinstance(cmd, CancelTurn):
+                if active_turn_task and not active_turn_task.done():
+                    active_turn_task.cancel()
+                else:
+                    await event_queue.put(ManagerError(message="No active turn to cancel"))
+
+            elif isinstance(cmd, (ApproveSkill, DenySkill)):
+                future = pending_approvals.pop(cmd.request_id, None)
+                if future and not future.done():
+                    future.set_result(isinstance(cmd, ApproveSkill))
+                else:
+                    await event_queue.put(
+                        ManagerError(message=f"Unknown approval request: {cmd.request_id}")
+                    )
+
+    async def _execute_bridge_turn(
+        self,
+        session_id: str,
+        message: str,
+        turn_id: str,
+        event_queue: asyncio.Queue[ShellEvent],
+        pending_approvals: dict[str, asyncio.Future[bool]],
+    ) -> None:
+        """Stream one agent turn, translating AgentEvents into ShellEvents."""
+        await event_queue.put(StatusChanged(is_busy=True))
+        await event_queue.put(TurnStarted(turn_id=turn_id))
+        current_tool_id: str | None = None
+        content = ""
+        try:
+            async for event in self.astream_events(session_id, message):
+                if isinstance(event, TokenEvent):
+                    await event_queue.put(TokenEmitted(turn_id=turn_id, text=event.text))
+                elif isinstance(event, ToolStartEvent):
+                    current_tool_id = str(uuid4())
+                    await event_queue.put(
+                        ToolStarted(
+                            turn_id=turn_id,
+                            tool_id=current_tool_id,
+                            name=event.name,
+                            args=event.args,
+                            description=event.description,
+                        )
+                    )
+                elif isinstance(event, ToolDoneEvent):
+                    await event_queue.put(
+                        ToolFinished(
+                            turn_id=turn_id,
+                            tool_id=current_tool_id or "",
+                            name=event.name,
+                            output=event.output,
+                            is_error=event.is_error,
+                            duration_ms=event.duration_ms,
+                        )
+                    )
+                    current_tool_id = None
+                elif isinstance(event, DoneEvent):
+                    content = event.content
+                elif isinstance(event, ConfirmEvent):
+                    request_id = str(uuid4())
+                    loop = asyncio.get_running_loop()
+                    approval_future: asyncio.Future[bool] = loop.create_future()
+                    pending_approvals[request_id] = approval_future
+                    await event_queue.put(
+                        ApprovalRequested(
+                            request_id=request_id,
+                            turn_id=turn_id,
+                            skill_name=event.skill_name,
+                            target=event.target,
+                            kwargs=event.kwargs,
+                        )
+                    )
+                    allowed = await approval_future
+                    if allowed:
+                        event.allow()
+                    else:
+                        event.deny()
+        except asyncio.CancelledError:
+            for fut in list(pending_approvals.values()):
+                if not fut.done():
+                    fut.cancel()
+            pending_approvals.clear()
+            await event_queue.put(TurnCancelled(turn_id=turn_id))
+            await event_queue.put(StatusChanged(is_busy=False))
+            raise
+        except Exception as exc:
+            await event_queue.put(ManagerError(turn_id=turn_id, message=str(exc)))
+            await event_queue.put(StatusChanged(is_busy=False))
+        else:
+            await event_queue.put(TurnFinished(turn_id=turn_id, content=content))
+            await event_queue.put(StatusChanged(is_busy=False))
