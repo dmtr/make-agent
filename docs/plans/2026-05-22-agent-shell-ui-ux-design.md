@@ -32,35 +32,47 @@ while creating a path toward a richer terminal workspace.
 2. Minimal noise by default: summarize first, expand details on demand.
 3. Stable layout: a turn should keep the same visual anatomy while streaming.
 4. One session focus: optimize for the live conversation before adding session management.
-5. Shared primitives: Quick mode and Workspace mode should reuse the same components and
-   event model.
+5. Command-bar model: the composer lives at the top; the transcript flows below it.
 
-## Product shape
+## Layout
 
-The shell should evolve into a dual-mode experience:
+The shell uses a single three-region layout:
 
-- **Quick mode** is the default. It remains a single-column REPL, but with clearer turn
-  structure, better input ergonomics, stronger state visibility, and improved approvals.
-- **Workspace mode** is an expanded full-screen view for longer or tool-heavy sessions.
-  It should use the same underlying session and the same interaction semantics as Quick
-  mode, but with more screen real estate and more explicit secondary surfaces.
+```
+┌──────────────────────────────────────────────┐
+│ GEMMA │ tokens: 4,521 │ ● STREAMING          │  ← header
+├──────────────────────────────────────────────┤
+│ > _                                          │  ← composer
+├──────────────────────────────────────────────┤
+│                                              │
+│  transcript (scrollable)                     │  ← transcript
+│                                              │
+└──────────────────────────────────────────────┘
+```
 
-This keeps the shell accessible to new users while giving advanced users a denser and
-more inspectable interface when they need it.
+**Header** (1 line): model name, cumulative token count, live status indicator.
+Status values: `○ IDLE`, `● STREAMING`, `◉ TOOL: <name>`, `⏸ AWAITING APPROVAL`,
+`✗ FAILED`, `✗ CANCELLED`. No separate alert counter.
 
-## Quick mode v1
+**Composer** (1–3 lines): input at the top, below the header. This is a command-bar
+interaction model — the user issues tasks from the top and reads results below. Supports
+multiline entry via Alt+Enter. Slash-command ghost text fades in when idle (e.g.
+`/exit  /stats  /export`). While the agent is running the composer dims and shows
+`● working…`; Ctrl-C cancels the current turn.
 
-Quick mode v1 should be the first shipping slice. It should improve the current REPL
-without turning it into a full terminal UI. The recommended scope is:
+**Transcript** (remaining height, scrollable): the single surface for all events —
+user turns, agent responses, tool rows, inline alerts, and approval cards. Auto-scrolls
+to the latest line at all times.
 
+## First implementation slice
+
+The recommended scope for the first shipping slice:
+
+- Three-region `prompt_toolkit` layout.
 - Structured turn rendering.
 - Better composer behavior and command discovery.
 - Clear agent state in the shell chrome.
 - Inline approval cards instead of raw yes/no prompts.
-- A lightweight command palette for high-value actions.
-
-Quick mode v1 should remain single-column and transcript-first. Panes, side rails,
-timeline views, and advanced workspace layout should come later.
 
 ## Structured turn rendering
 
@@ -113,30 +125,37 @@ observability when the user wants it.
 
 ## Composer and command discovery
 
-The input area should feel more like a small editor than a plain input line. Quick mode
-should preserve multiline entry while adding:
+The input area should feel more like a small editor than a plain input line. The
+composer should preserve multiline entry while adding:
 
 - Draft persistence for the current session
 - Placeholder hints for key shortcuts
-- Better slash-command discovery
-- A command palette for high-value actions such as help, export, stats, search current
-  transcript, and jump to the latest tool result
+- Better slash-command discovery via `WordCompleter`
 
 Hints should be contextual and unobtrusive. New users need discoverability, but regular
-users should not be slowed down by persistent instructional noise.
+users should not be slowed down by persistent instructional noise. A command palette
+widget is not required; ghost-text hints and completion cover the discoverability problem
+with far less complexity.
 
 ## Approvals and safety prompts
 
-The shell should replace raw `Allow X? [y/N]` prompts with lightweight approval cards.
-Each approval should show:
+The shell should replace raw `Allow X? [y/N]` prompts with lightweight inline approval
+cards. Each card appears in the transcript at the point where the agent paused. It shows:
 
 - Requested skill or action
-- Relevant arguments or scope
-- A simple risk label when applicable
-- Clear actions such as approve once, always trust, deny, and view details
 
-In Quick mode this remains inline. In Workspace mode the same approval model can move
-into a dedicated queue without changing the semantics.
+Clear actions: approve (`y`) or deny (`n`).
+
+While a card is visible the header shows `⏸ AWAITING APPROVAL` and the `y`/`n` key
+bindings are intercepted by the card. The composer dims. Resolving the card restores
+normal focus.
+
+Resolved cards collapse to a single audit line in the transcript:
+`✓ shell.execute approved` or `✗ shell.execute denied`.
+
+Alerts (harness warnings, auto-compact notices, etc.) appear as inline events in the
+transcript stream — not in a fixed alert bar. This keeps the layout free of persistent
+dead rows and keeps alerts contextual to where they occurred.
 
 ## Onboarding and confidence signals
 
@@ -144,29 +163,11 @@ The shell should make the current state of the interaction obvious at all times.
 should not have to guess whether the agent is still responding, is waiting on a tool, is
 blocked on approval, or has finished.
 
-Quick mode should include:
+The shell should include:
 
-- A clearer startup surface with model, skill mode, key shortcuts, and the main commands
-- A compact status line with model, active tool, and current shell state
-- Elapsed-time feedback for long-running work
+- A compact header with model, token count, and current shell state
+- Elapsed-time feedback in the turn footer for long-running work
 - Explicit messaging when a turn is waiting, retrying, cancelled, or done
-
-This is more important than session resume for now. The immediate UX priority is helping
-users stay oriented inside the live conversation.
-
-## Workspace mode direction
-
-Workspace mode should build on the same primitives as Quick mode rather than becoming a
-separate shell. It should expand the current session into a richer terminal layout with:
-
-- Transcript pane
-- Tool activity pane
-- Approval queue
-- Status and context area
-- Space for pinned items or turn navigation within the current session
-
-Workspace mode should only be introduced after Quick mode has a solid event-driven
-rendering model and stronger interaction primitives.
 
 ## UI architecture
 
@@ -177,7 +178,6 @@ The shell UI should be built from reusable primitives:
 - Tool Feed
 - Approval Queue
 - Status Bar
-- Command Palette
 
 Both shell modes should consume the same normalized event stream. Useful event types
 include:
@@ -210,19 +210,18 @@ appropriate recovery path, such as retry turn, inspect tool output, or dismiss.
 
 Recommended implementation order:
 
-1. Introduce event-driven turn rendering and stable turn containers.
-2. Add compact tool rows and collapsed output behavior.
-3. Improve the composer and add command discovery.
-4. Replace raw confirmations with approval cards.
-5. Polish Quick mode chrome and state visibility.
-6. Add Workspace mode on top of the same primitives.
+1. Three-region `prompt_toolkit` layout (header, composer, transcript pane).
+2. Structured turn rendering with user header box and turn footer.
+3. Compact tool rows with state transitions.
+4. Inline alert rendering.
+5. Inline approval cards with focus interception.
+6. Composer state (idle / working / cancelled) and ghost-text hints.
 
 ## Success criteria
 
-Quick mode v1 is successful if:
+The shell is successful if:
 
 - A new user can understand what the shell is doing without relying on `/help`.
 - A regular user can follow long turns with less scroll fatigue.
 - Tool-heavy turns stay readable because tool output is summarized first.
 - Approval prompts feel safe and informative instead of disruptive.
-- The shell gains the structural primitives needed for Workspace mode later.
