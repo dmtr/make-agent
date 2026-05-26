@@ -128,6 +128,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
             max_tokens=args.max_tokens,
             reasoning_effort=args.reasoning_effort,
             use_prompt_cache=args.prompt_cache,
+            max_messages_to_display=args.max_messages_to_display,
         )
     )
 
@@ -242,66 +243,17 @@ def main() -> None:
         default=DEFAULT_USE_PROMPT_CACHE,
         help="Enable prompt caching for the system prompt (Anthropic models only)",
     )
-    parser.add_argument("--model", default=None, metavar="MODEL", help=argparse.SUPPRESS)
-    legacy_system_g = parser.add_mutually_exclusive_group()
-    legacy_system_g.add_argument("--system", default=None, metavar="PROMPT", help=argparse.SUPPRESS)
-    legacy_system_g.add_argument("--system-file", default=None, metavar="FILE", help=argparse.SUPPRESS)
-    legacy_prompt_g = parser.add_mutually_exclusive_group()
-    legacy_prompt_g.add_argument("--prompt", default=None, metavar="PROMPT", help=argparse.SUPPRESS)
-    legacy_prompt_g.add_argument("--prompt-file", default=None, metavar="FILE", help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--loglevel",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        default="INFO",
-        metavar="LEVEL",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument("--max-retries", type=int, default=5, metavar="N", help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--tool-timeout",
+    run_p.add_argument(
+        "--max-messages-to-display",
         type=int,
-        default=600,
-        metavar="SECONDS",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--skill-mode",
-        choices=_SKILL_MODES,
-        default="python",
-        metavar="MODE",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument("--skills-dir", default=None, metavar="DIR", help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--max-tool-output",
-        type=int,
-        default=DEFAULT_MAX_TOOL_OUTPUT,
-        metavar="CHARS",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--max-tokens",
-        type=int,
-        default=DEFAULT_MAX_TOKENS,
+        default=10,
         metavar="N",
-        help=argparse.SUPPRESS,
+        help="Number of transcript messages shown (most recent first, default: 10)",
     )
-    parser.add_argument("--disable-builtin-tools", default=None, metavar="TOOLS", help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--reasoning-effort",
-        choices=_REASONING_EFFORT_VALUES,
-        default="medium",
-        metavar="EFFORT",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument("--trusted-skills", default=None, metavar="SKILLS", help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--prompt-cache",
-        action="store_true",
-        default=DEFAULT_USE_PROMPT_CACHE,
-        help=argparse.SUPPRESS,
-    )
-    args = parser.parse_args()
+    raw = sys.argv[1:]
+    if not raw or raw[0] not in ("run", "-h", "--help"):
+        raw = ["run"] + raw
+    args = parser.parse_args(raw)
     _init_logging(args.loglevel)
     _cmd_run(args)
 

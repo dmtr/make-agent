@@ -47,6 +47,9 @@ from make_agent.agent_core import (
     TurnStarted,
 )
 
+MAX_MESSAGES_TO_DISPLAY = 10
+TRANSCRIPT_SEPARATOR = "  " + "─" * 72
+
 # ── status / enums ──────────────────────────────────────────────────────────────
 
 
@@ -209,6 +212,8 @@ class ShellState:
         self.current_turn: Optional[TurnBlock] = None
         self.pending_approval: Optional[ApprovalCard] = None
         self._approval_future: Optional[asyncio.Future[bool]] = None
+        self.transcript_focused: bool = False
+        self.selected_message_idx: int = 0
 
     def new_turn(self, message: str) -> TurnBlock:
         turn = TurnBlock(user_message=message)
@@ -250,10 +255,12 @@ class MakeAgentShell:
         session_id: str,
         model: str,
         history_path: Path,
+        max_messages_to_display: int = MAX_MESSAGES_TO_DISPLAY,
     ) -> None:
         self._agent_manager = agent_manager
         self._session_id = session_id
         self._history_path = history_path
+        self._max_messages_to_display = max_messages_to_display
         self._command_queue: asyncio.Queue[ShellCommand] = asyncio.Queue()
         self._event_queue: asyncio.Queue[ShellEvent] = asyncio.Queue()
         self._state = ShellState(model=model)
@@ -285,17 +292,40 @@ class MakeAgentShell:
         ]
 
     def _render_transcript(self) -> str:
-        return "\n".join(item.render() for item in self._state.transcript)
+        items = list(reversed(self._state.transcript[-self._max_messages_to_display:]))
+        sep = "\n" + TRANSCRIPT_SEPARATOR + "\n"
+        parts = []
+        for i, item in enumerate(items):
+            rendered = item.render()
+            if self._state.transcript_focused and i == self._state.selected_message_idx:
+                lines = rendered.split("\n")
+                for j, line in enumerate(lines):
+                    if line.startswith("  "):
+                        lines[j] = "► " + line[2:]
+                        break
+                rendered = "\n".join(lines)
+            parts.append(rendered)
+        return sep.join(parts)
+
+    def _transcript_cursor_offset(self, items: list) -> int:
+        """Character offset of the selected message in the rendered transcript."""
+        sep = "\n" + TRANSCRIPT_SEPARATOR + "\n"
+        idx = min(self._state.selected_message_idx, max(0, len(items) - 1))
+        offset = 0
+        for i in range(idx):
+            offset += len(items[i].render()) + len(sep)
+        return offset
 
     def _refresh(self) -> None:
         """Update the transcript area text and invalidate the app."""
         if self._transcript_area is not None:
             text = self._render_transcript()
             self._transcript_area.text = text
-            # Auto-scroll to bottom
-            self._transcript_area.buffer.cursor_position = len(
-                self._transcript_area.buffer.text
-            )
+            if self._state.transcript_focused:
+                items = list(reversed(self._state.transcript[-self._max_messages_to_display:]))
+                self._transcript_area.buffer.cursor_position = self._transcript_cursor_offset(items)
+            else:
+                self._transcript_area.buffer.cursor_position = 0
         if self._app is not None:
             self._app.invalidate()
 
@@ -334,20 +364,25 @@ class MakeAgentShell:
             lambda: state._approval_future is not None
             and not (state._approval_future.done() if state._approval_future else True)
         )
+        transcript_focus_active = Condition(lambda: state.transcript_focused)
         hint_control = FormattedTextControl(
             lambda: (
-                [("class:hint.approval", "  [Y] approve   [N] deny")]
-                if approval_active()
+                [("class:hint.transcript", "  ► TRANSCRIPT  [ prev message   ] next   Ctrl+T back to input")]
+                if state.transcript_focused
                 else (
-                    [("class:hint.busy", "  ● working…  (Ctrl-C cancels the current turn)")]
-                    if state.status != AgentStatus.IDLE
-                    else [
-                        (
-                            "class:hint",
-                            "  /exit  /stats  /export  /help"
-                            "   │  Alt+Enter for newlines  │  Ctrl-C exits",
-                        )
-                    ]
+                    [("class:hint.approval", "  [Y] approve   [N] deny")]
+                    if approval_active()
+                    else (
+                        [("class:hint.busy", "  ● working…  (Ctrl-C cancels the current turn)")]
+                        if state.status != AgentStatus.IDLE
+                        else [
+                            (
+                                "class:hint",
+                                "  /exit  /stats  /export  /help"
+                                "   │  Alt+Enter for newlines  │  Ctrl+T transcript  │  Ctrl-C exits",
+                            )
+                        ]
+                    )
                 )
             )
         )
@@ -373,7 +408,7 @@ class MakeAgentShell:
 
         @kb.add("enter")
         def _on_enter(event) -> None:
-            if state.status != AgentStatus.IDLE:
+            if state.status != AgentStatus.IDLE or state.transcript_focused:
                 return
             text = composer_input.text.strip()
             if not text:
@@ -390,12 +425,15 @@ class MakeAgentShell:
 
         @kb.add("escape", "enter")
         def _on_alt_enter(event) -> None:
-            if state.status == AgentStatus.IDLE:
+            if state.status == AgentStatus.IDLE and not state.transcript_focused:
                 composer_input.buffer.insert_text("\n")
 
         @kb.add("c-c", eager=True)
         def _on_ctrl_c(event) -> None:
-            if state.status != AgentStatus.IDLE:
+            if state.transcript_focused:
+                state.transcript_focused = False
+                self._refresh()
+            elif state.status != AgentStatus.IDLE:
                 asyncio.ensure_future(self._command_queue.put(CancelTurn()))
             elif not event.app.current_buffer.text:
                 event.app.exit()
@@ -410,6 +448,30 @@ class MakeAgentShell:
             else:
                 # Buffer has text: delete character under cursor (emacs C-d behaviour)
                 event.app.current_buffer.delete()
+
+        @kb.add("c-t")
+        def _on_ctrl_t(event) -> None:
+            if state.transcript_focused:
+                state.transcript_focused = False
+            else:
+                items = list(reversed(state.transcript[-self._max_messages_to_display:]))
+                if items:
+                    state.transcript_focused = True
+                    state.selected_message_idx = 0
+            self._refresh()
+
+        @kb.add("]", filter=transcript_focus_active)
+        def _on_next_message(event) -> None:
+            items = list(reversed(state.transcript[-self._max_messages_to_display:]))
+            state.selected_message_idx = min(
+                state.selected_message_idx + 1, max(0, len(items) - 1)
+            )
+            self._refresh()
+
+        @kb.add("[", filter=transcript_focus_active)
+        def _on_prev_message(event) -> None:
+            state.selected_message_idx = max(0, state.selected_message_idx - 1)
+            self._refresh()
 
         @kb.add("y", filter=approval_active)
         def _on_y(event) -> None:
@@ -435,6 +497,7 @@ class MakeAgentShell:
             "hint": "#555566 italic",
             "hint.busy": "#00aaff italic",
             "hint.approval": "#ffaa00 bold",
+            "hint.transcript": "#00aaff bold",
         })
 
         return Application(
