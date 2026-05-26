@@ -367,7 +367,7 @@ class MakeAgentShell:
         transcript_focus_active = Condition(lambda: state.transcript_focused)
         hint_control = FormattedTextControl(
             lambda: (
-                [("class:hint.transcript", "  ► TRANSCRIPT  [ prev message   ] next   Ctrl+T back to input")]
+                [("class:hint.transcript", "  ► TRANSCRIPT  Ctrl+P prev   Ctrl+N next   Ctrl+T back to input")]
                 if state.transcript_focused
                 else (
                     [("class:hint.approval", "  [Y] approve   [N] deny")]
@@ -460,7 +460,7 @@ class MakeAgentShell:
                     state.selected_message_idx = 0
             self._refresh()
 
-        @kb.add("]", filter=transcript_focus_active)
+        @kb.add("c-n", filter=transcript_focus_active)
         def _on_next_message(event) -> None:
             items = list(reversed(state.transcript[-self._max_messages_to_display:]))
             state.selected_message_idx = min(
@@ -468,7 +468,7 @@ class MakeAgentShell:
             )
             self._refresh()
 
-        @kb.add("[", filter=transcript_focus_active)
+        @kb.add("c-p", filter=transcript_focus_active)
         def _on_prev_message(event) -> None:
             state.selected_message_idx = max(0, state.selected_message_idx - 1)
             self._refresh()
