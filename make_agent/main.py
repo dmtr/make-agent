@@ -225,7 +225,7 @@ def main() -> None:
     run_p.add_argument(
         "--reasoning-effort",
         choices=_REASONING_EFFORT_VALUES,
-        default="medium",
+        default="high",
         metavar="EFFORT",
         help=f"Reasoning effort level ({'/'.join(_REASONING_EFFORT_VALUES)}, default: auto)",
     )

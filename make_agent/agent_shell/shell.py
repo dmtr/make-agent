@@ -48,7 +48,7 @@ from make_agent.agent_core import (
 )
 
 MAX_MESSAGES_TO_DISPLAY = 10
-TRANSCRIPT_SEPARATOR = "  " + "─" * 72
+TRANSCRIPT_SEPARATOR = "  " + "─" * 28
 
 # ── status / enums ──────────────────────────────────────────────────────────────
 
@@ -174,19 +174,24 @@ class TurnBlock:
         for line in self.response_lines:
             parts.append(f"  {line}")
 
-        # Tool activity block
+        # Tool activity block (show running + failures, collapse successful tools)
         if self.tools:
-            parts.append("")
-            for tool in self.tools:
-                parts.append(tool.render())
+            running_or_failed = [tool for tool in self.tools if tool.state in ("running", "failed")]
+            done_count = sum(1 for tool in self.tools if tool.state == "done")
+            if running_or_failed:
+                parts.append("")
+                for tool in running_or_failed:
+                    parts.append(tool.render())
+            if done_count:
+                parts.append(f"  ✓ {done_count} tool{'s' if done_count != 1 else ''} completed")
 
         # Inline approval card
         if self.approval:
             parts.append("")
             parts.append(self.approval.render())
 
-        # Turn footer — elapsed time, token count, outcome
-        if self.state in ("done", "failed", "cancelled"):
+        # Turn footer — keep only for non-success outcomes to reduce transcript noise
+        if self.state in ("failed", "cancelled"):
             elapsed = self.elapsed or (time.time() - self.start_time)
             state_label = self.state.upper()
             sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok │ {state_label} {'─' * 8}"
@@ -338,7 +343,7 @@ class MakeAgentShell:
         transcript_area = TextArea(
             text="",
             scrollbar=True,
-            focusable=False,
+            focusable=True,
             read_only=True,
             wrap_lines=True,
         )
@@ -367,21 +372,15 @@ class MakeAgentShell:
         transcript_focus_active = Condition(lambda: state.transcript_focused)
         hint_control = FormattedTextControl(
             lambda: (
-                [("class:hint.transcript", "  ► TRANSCRIPT  Ctrl+P prev   Ctrl+N next   Ctrl+T back to input")]
+                [("class:hint.transcript", "  ► TRANSCRIPT  Ctrl+P/Ctrl+N move   Ctrl+T return")]
                 if state.transcript_focused
                 else (
                     [("class:hint.approval", "  [Y] approve   [N] deny")]
                     if approval_active()
                     else (
-                        [("class:hint.busy", "  ● working…  (Ctrl-C cancels the current turn)")]
+                        [("class:hint.busy", "  ● working…  Ctrl-C cancel turn")]
                         if state.status != AgentStatus.IDLE
-                        else [
-                            (
-                                "class:hint",
-                                "  /exit  /stats  /export  /help"
-                                "   │  Alt+Enter for newlines  │  Ctrl+T transcript  │  Ctrl-C exits",
-                            )
-                        ]
+                        else [("class:hint", "  /help /stats /export /exit   Alt+Enter newline   Ctrl+T transcript")]
                     )
                 )
             )
@@ -402,6 +401,13 @@ class MakeAgentShell:
         ])
 
         layout = Layout(root, focused_element=composer_input)
+
+        def _set_transcript_focus(enabled: bool) -> None:
+            state.transcript_focused = enabled
+            if enabled:
+                layout.focus(transcript_area)
+            else:
+                layout.focus(composer_input)
 
         # Key bindings
         kb = KeyBindings()
@@ -431,7 +437,7 @@ class MakeAgentShell:
         @kb.add("c-c", eager=True)
         def _on_ctrl_c(event) -> None:
             if state.transcript_focused:
-                state.transcript_focused = False
+                _set_transcript_focus(False)
                 self._refresh()
             elif state.status != AgentStatus.IDLE:
                 asyncio.ensure_future(self._command_queue.put(CancelTurn()))
@@ -452,11 +458,11 @@ class MakeAgentShell:
         @kb.add("c-t")
         def _on_ctrl_t(event) -> None:
             if state.transcript_focused:
-                state.transcript_focused = False
+                _set_transcript_focus(False)
             else:
                 items = list(reversed(state.transcript[-self._max_messages_to_display:]))
                 if items:
-                    state.transcript_focused = True
+                    _set_transcript_focus(True)
                     state.selected_message_idx = 0
             self._refresh()
 
@@ -486,18 +492,18 @@ class MakeAgentShell:
                 fut.set_result(False)
 
         app_style = Style.from_dict({
-            "header": "bg:#1a1a2e #c0c0d0",
-            "header.sep": "bg:#1a1a2e #555566",
-            "status.idle": "bg:#1a1a2e #666677",
-            "status.streaming": "bg:#1a1a2e #00cc66 bold",
-            "status.tool": "bg:#1a1a2e #00aaff bold",
-            "status.approval": "bg:#1a1a2e #ffaa00 bold",
-            "status.error": "bg:#1a1a2e #ff4444 bold",
-            "frame.border": "#444466",
-            "hint": "#555566 italic",
-            "hint.busy": "#00aaff italic",
-            "hint.approval": "#ffaa00 bold",
-            "hint.transcript": "#00aaff bold",
+            "header": "bg:#12141a #aeb5c1",
+            "header.sep": "bg:#12141a #555d6b",
+            "status.idle": "bg:#12141a #7b8291",
+            "status.streaming": "bg:#12141a #7fbf8f bold",
+            "status.tool": "bg:#12141a #78aecd bold",
+            "status.approval": "bg:#12141a #c7a56d bold",
+            "status.error": "bg:#12141a #c78282 bold",
+            "frame.border": "#3a4251",
+            "hint": "#6e7684 italic",
+            "hint.busy": "#78aecd italic",
+            "hint.approval": "#c7a56d bold",
+            "hint.transcript": "#78aecd bold",
         })
 
         return Application(
