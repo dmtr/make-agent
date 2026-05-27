@@ -33,6 +33,7 @@ from make_agent.agent_core import (
     ApprovalRequested,
     ApproveSkill,
     CancelTurn,
+    CompactNotice,
     DenySkill,
     ManagerError,
     ShellCommand,
@@ -621,6 +622,12 @@ class MakeAgentShell:
 
             elif isinstance(event, (TurnStarted, StatusChanged)):
                 pass  # informational; state managed locally
+
+            elif isinstance(event, CompactNotice):
+                self._state.add_alert(
+                    "INFO",
+                    f"auto-compact: removed {event.messages_removed} messages",
+                )
 
     # ── agent turn ───────────────────────────────────────────────────────────────
 

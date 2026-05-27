@@ -14,6 +14,7 @@ from make_agent.protocols import ToolHandlerProtocol
 from .bridge import (
     ApprovalRequested,
     CancelTurn,
+    CompactNotice,
     DenySkill,
     ApproveSkill,
     ManagerError,
@@ -29,7 +30,7 @@ from .bridge import (
     TurnFinished,
     TurnStarted,
 )
-from .events import AgentEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
+from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import export_conversation
 from .loop import AgentConfig, AgenticLoop, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
@@ -37,6 +38,50 @@ from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 
 # Backward-compatible alias.
 Agent = AgenticLoop
+
+
+_SKILL_INSPECTION_TOOLS = frozenset({"list_skills", "read_skill"})
+
+
+def _prune_skill_messages(messages: list[dict]) -> list[dict]:
+    """Remove all but the last purely-skill-inspection assistant turn.
+
+    An assistant turn is "purgeable" when every tool call it contains is either
+    ``list_skills`` or ``read_skill``.  All purgeable turns except the last one
+    are dropped together with their corresponding tool-result messages.
+    Everything else (system, user, assistant text, other tool calls) is kept.
+
+    Returns the original list unchanged when fewer than two purgeable turns exist.
+    """
+    purgeable_indices: list[int] = []
+    for i, msg in enumerate(messages):
+        if msg.get("role") != "assistant":
+            continue
+        tool_calls = msg.get("tool_calls") or []
+        if not tool_calls:
+            continue
+        names = {tc.get("function", {}).get("name") for tc in tool_calls}
+        if names <= _SKILL_INSPECTION_TOOLS:
+            purgeable_indices.append(i)
+
+    if len(purgeable_indices) <= 1:
+        return list(messages)
+
+    to_drop = set(purgeable_indices[:-1])
+    dropped_call_ids: set[str] = set()
+    for i in to_drop:
+        for tc in messages[i].get("tool_calls", []):
+            if tc.get("id"):
+                dropped_call_ids.add(tc["id"])
+
+    result: list[dict] = []
+    for i, msg in enumerate(messages):
+        if i in to_drop:
+            continue
+        if msg.get("role") == "tool" and msg.get("tool_call_id") in dropped_call_ids:
+            continue
+        result.append(msg)
+    return result
 
 
 class SessionNotFoundError(Exception):
@@ -48,10 +93,12 @@ class AgentManager:
         self,
         tool_handler: ToolHandlerProtocol,
         middlewares: list[MiddlewareBase] | None = None,
+        compact_threshold: int = 0,
     ) -> None:
         self._tool_handler = tool_handler
         self._middlewares: list[MiddlewareBase] = middlewares if middlewares is not None else []
         self._sessions: dict[str, AgenticLoop] = {}
+        self._compact_threshold = compact_threshold
 
     @staticmethod
     def get_session_id() -> str:
@@ -68,6 +115,24 @@ class AgentManager:
             return self._sessions[session_id]
         except KeyError:
             raise SessionNotFoundError(f"Session with id {session_id} not found.")
+
+    def _compact_session(self, session_id: str) -> int:
+        """Prune skill-inspection messages and reset to a fresh agent.
+
+        Replaces the session's :class:`AgenticLoop` with a new one whose
+        ``_messages`` list has all but the last ``list_skills``/``read_skill``
+        pairs removed.  Returns the number of messages removed (0 when nothing
+        was pruned).
+        """
+        old_loop = self.get_agent(session_id)
+        pruned = _prune_skill_messages(old_loop.messages)
+        messages_removed = len(old_loop.messages) - len(pruned)
+        if messages_removed == 0:
+            return 0
+        new_loop = AgenticLoop(old_loop._config, self._tool_handler)
+        new_loop._messages = pruned
+        self._sessions[session_id] = new_loop
+        return messages_removed
 
     async def arun_agent(self, session_id: str, message: str) -> str:
         """Run one agent turn and return the final reply text."""
@@ -175,6 +240,11 @@ class AgentManager:
         )
         for mw in self._middlewares:
             await mw.after_response(request, response)
+
+        if self._compact_threshold > 0 and input_tokens >= self._compact_threshold:
+            messages_removed = self._compact_session(session_id)
+            if messages_removed > 0:
+                yield CompactEvent(messages_removed=messages_removed)
 
     def export_conversation(self, session_id: str) -> Path | None:
         loop = self.get_agent(session_id)
@@ -315,6 +385,8 @@ class AgentManager:
                         event.allow()
                     else:
                         event.deny()
+                elif isinstance(event, CompactEvent):
+                    await event_queue.put(CompactNotice(messages_removed=event.messages_removed))
         except asyncio.CancelledError:
             for fut in list(pending_approvals.values()):
                 if not fut.done():

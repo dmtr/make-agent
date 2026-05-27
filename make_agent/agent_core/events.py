@@ -75,4 +75,11 @@ class UsageEvent:
     output_tokens: int
 
 
-AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent | ConfirmEvent | UsageEvent
+@dataclass
+class CompactEvent:
+    """The conversation was auto-compacted to reduce context size."""
+
+    messages_removed: int
+
+
+AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent | ConfirmEvent | UsageEvent | CompactEvent

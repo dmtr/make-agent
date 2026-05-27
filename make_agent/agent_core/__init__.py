@@ -1,8 +1,9 @@
-from .agent import Agent, AgentManager, SessionNotFoundError
+from .agent import Agent, AgentManager, SessionNotFoundError, _prune_skill_messages
 from .bridge import (
     ApprovalRequested,
     ApproveSkill,
     CancelTurn,
+    CompactNotice,
     DenySkill,
     ManagerError,
     ShellCommand,
@@ -18,6 +19,9 @@ from .bridge import (
     TurnStarted,
 )
 from .constants import (
+    DEFAULT_COMPACT_MAX_THRESHOLD,
+    DEFAULT_COMPACT_MIN_THRESHOLD,
+    DEFAULT_COMPACT_THRESHOLD_RATIO,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
@@ -25,13 +29,16 @@ from .constants import (
     DEFAULT_TOOL_TIMEOUT,
     DEFAULT_USE_PROMPT_CACHE,
 )
-from .events import AgentEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
+from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import _render_html, export_conversation
 from .loop import AgentConfig, AgenticLoop, CallBack, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 from .provider import _acompletion_with_retry, _is_anthropic_model, _parse_retry_after
 
 __all__ = [
+    "DEFAULT_COMPACT_MAX_THRESHOLD",
+    "DEFAULT_COMPACT_MIN_THRESHOLD",
+    "DEFAULT_COMPACT_THRESHOLD_RATIO",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_MAX_TOKENS",
     "DEFAULT_MAX_TOOL_OUTPUT",
@@ -39,6 +46,7 @@ __all__ = [
     "DEFAULT_TOOL_TIMEOUT",
     "DEFAULT_USE_PROMPT_CACHE",
     "_is_anthropic_model",
+    "_prune_skill_messages",
     "Agent",
     "AgentConfig",
     "AgentEvent",
@@ -47,6 +55,8 @@ __all__ = [
     "ApprovalRequested",
     "ApproveSkill",
     "CancelTurn",
+    "CompactEvent",
+    "CompactNotice",
     "ConfirmEvent",
     "DenySkill",
     "DoneEvent",
