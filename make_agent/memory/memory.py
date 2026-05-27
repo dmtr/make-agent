@@ -12,6 +12,7 @@ Schema overview:
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -113,6 +114,45 @@ class Memory:
         )
         conn.commit()
 
+    @staticmethod
+    def _sanitize_fts_query(query: str) -> str:
+        """Sanitize an FTS5 MATCH query by removing dangerous syntax.
+
+        This function strips out FTS5-specific operators and special characters
+        that could be used to inject malicious queries. The result is a safe,
+        keyword-only search string.
+
+        :param query: Raw user-supplied FTS5 query string
+        :returns: Sanitized query containing only safe keywords, or empty string if nothing remains
+        """
+        # Step 1: Remove quote characters (prevents phrase injection)
+        sanitized = query.replace('"', '').replace("'", '')
+
+        # Step 2: Remove NEAR() function calls BEFORE removing parentheses
+        sanitized = re.sub(r'NEAR\s*\([^)]*\)', '', sanitized, flags=re.IGNORECASE)
+
+        # Step 3: Remove parentheses (prevents grouping attacks)
+        sanitized = sanitized.replace('(', '').replace(')', '')
+
+        # Step 4: Remove FTS5 boolean operators as standalone words
+        for op in ['AND', 'OR', 'NOT']:
+            sanitized = re.sub(r'\b' + op + r'\b', '', sanitized, flags=re.IGNORECASE)
+
+        # Step 5: Remove column filters (e.g., "title:")
+        sanitized = re.sub(r'\w+:', '', sanitized)
+
+        # Step 6: Remove plus and minus signs (prefix operators)
+        sanitized = sanitized.replace('+', '').replace('-', '')
+
+        # Step 7: Remove characters that FTS5 doesn't handle well
+        for ch in '{}[]<>!@#$%^&*+=\\|~`':
+            sanitized = sanitized.replace(ch, '')
+
+        # Step 8: Collapse multiple spaces and strip
+        sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+
+        return sanitized
+
     def _search(
         self,
         view: str,
@@ -122,13 +162,26 @@ class Memory:
         to_date: str | None = None,
     ) -> str:
         conn = self._get_conn()
+
+        # Validate view against whitelist (defense in depth)
+        allowed_views = {"user_memory", "agent_memory"}
+        if view not in allowed_views:
+            raise ValueError(f"Invalid view: {view}. Must be one of {allowed_views}")
+
+        # Sanitize the query before passing to FTS5 MATCH
+        safe_query = self._sanitize_fts_query(query)
+
+        # If sanitization removes everything, return early to avoid FTS5 syntax errors
+        if not safe_query:
+            return "No results found."
+
         sql = f"""
             SELECT v.created_at, v.message
             FROM {view} v
             JOIN messages_fts ON v.id = messages_fts.rowid
             WHERE messages_fts MATCH ?
         """
-        params: list = [query]
+        params: list = [safe_query]
         if from_date:
             sql += " AND v.created_at >= ?"
             params.append(from_date)
