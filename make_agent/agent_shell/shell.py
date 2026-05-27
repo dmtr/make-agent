@@ -317,6 +317,7 @@ class MakeAgentShell:
             focusable=True,
             read_only=True,
             wrap_lines=True,
+            style="fg:#7a8494",
         )
         self._transcript_area = transcript_area
 
