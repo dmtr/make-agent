@@ -284,6 +284,8 @@ class MakeAgentShell:
             ("class:header.sep", " │ "),
             ("class:header", f"tokens: {s.total_tokens}"),
             ("class:header.sep", " │ "),
+            ("class:header", f"turn: {len(s.transcript)}"),
+            ("class:header.sep", " │ "),
             (status_style, f"{indicator} {label} "),
         ]
 
