@@ -44,7 +44,6 @@ def _run_args(**kwargs) -> argparse.Namespace:
         reasoning_effort="auto",
         skill_mode="python",
         prompt_cache=False,
-        max_messages_to_display=10,
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)

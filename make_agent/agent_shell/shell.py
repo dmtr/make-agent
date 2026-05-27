@@ -1,9 +1,10 @@
 """MakeAgentShell — interactive full-screen REPL for the make-agent.
 
-Three-region layout:
-  1. Header  (1 line)   — model | tokens | live status
-  2. Composer (3 lines) — prompt input at the top; Alt+Enter for newlines
-  3. Transcript (rest)  — scrollable; structured turn blocks rendered inline
+Four-region layout:
+  1. Header     (1 line)   — model | tokens | live status
+  2. Alert bar  (1 line)   — latest alert message
+  3. Composer   (3 lines)  — prompt input; Alt+Enter for newlines
+  4. Transcript (rest)     — current turn only; Ctrl+T to focus/scroll
 """
 
 from __future__ import annotations
@@ -47,8 +48,6 @@ from make_agent.agent_core import (
     TurnStarted,
 )
 
-MAX_MESSAGES_TO_DISPLAY = 10
-TRANSCRIPT_SEPARATOR = "  " + "─" * 28
 
 # ── status / enums ──────────────────────────────────────────────────────────────
 
@@ -104,10 +103,10 @@ class ToolRow:
         else:
             elapsed_str = f"{self.elapsed:.1f}s"
             icon = "✗"
-        args_short = " ".join(f"{k}={str(v)[:24]!r}" for k, v in list(self.args.items())[:2])
+        args_short = " ".join(f"{k}={str(v)[:60]!r}" for k, v in self.args.items())
         line = f"  {icon} {self.name}  {args_short}  {elapsed_str}"
         if self.output_preview and self.state != "running":
-            preview = self.output_preview[:80].replace("\n", "↵")
+            preview = self.output_preview[:120].replace("\n", "↵")
             line += f"\n    └ {preview}"
         return line
 
@@ -174,16 +173,11 @@ class TurnBlock:
         for line in self.response_lines:
             parts.append(f"  {line}")
 
-        # Tool activity block (show running + failures, collapse successful tools)
+        # Tool activity block — show every tool individually, never collapse
         if self.tools:
-            running_or_failed = [tool for tool in self.tools if tool.state in ("running", "failed")]
-            done_count = sum(1 for tool in self.tools if tool.state == "done")
-            if running_or_failed:
-                parts.append("")
-                for tool in running_or_failed:
-                    parts.append(tool.render())
-            if done_count:
-                parts.append(f"  ✓ {done_count} tool{'s' if done_count != 1 else ''} completed")
+            parts.append("")
+            for tool in self.tools:
+                parts.append(tool.render())
 
         # Inline approval card
         if self.approval:
@@ -213,12 +207,12 @@ class ShellState:
         self.total_tokens: int = 0
         self.status = AgentStatus.IDLE
         self.active_tool: Optional[str] = None
-        self.transcript: list[TurnBlock | InlineAlert] = []
+        self.transcript: list[TurnBlock] = []
         self.current_turn: Optional[TurnBlock] = None
         self.pending_approval: Optional[ApprovalCard] = None
         self._approval_future: Optional[asyncio.Future[bool]] = None
         self.transcript_focused: bool = False
-        self.selected_message_idx: int = 0
+        self.current_alert: Optional[InlineAlert] = None
 
     def new_turn(self, message: str) -> TurnBlock:
         turn = TurnBlock(user_message=message)
@@ -245,7 +239,7 @@ class ShellState:
         self.current_turn = None
 
     def add_alert(self, level: str, message: str) -> None:
-        self.transcript.append(InlineAlert(level=level, message=message))
+        self.current_alert = InlineAlert(level=level, message=message)
 
 
 # ── MakeAgentShell ──────────────────────────────────────────────────────────────
@@ -260,12 +254,10 @@ class MakeAgentShell:
         session_id: str,
         model: str,
         history_path: Path,
-        max_messages_to_display: int = MAX_MESSAGES_TO_DISPLAY,
     ) -> None:
         self._agent_manager = agent_manager
         self._session_id = session_id
         self._history_path = history_path
-        self._max_messages_to_display = max_messages_to_display
         self._command_queue: asyncio.Queue[ShellCommand] = asyncio.Queue()
         self._event_queue: asyncio.Queue[ShellEvent] = asyncio.Queue()
         self._state = ShellState(model=model)
@@ -297,40 +289,17 @@ class MakeAgentShell:
         ]
 
     def _render_transcript(self) -> str:
-        items = list(reversed(self._state.transcript[-self._max_messages_to_display:]))
-        sep = "\n" + TRANSCRIPT_SEPARATOR + "\n"
-        parts = []
-        for i, item in enumerate(items):
-            rendered = item.render()
-            if self._state.transcript_focused and i == self._state.selected_message_idx:
-                lines = rendered.split("\n")
-                for j, line in enumerate(lines):
-                    if line.startswith("  "):
-                        lines[j] = "► " + line[2:]
-                        break
-                rendered = "\n".join(lines)
-            parts.append(rendered)
-        return sep.join(parts)
-
-    def _transcript_cursor_offset(self, items: list) -> int:
-        """Character offset of the selected message in the rendered transcript."""
-        sep = "\n" + TRANSCRIPT_SEPARATOR + "\n"
-        idx = min(self._state.selected_message_idx, max(0, len(items) - 1))
-        offset = 0
-        for i in range(idx):
-            offset += len(items[i].render()) + len(sep)
-        return offset
+        if not self._state.transcript:
+            return ""
+        return self._state.transcript[-1].render()
 
     def _refresh(self) -> None:
         """Update the transcript area text and invalidate the app."""
         if self._transcript_area is not None:
             text = self._render_transcript()
             self._transcript_area.text = text
-            if self._state.transcript_focused:
-                items = list(reversed(self._state.transcript[-self._max_messages_to_display:]))
-                self._transcript_area.buffer.cursor_position = self._transcript_cursor_offset(items)
-            else:
-                self._transcript_area.buffer.cursor_position = 0
+            if not self._state.transcript_focused:
+                self._transcript_area.buffer.cursor_position = len(text)
         if self._app is not None:
             self._app.invalidate()
 
@@ -369,10 +338,9 @@ class MakeAgentShell:
             lambda: state._approval_future is not None
             and not (state._approval_future.done() if state._approval_future else True)
         )
-        transcript_focus_active = Condition(lambda: state.transcript_focused)
         hint_control = FormattedTextControl(
             lambda: (
-                [("class:hint.transcript", "  ► TRANSCRIPT  Ctrl+P/Ctrl+N move   Ctrl+T return")]
+                [("class:hint.transcript", "  ► TRANSCRIPT  ↑↓ scroll   Ctrl+T return")]
                 if state.transcript_focused
                 else (
                     [("class:hint.approval", "  [Y] approve   [N] deny")]
@@ -387,15 +355,24 @@ class MakeAgentShell:
         )
         hint_window = Window(height=1, content=hint_control)
 
+        # Alert bar — 1 line showing the latest alert (empty when none)
+        alert_control = FormattedTextControl(
+            lambda: [("class:alert", "  " + state.current_alert.render().strip())]
+            if state.current_alert
+            else [("", "")]
+        )
+        alert_window = Window(height=1, content=alert_control)
+
         # Header — 1 line: model | tokens | status
         header_window = Window(
             height=1,
             content=FormattedTextControl(self._header_text),
         )
 
-        # Three-region root layout
+        # Four-region root layout
         root = HSplit([
             header_window,
+            alert_window,
             Frame(body=HSplit([composer_input, hint_window]), title=""),
             Frame(body=transcript_area, title="TRANSCRIPT"),
         ])
@@ -459,24 +436,8 @@ class MakeAgentShell:
         def _on_ctrl_t(event) -> None:
             if state.transcript_focused:
                 _set_transcript_focus(False)
-            else:
-                items = list(reversed(state.transcript[-self._max_messages_to_display:]))
-                if items:
-                    _set_transcript_focus(True)
-                    state.selected_message_idx = 0
-            self._refresh()
-
-        @kb.add("c-n", filter=transcript_focus_active)
-        def _on_next_message(event) -> None:
-            items = list(reversed(state.transcript[-self._max_messages_to_display:]))
-            state.selected_message_idx = min(
-                state.selected_message_idx + 1, max(0, len(items) - 1)
-            )
-            self._refresh()
-
-        @kb.add("c-p", filter=transcript_focus_active)
-        def _on_prev_message(event) -> None:
-            state.selected_message_idx = max(0, state.selected_message_idx - 1)
+            elif state.transcript:
+                _set_transcript_focus(True)
             self._refresh()
 
         @kb.add("y", filter=approval_active)
@@ -504,6 +465,7 @@ class MakeAgentShell:
             "hint.busy": "#78aecd italic",
             "hint.approval": "#c7a56d bold",
             "hint.transcript": "#78aecd bold",
+            "alert": "#c7a56d",
         })
 
         return Application(
@@ -585,7 +547,7 @@ class MakeAgentShell:
                     if tr.name == event.name and tr.state == "running":
                         tr.state = "failed" if event.is_error else "done"
                         tr.elapsed = (event.duration_ms or 0) / 1000.0
-                        tr.output_preview = (event.output or "")[:120]
+                        tr.output_preview = (event.output or "")[:200]
                         break
                 self._refresh()
 

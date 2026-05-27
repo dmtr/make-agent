@@ -128,7 +128,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
             max_tokens=args.max_tokens,
             reasoning_effort=args.reasoning_effort,
             use_prompt_cache=args.prompt_cache,
-            max_messages_to_display=args.max_messages_to_display,
         )
     )
 
@@ -242,13 +241,6 @@ def main() -> None:
         action="store_true",
         default=DEFAULT_USE_PROMPT_CACHE,
         help="Enable prompt caching for the system prompt (Anthropic models only)",
-    )
-    run_p.add_argument(
-        "--max-messages-to-display",
-        type=int,
-        default=10,
-        metavar="N",
-        help="Number of transcript messages shown (most recent first, default: 10)",
     )
     raw = sys.argv[1:]
     if not raw or raw[0] not in ("run", "-h", "--help"):

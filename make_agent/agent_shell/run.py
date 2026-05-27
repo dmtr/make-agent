@@ -19,7 +19,7 @@ from make_agent.app_dirs import project_dir
 from make_agent.memory import Memory
 from make_agent.tool_handler import ToolHandler
 
-from .shell import MAX_MESSAGES_TO_DISPLAY, MakeAgentShell
+from .shell import MakeAgentShell
 
 
 async def run(
@@ -34,7 +34,6 @@ async def run(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     reasoning_effort: str = DEFAULT_REASONING_EFFORT,
     use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE,
-    max_messages_to_display: int = MAX_MESSAGES_TO_DISPLAY,
 ) -> None:
     """Start the interactive shell (or send a single prompt and return)."""
     await tool_handler.setup(model)
@@ -66,7 +65,6 @@ async def run(
         session_id,
         model=model,
         history_path=project_dir() / "history",
-        max_messages_to_display=max_messages_to_display,
     )
     try:
         await shell.run()
