@@ -2,8 +2,8 @@
 
 Four-region layout:
   1. Header     (1 line)   — model | tokens | live status
-  2. Alert bar  (1 line)   — latest alert message
-  3. Composer   (3 lines)  — prompt input; Alt+Enter for newlines
+  2. Composer   (3 lines)  — prompt input; Alt+Enter for newlines
+  3. Alert bar  (1 line)   — latest alert message
   4. Transcript (rest)     — current turn only; Ctrl+T to focus/scroll
 """
 
@@ -169,6 +169,10 @@ class TurnBlock:
     def render(self) -> str:
         parts: list[str] = []
 
+        # User message header
+        parts.append(f"  ▶ {self.user_message}")
+        parts.append("")
+
         # Assistant response body
         for line in self.response_lines:
             parts.append(f"  {line}")
@@ -184,11 +188,11 @@ class TurnBlock:
             parts.append("")
             parts.append(self.approval.render())
 
-        # Turn footer — keep only for non-success outcomes to reduce transcript noise
-        if self.state in ("failed", "cancelled"):
+        # Turn footer — always shown for finished turns
+        if self.state != "streaming":
             elapsed = self.elapsed or (time.time() - self.start_time)
-            state_label = self.state.upper()
-            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok │ {state_label} {'─' * 8}"
+            state_label = "" if self.state == "done" else f" {self.state.upper()}"
+            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
             parts.append("")
             parts.append(sep)
 
@@ -372,8 +376,8 @@ class MakeAgentShell:
         # Four-region root layout
         root = HSplit([
             header_window,
-            alert_window,
             Frame(body=HSplit([composer_input, hint_window]), title=""),
+            alert_window,
             Frame(body=transcript_area, title="TRANSCRIPT"),
         ])
 
