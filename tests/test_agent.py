@@ -685,3 +685,176 @@ class TestAgentSystemPromptCache:
         system_msg = agent.messages[0]
         assert system_msg["role"] == "system"
         assert system_msg["content"] == "You are a helpful assistant."
+
+
+# ── _prune_skill_messages ──────────────────────────────────────────────────────
+
+
+class TestPruneSkillMessages:
+    """Tests for the _prune_skill_messages pure function."""
+
+    from make_agent.agent_core import _prune_skill_messages
+
+    def _sys(self) -> dict:
+        return {"role": "system", "content": "You are helpful."}
+
+    def _user(self, text: str = "hi") -> dict:
+        return {"role": "user", "content": text}
+
+    def _assistant(self, text: str = "ok") -> dict:
+        return {"role": "assistant", "content": text}
+
+    def _skill_call(self, name: str, call_id: str) -> dict:
+        return {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": "{}"},
+                }
+            ],
+        }
+
+    def _tool_result(self, call_id: str, text: str = "result") -> dict:
+        return {"role": "tool", "tool_call_id": call_id, "content": text}
+
+    def _bash_call(self, call_id: str) -> dict:
+        return {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": '{"cmd": "ls"}'},
+                }
+            ],
+        }
+
+    def test_empty_list_returns_empty(self):
+        from make_agent.agent_core import _prune_skill_messages
+
+        assert _prune_skill_messages([]) == []
+
+    def test_no_skill_messages_unchanged(self):
+        from make_agent.agent_core import _prune_skill_messages
+
+        msgs = [self._sys(), self._user(), self._assistant()]
+        assert _prune_skill_messages(msgs) == msgs
+
+    def test_single_purgeable_turn_unchanged(self):
+        from make_agent.agent_core import _prune_skill_messages
+
+        msgs = [
+            self._sys(),
+            self._user(),
+            self._skill_call("list_skills", "tc1"),
+            self._tool_result("tc1"),
+        ]
+        assert _prune_skill_messages(msgs) == msgs
+
+    def test_two_purgeable_turns_drops_first(self):
+        from make_agent.agent_core import _prune_skill_messages
+
+        msgs = [
+            self._sys(),
+            self._user("step1"),
+            self._skill_call("list_skills", "tc1"),
+            self._tool_result("tc1", "skills list 1"),
+            self._user("step2"),
+            self._skill_call("list_skills", "tc2"),
+            self._tool_result("tc2", "skills list 2"),
+        ]
+        result = _prune_skill_messages(msgs)
+        assert result == [
+            self._sys(),
+            self._user("step1"),
+            # tc1 pair dropped
+            self._user("step2"),
+            self._skill_call("list_skills", "tc2"),
+            self._tool_result("tc2", "skills list 2"),
+        ]
+
+    def test_non_skill_tool_call_not_purgeable(self):
+        from make_agent.agent_core import _prune_skill_messages
+
+        msgs = [
+            self._sys(),
+            self._skill_call("list_skills", "tc1"),
+            self._tool_result("tc1"),
+            self._bash_call("tc2"),
+            self._tool_result("tc2", "files"),
+            self._skill_call("list_skills", "tc3"),
+            self._tool_result("tc3"),
+        ]
+        result = _prune_skill_messages(msgs)
+        # tc1 pair dropped; tc2 (bash) kept; tc3 kept
+        assert result == [
+            self._sys(),
+            self._bash_call("tc2"),
+            self._tool_result("tc2", "files"),
+            self._skill_call("list_skills", "tc3"),
+            self._tool_result("tc3"),
+        ]
+
+    def test_mixed_tool_calls_are_not_purgeable(self):
+        """An assistant message with list_skills AND bash is never dropped."""
+        from make_agent.agent_core import _prune_skill_messages
+
+        mixed = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "tc1", "type": "function", "function": {"name": "list_skills", "arguments": "{}"}},
+                {"id": "tc2", "type": "function", "function": {"name": "bash", "arguments": "{}"}},
+            ],
+        }
+        msgs = [
+            self._sys(),
+            self._skill_call("list_skills", "tc0"),
+            self._tool_result("tc0"),
+            mixed,
+            self._tool_result("tc1"),
+            self._tool_result("tc2"),
+        ]
+        result = _prune_skill_messages(msgs)
+        # tc0 pair is the only purgeable turn, but there's only one → no pruning
+        assert result == msgs
+
+    def test_read_skill_also_purgeable(self):
+        from make_agent.agent_core import _prune_skill_messages
+
+        msgs = [
+            self._sys(),
+            self._skill_call("read_skill", "r1"),
+            self._tool_result("r1", "skill content 1"),
+            self._skill_call("read_skill", "r2"),
+            self._tool_result("r2", "skill content 2"),
+        ]
+        result = _prune_skill_messages(msgs)
+        assert result == [
+            self._sys(),
+            self._skill_call("read_skill", "r2"),
+            self._tool_result("r2", "skill content 2"),
+        ]
+
+    def test_three_purgeable_turns_keeps_only_last(self):
+        from make_agent.agent_core import _prune_skill_messages
+
+        msgs = [
+            self._sys(),
+            self._skill_call("list_skills", "a"),
+            self._tool_result("a"),
+            self._skill_call("list_skills", "b"),
+            self._tool_result("b"),
+            self._skill_call("list_skills", "c"),
+            self._tool_result("c"),
+        ]
+        result = _prune_skill_messages(msgs)
+        assert result == [
+            self._sys(),
+            self._skill_call("list_skills", "c"),
+            self._tool_result("c"),
+        ]

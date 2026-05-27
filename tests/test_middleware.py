@@ -247,3 +247,118 @@ class TestAgentManagerMiddlewareChain:
         th = _make_tool_handler()
         manager = AgentManager(th)
         assert manager.get_token_stats("any") == {}
+
+
+# ── AgentManager compact path ─────────────────────────────────────────────────
+
+
+def _make_agent_config():
+    from make_agent.agent_core.loop import AgentConfig
+
+    return AgentConfig(system_prompt="sys", model="gpt-4")
+
+
+class TestAgentManagerCompact:
+    def _skill_call(self, call_id: str) -> dict:
+        return {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": "list_skills", "arguments": "{}"},
+                }
+            ],
+        }
+
+    def _tool_result(self, call_id: str) -> dict:
+        return {"role": "tool", "tool_call_id": call_id, "content": "skill result"}
+
+    async def test_compact_event_emitted_when_tokens_exceed_threshold(self):
+        from make_agent.agent_core import CompactEvent
+
+        th = _make_tool_handler()
+        manager = AgentManager(th, compact_threshold=100)
+        session_id = manager.get_session_id()
+        cbs = [UsageCallback(model="gpt-4", input_tokens=200, output_tokens=10), MessageCallback("done")]
+        _mock_loop_with_cbs(manager, session_id, cbs)
+
+        # Seed two purgeable turns so _compact_session actually removes messages.
+        loop = manager._sessions[session_id]
+        loop._config = _make_agent_config()
+        loop.messages = [
+            {"role": "system", "content": "sys"},
+            self._skill_call("tc1"),
+            self._tool_result("tc1"),
+            self._skill_call("tc2"),
+            self._tool_result("tc2"),
+        ]
+
+        events = [e async for e in manager.astream_events(session_id, "go")]
+        types = [type(e).__name__ for e in events]
+        assert "CompactEvent" in types
+        compact_event = next(e for e in events if isinstance(e, CompactEvent))
+        assert compact_event.messages_removed == 2
+
+    async def test_compact_event_not_emitted_when_threshold_zero(self):
+        from make_agent.agent_core import CompactEvent
+
+        th = _make_tool_handler()
+        manager = AgentManager(th, compact_threshold=0)
+        session_id = manager.get_session_id()
+        cbs = [UsageCallback(model="gpt-4", input_tokens=99999, output_tokens=10), MessageCallback("done")]
+        _mock_loop_with_cbs(manager, session_id, cbs)
+
+        events = [e async for e in manager.astream_events(session_id, "go")]
+        assert not any(isinstance(e, CompactEvent) for e in events)
+
+    async def test_compact_event_not_emitted_when_tokens_below_threshold(self):
+        from make_agent.agent_core import CompactEvent
+
+        th = _make_tool_handler()
+        manager = AgentManager(th, compact_threshold=1000)
+        session_id = manager.get_session_id()
+        cbs = [UsageCallback(model="gpt-4", input_tokens=500, output_tokens=10), MessageCallback("done")]
+        _mock_loop_with_cbs(manager, session_id, cbs)
+
+        events = [e async for e in manager.astream_events(session_id, "go")]
+        assert not any(isinstance(e, CompactEvent) for e in events)
+
+    def test_compact_session_replaces_loop_and_returns_count(self):
+        th = _make_tool_handler()
+        manager = AgentManager(th, compact_threshold=100)
+        session_id = manager.get_session_id()
+        _mock_loop_with_cbs(manager, session_id, [])
+
+        loop = manager._sessions[session_id]
+        loop._config = _make_agent_config()
+        loop.messages = [
+            {"role": "system", "content": "sys"},
+            self._skill_call("tc1"),
+            self._tool_result("tc1"),
+            self._skill_call("tc2"),
+            self._tool_result("tc2"),
+        ]
+
+        removed = manager._compact_session(session_id)
+        assert removed == 2
+        new_loop = manager._sessions[session_id]
+        assert len(new_loop.messages) == 3  # system + tc2 pair
+
+    def test_compact_session_returns_zero_when_nothing_pruned(self):
+        th = _make_tool_handler()
+        manager = AgentManager(th, compact_threshold=100)
+        session_id = manager.get_session_id()
+        _mock_loop_with_cbs(manager, session_id, [])
+
+        loop = manager._sessions[session_id]
+        loop._config = _make_agent_config()
+        loop.messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ]
+
+        removed = manager._compact_session(session_id)
+        assert removed == 0
