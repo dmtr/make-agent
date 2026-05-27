@@ -171,7 +171,7 @@ class TurnBlock:
 
         # User message header
         parts.append(f"  ▶ {self.user_message}")
-        parts.append("")
+        parts.append("  " + "╌" * 36)
 
         # Assistant response body
         for line in self.response_lines:
