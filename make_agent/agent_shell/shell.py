@@ -467,21 +467,26 @@ class MakeAgentShell:
                 fut.set_result(False)
 
         app_style = Style.from_dict({
-            "header": "bg:#12141a #aeb5c1",
-            "header.sep": "bg:#12141a #555d6b",
-            "status.idle": "bg:#12141a #7b8291",
-            "status.streaming": "bg:#12141a #7fbf8f bold",
-            "status.tool": "bg:#12141a #78aecd bold",
-            "status.approval": "bg:#12141a #c7a56d bold",
-            "status.error": "bg:#12141a #c78282 bold",
-            "frame.border": "#3a4251",
-            "hint": "#6e7684 italic",
-            "hint.busy": "#78aecd italic",
-            "hint.approval": "#c7a56d bold",
-            "hint.approval.sep": "#555d6b",
-            "hint.approval.call": "#c7a56d",
-            "hint.transcript": "#78aecd bold",
-            "alert": "#c7a56d",
+            # Header bar — Catppuccin Mocha base/crust
+            "header": "bg:#181825 #cdd6f4",
+            "header.sep": "bg:#181825 #45475a",
+            # Status indicators
+            "status.idle": "bg:#181825 #6c7086",
+            "status.streaming": "bg:#181825 #a6e3a1 bold",
+            "status.tool": "bg:#181825 #89b4fa bold",
+            "status.approval": "bg:#181825 #f9e2af bold",
+            "status.error": "bg:#181825 #f38ba8 bold",
+            # Frame borders
+            "frame.border": "#313244",
+            # Hint bar
+            "hint": "#585b70 italic",
+            "hint.busy": "#89b4fa italic",
+            "hint.approval": "#f9e2af bold",
+            "hint.approval.sep": "#45475a",
+            "hint.approval.call": "#fab387",
+            "hint.transcript": "#89b4fa bold",
+            # Alert bar
+            "alert": "#fab387",
         })
 
         return Application(
