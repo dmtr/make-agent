@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import AsyncIterator, Callable
 from uuid import uuid4
 
+import litellm
+
 from make_agent.protocols import ToolHandlerProtocol
 
 from .bridge import (
@@ -41,6 +43,16 @@ Agent = AgenticLoop
 
 
 _SKILL_INSPECTION_TOOLS = frozenset({"list_skills", "read_skill"})
+
+
+def _is_context_exceeded(exc: Exception) -> bool:
+    """Return True when *exc* signals a context-window overflow."""
+    if isinstance(exc, litellm.ContextWindowExceededError):
+        return True
+    if isinstance(exc, litellm.BadRequestError):
+        msg = str(exc).lower()
+        return "context" in msg and any(w in msg for w in ("exceed", "window", "length", "limit", "size"))
+    return False
 
 
 def _prune_skill_messages(messages: list[dict]) -> list[dict]:
@@ -213,23 +225,49 @@ class AgentManager:
         unblock the generator.
         After the stream is exhausted, ``after_response`` is called on each
         middleware in order (innermost first).
+
+        If the API raises a context-window-exceeded error the session is
+        compacted on the spot and the turn is retried once.
         """
         request = Request(session_id=session_id, message=message)
-        chain = self._build_chain()
 
         content = ""
         input_tokens = 0
         output_tokens = 0
         model = ""
+        compacted_on_error = False
 
-        async for event in chain(request):
-            if isinstance(event, DoneEvent):
-                content = event.content
-            elif isinstance(event, UsageEvent):
-                input_tokens += event.input_tokens
-                output_tokens += event.output_tokens
-                model = event.model
-            yield event
+        try:
+            async for event in self._build_chain()(request):
+                if isinstance(event, DoneEvent):
+                    content = event.content
+                elif isinstance(event, UsageEvent):
+                    input_tokens += event.input_tokens
+                    output_tokens += event.output_tokens
+                    model = event.model
+                yield event
+        except Exception as exc:
+            if not _is_context_exceeded(exc):
+                raise
+            messages_removed = self._compact_session(session_id)
+            if messages_removed == 0:
+                raise
+            # The failing turn already appended the user message before the API
+            # call; strip it so the retry doesn't duplicate it.
+            new_loop = self.get_agent(session_id)
+            if new_loop._messages and new_loop._messages[-1].get("role") == "user":
+                new_loop._messages.pop()
+            compacted_on_error = True
+            yield CompactEvent(messages_removed=messages_removed)
+            # Retry the turn with the now-compacted session.
+            async for event in self._build_chain()(request):
+                if isinstance(event, DoneEvent):
+                    content = event.content
+                elif isinstance(event, UsageEvent):
+                    input_tokens += event.input_tokens
+                    output_tokens += event.output_tokens
+                    model = event.model
+                yield event
 
         response = Response(
             session_id=session_id,
@@ -241,7 +279,7 @@ class AgentManager:
         for mw in self._middlewares:
             await mw.after_response(request, response)
 
-        if self._compact_threshold > 0 and input_tokens >= self._compact_threshold:
+        if not compacted_on_error and self._compact_threshold > 0 and input_tokens >= self._compact_threshold:
             messages_removed = self._compact_session(session_id)
             if messages_removed > 0:
                 yield CompactEvent(messages_removed=messages_removed)

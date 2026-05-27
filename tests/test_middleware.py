@@ -362,3 +362,120 @@ class TestAgentManagerCompact:
 
         removed = manager._compact_session(session_id)
         assert removed == 0
+
+    async def test_compact_triggered_on_context_exceeded_error(self):
+        """When the API raises a context-window error the session is compacted and the turn retried."""
+        import litellm
+        from unittest.mock import patch
+        from make_agent.agent_core import CompactEvent
+
+        th = _make_tool_handler()
+        manager = AgentManager(th)
+        session_id = manager.get_session_id()
+
+        # First call raises BadRequestError simulating context overflow;
+        # second call (after compaction) succeeds.
+        call_count = 0
+
+        async def _fake_astream(msg):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise litellm.BadRequestError(
+                    message="request (50000 tokens) exceeds the available context size (40000 tokens)",
+                    model="claude",
+                    llm_provider="anthropic",
+                )
+            yield UsageCallback(model="claude", input_tokens=10, output_tokens=5)
+            yield MessageCallback("ok")
+
+        from make_agent.agent_core import AgenticLoop
+        loop = MagicMock(spec=AgenticLoop)
+        loop.astream = _fake_astream
+        loop._max_tool_output = 0
+        # Set _messages so the user-msg pop logic in the error handler has a list to work with.
+        loop._messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "do something"},
+        ]
+        manager._sessions[session_id] = loop
+
+        # Mock _compact_session so the error path doesn't create a real AgenticLoop.
+        with patch.object(manager, "_compact_session", return_value=2):
+            events = [e async for e in manager.astream_events(session_id, "do something")]
+
+        types = [type(e).__name__ for e in events]
+        assert "CompactEvent" in types
+        assert "DoneEvent" in types
+        assert call_count == 2  # first failed, second succeeded
+
+    async def test_context_exceeded_reraises_when_nothing_to_prune(self):
+        """If nothing can be pruned, re-raises the original error."""
+        import litellm
+        import pytest
+        from unittest.mock import patch
+
+        th = _make_tool_handler()
+        manager = AgentManager(th)
+        session_id = manager.get_session_id()
+
+        async def _fake_astream(msg):
+            raise litellm.BadRequestError(
+                message="request exceeds the available context size",
+                model="claude",
+                llm_provider="anthropic",
+            )
+            yield  # make it a generator
+
+        from make_agent.agent_core import AgenticLoop
+        loop = MagicMock(spec=AgenticLoop)
+        loop.astream = _fake_astream
+        loop._max_tool_output = 0
+        loop._messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+        manager._sessions[session_id] = loop
+
+        # _compact_session returns 0 → nothing pruned → should re-raise
+        with patch.object(manager, "_compact_session", return_value=0):
+            with pytest.raises(litellm.BadRequestError):
+                [e async for e in manager.astream_events(session_id, "hi")]
+
+
+# ── _is_context_exceeded ──────────────────────────────────────────────────────
+
+
+class TestIsContextExceeded:
+    def test_context_window_exceeded_error(self):
+        import litellm
+        from make_agent.agent_core.agent import _is_context_exceeded
+
+        exc = litellm.ContextWindowExceededError(
+            message="context window exceeded", model="claude", llm_provider="anthropic"
+        )
+        assert _is_context_exceeded(exc)
+
+    def test_bad_request_with_context_message(self):
+        import litellm
+        from make_agent.agent_core.agent import _is_context_exceeded
+
+        exc = litellm.BadRequestError(
+            message="request (44403 tokens) exceeds the available context size (42752 tokens)",
+            model="claude",
+            llm_provider="anthropic",
+        )
+        assert _is_context_exceeded(exc)
+
+    def test_bad_request_unrelated_message(self):
+        import litellm
+        from make_agent.agent_core.agent import _is_context_exceeded
+
+        exc = litellm.BadRequestError(
+            message="invalid parameter: max_tokens must be positive",
+            model="claude",
+            llm_provider="anthropic",
+        )
+        assert not _is_context_exceeded(exc)
+
+    def test_generic_exception_returns_false(self):
+        from make_agent.agent_core.agent import _is_context_exceeded
+
+        assert not _is_context_exceeded(ValueError("something went wrong"))
