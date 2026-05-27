@@ -337,12 +337,24 @@ class MakeAgentShell:
             lambda: state._approval_future is not None
             and not (state._approval_future.done() if state._approval_future else True)
         )
+        def _approval_hint() -> list[tuple[str, str]]:
+            card = state.pending_approval
+            if card is None:
+                return [("class:hint.approval", "  [Y] approve   [N] deny")]
+            args_repr = ", ".join(f"{k}={v!r}" for k, v in card.kwargs.items())[:60]
+            call = f"{card.skill_name}/{card.target}({args_repr})"
+            return [
+                ("class:hint.approval", "  [Y] approve   [N] deny"),
+                ("class:hint.approval.sep", "  │  "),
+                ("class:hint.approval.call", call),
+            ]
+
         hint_control = FormattedTextControl(
             lambda: (
                 [("class:hint.transcript", "  ► TRANSCRIPT  ↑↓ scroll   Ctrl+T return")]
                 if state.transcript_focused
                 else (
-                    [("class:hint.approval", "  [Y] approve   [N] deny")]
+                    _approval_hint()
                     if approval_active()
                     else (
                         [("class:hint.busy", "  ● working…  Ctrl-C cancel turn")]
@@ -463,6 +475,8 @@ class MakeAgentShell:
             "hint": "#6e7684 italic",
             "hint.busy": "#78aecd italic",
             "hint.approval": "#c7a56d bold",
+            "hint.approval.sep": "#555d6b",
+            "hint.approval.call": "#c7a56d",
             "hint.transcript": "#78aecd bold",
             "alert": "#c7a56d",
         })
