@@ -24,6 +24,16 @@ def _is_anthropic_model(model: str) -> bool:
     return lower.startswith("anthropic/") or "claude" in lower
 
 
+def _is_context_exceeded(exc: Exception) -> bool:
+    """Return True when *exc* signals a context-window overflow."""
+    if isinstance(exc, litellm.ContextWindowExceededError):
+        return True
+    if isinstance(exc, litellm.BadRequestError):
+        msg = str(exc).lower()
+        return "context" in msg and any(w in msg for w in ("exceed", "window", "length", "limit", "size"))
+    return False
+
+
 def _parse_retry_after(e: litellm.RateLimitError) -> float | None:
     """Return the wait time in seconds from a RateLimitError's response headers.
 

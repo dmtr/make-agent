@@ -325,15 +325,16 @@ class TestAgentManagerCompact:
         events = [e async for e in manager.astream_events(session_id, "go")]
         assert not any(isinstance(e, CompactEvent) for e in events)
 
-    def test_compact_session_replaces_loop_and_returns_count(self):
+    def test_compact_session_prunes_in_place_and_returns_count(self):
+        from make_agent.agent_core.loop import AgentConfig, AgenticLoop
+
         th = _make_tool_handler()
         manager = AgentManager(th, compact_threshold=100)
-        session_id = manager.get_session_id()
-        _mock_loop_with_cbs(manager, session_id, [])
+        config = AgentConfig(system_prompt="sys", model="gpt-4")
+        session_id = manager.create_session(config)
 
         loop = manager._sessions[session_id]
-        loop._config = _make_agent_config()
-        loop.messages = [
+        loop._messages = [
             {"role": "system", "content": "sys"},
             self._skill_call("tc1"),
             self._tool_result("tc1"),
@@ -343,18 +344,19 @@ class TestAgentManagerCompact:
 
         removed = manager._compact_session(session_id)
         assert removed == 2
-        new_loop = manager._sessions[session_id]
-        assert len(new_loop.messages) == 3  # system + tc2 pair
+        assert manager._sessions[session_id] is loop  # same object, pruned in-place
+        assert len(loop.messages) == 3  # system + tc2 pair
 
     def test_compact_session_returns_zero_when_nothing_pruned(self):
+        from make_agent.agent_core.loop import AgentConfig
+
         th = _make_tool_handler()
         manager = AgentManager(th, compact_threshold=100)
-        session_id = manager.get_session_id()
-        _mock_loop_with_cbs(manager, session_id, [])
+        config = AgentConfig(system_prompt="sys", model="gpt-4")
+        session_id = manager.create_session(config)
 
         loop = manager._sessions[session_id]
-        loop._config = _make_agent_config()
-        loop.messages = [
+        loop._messages = [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": "hello"},
@@ -364,20 +366,30 @@ class TestAgentManagerCompact:
         assert removed == 0
 
     async def test_compact_triggered_on_context_exceeded_error(self):
-        """When the API raises a context-window error the session is compacted and the turn retried."""
+        """When the API raises a context-window error, compact_fn prunes messages and the turn retries."""
         import litellm
+        import pytest
         from unittest.mock import patch
         from make_agent.agent_core import CompactEvent
+        from make_agent.agent_core.loop import AgentConfig
 
         th = _make_tool_handler()
         manager = AgentManager(th)
-        session_id = manager.get_session_id()
+        config = AgentConfig(system_prompt="sys", model="gpt-4")
+        session_id = manager.create_session(config)
 
-        # First call raises BadRequestError simulating context overflow;
-        # second call (after compaction) succeeds.
+        # Seed two purgeable skill-inspection turns so compact_fn has something to remove.
+        loop = manager._sessions[session_id]
+        loop._messages.extend([
+            self._skill_call("tc1"),
+            self._tool_result("tc1"),
+            self._skill_call("tc2"),
+            self._tool_result("tc2"),
+        ])
+
         call_count = 0
 
-        async def _fake_astream(msg):
+        async def _fake_completion(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -386,56 +398,43 @@ class TestAgentManagerCompact:
                     model="claude",
                     llm_provider="anthropic",
                 )
-            yield UsageCallback(model="claude", input_tokens=10, output_tokens=5)
-            yield MessageCallback("ok")
 
-        from make_agent.agent_core import AgenticLoop
-        loop = MagicMock(spec=AgenticLoop)
-        loop.astream = _fake_astream
-        loop._max_tool_output = 0
-        # Set _messages so the user-msg pop logic in the error handler has a list to work with.
-        loop._messages = [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "do something"},
-        ]
-        manager._sessions[session_id] = loop
+            async def _stream():
+                from tests.test_agent import _make_text_stream
+                async for chunk in _make_text_stream("ok"):
+                    yield chunk
 
-        # Mock _compact_session so the error path doesn't create a real AgenticLoop.
-        with patch.object(manager, "_compact_session", return_value=2):
+            return _stream()
+
+        with patch("make_agent.agent_core.loop._acompletion_with_retry", _fake_completion):
             events = [e async for e in manager.astream_events(session_id, "do something")]
 
         types = [type(e).__name__ for e in events]
         assert "CompactEvent" in types
         assert "DoneEvent" in types
-        assert call_count == 2  # first failed, second succeeded
+        assert call_count == 2  # first failed, second succeeded after compact
 
     async def test_context_exceeded_reraises_when_nothing_to_prune(self):
         """If nothing can be pruned, re-raises the original error."""
         import litellm
         import pytest
         from unittest.mock import patch
+        from make_agent.agent_core.loop import AgentConfig
 
         th = _make_tool_handler()
         manager = AgentManager(th)
-        session_id = manager.get_session_id()
+        config = AgentConfig(system_prompt="sys", model="gpt-4")
+        session_id = manager.create_session(config)
+        # No purgeable messages — compact_fn returns the same list.
 
-        async def _fake_astream(msg):
+        async def _fake_completion(*args, **kwargs):
             raise litellm.BadRequestError(
                 message="request exceeds the available context size",
                 model="claude",
                 llm_provider="anthropic",
             )
-            yield  # make it a generator
 
-        from make_agent.agent_core import AgenticLoop
-        loop = MagicMock(spec=AgenticLoop)
-        loop.astream = _fake_astream
-        loop._max_tool_output = 0
-        loop._messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
-        manager._sessions[session_id] = loop
-
-        # _compact_session returns 0 → nothing pruned → should re-raise
-        with patch.object(manager, "_compact_session", return_value=0):
+        with patch("make_agent.agent_core.loop._acompletion_with_retry", _fake_completion):
             with pytest.raises(litellm.BadRequestError):
                 [e async for e in manager.astream_events(session_id, "hi")]
 
@@ -446,7 +445,7 @@ class TestAgentManagerCompact:
 class TestIsContextExceeded:
     def test_context_window_exceeded_error(self):
         import litellm
-        from make_agent.agent_core.agent import _is_context_exceeded
+        from make_agent.agent_core.provider import _is_context_exceeded
 
         exc = litellm.ContextWindowExceededError(
             message="context window exceeded", model="claude", llm_provider="anthropic"
@@ -455,7 +454,7 @@ class TestIsContextExceeded:
 
     def test_bad_request_with_context_message(self):
         import litellm
-        from make_agent.agent_core.agent import _is_context_exceeded
+        from make_agent.agent_core.provider import _is_context_exceeded
 
         exc = litellm.BadRequestError(
             message="request (44403 tokens) exceeds the available context size (42752 tokens)",
@@ -466,7 +465,7 @@ class TestIsContextExceeded:
 
     def test_bad_request_unrelated_message(self):
         import litellm
-        from make_agent.agent_core.agent import _is_context_exceeded
+        from make_agent.agent_core.provider import _is_context_exceeded
 
         exc = litellm.BadRequestError(
             message="invalid parameter: max_tokens must be positive",
@@ -476,6 +475,6 @@ class TestIsContextExceeded:
         assert not _is_context_exceeded(exc)
 
     def test_generic_exception_returns_false(self):
-        from make_agent.agent_core.agent import _is_context_exceeded
+        from make_agent.agent_core.provider import _is_context_exceeded
 
         assert not _is_context_exceeded(ValueError("something went wrong"))

@@ -31,9 +31,9 @@ from .constants import (
 )
 from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import _render_html, export_conversation
-from .loop import AgentConfig, AgenticLoop, CallBack, MessageCallback, TokenCallback, ToolCallback, UsageCallback
+from .loop import AgentConfig, AgenticLoop, CallBack, CompactCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
-from .provider import _acompletion_with_retry, _is_anthropic_model, _parse_retry_after
+from .provider import _acompletion_with_retry, _is_anthropic_model, _is_context_exceeded, _parse_retry_after
 
 __all__ = [
     "DEFAULT_COMPACT_MAX_THRESHOLD",
@@ -46,6 +46,7 @@ __all__ = [
     "DEFAULT_TOOL_TIMEOUT",
     "DEFAULT_USE_PROMPT_CACHE",
     "_is_anthropic_model",
+    "_is_context_exceeded",
     "_prune_skill_messages",
     "Agent",
     "AgentConfig",
@@ -86,6 +87,7 @@ __all__ = [
     "export_conversation",
     # Internal — kept for AgenticLoop.arun() and tests only:
     "CallBack",
+    "CompactCallback",
     "MessageCallback",
     "TokenCallback",
     "ToolCallback",

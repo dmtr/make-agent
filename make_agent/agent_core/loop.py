@@ -8,7 +8,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncGenerator, AsyncIterator, NamedTuple
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, NamedTuple
 
 from make_agent.protocols import ToolHandlerProtocol
 
@@ -24,7 +24,7 @@ from .constants import (
     MAX_RUN_SECONDS_PER_REQUEST,
     MAX_TOOL_CALLS_PER_REQUEST,
 )
-from .provider import _acompletion_with_retry, _is_anthropic_model
+from .provider import _acompletion_with_retry, _is_anthropic_model, _is_context_exceeded
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +134,14 @@ class UsageCallback(CallBack):
         self.output_tokens = output_tokens
 
 
+class CompactCallback(CallBack):
+    """Context window was compacted. Fire-and-forget; always ready."""
+
+    def __init__(self, messages_removed: int) -> None:
+        super().__init__("")
+        self.messages_removed = messages_removed
+
+
 class AgentConfig(NamedTuple):
     system_prompt: str
     model: str
@@ -147,6 +155,7 @@ class AgentConfig(NamedTuple):
     session_id: str | None = None
     project_dir: Path = Path()
     use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE
+    compact_fn: Callable[[list[dict]], list[dict]] | None = None
 
 
 def _parse_item(doc: Any) -> list[_ToolCall] | None:
@@ -223,6 +232,7 @@ class AgenticLoop:
         self._reasoning_effort = config.reasoning_effort
         self._tool_handler = tool_handler
         self._config = config
+        self._compact_fn = config.compact_fn
         self._messages: list[dict] = []
         self._gen: AsyncGenerator[CallBack, None] | None = None
         if config.system_prompt:
@@ -292,6 +302,7 @@ class AgenticLoop:
         model_turns = 0
         tool_calls_executed = 0
         started_at = time.monotonic()
+        compacted = False
 
         while True:
             if model_turns >= MAX_MODEL_TURNS_PER_REQUEST:
@@ -299,14 +310,25 @@ class AgenticLoop:
             if time.monotonic() - started_at >= MAX_RUN_SECONDS_PER_REQUEST:
                 raise RuntimeError(f"aborted: exceeded {MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
 
-            stream = await _acompletion_with_retry(
-                self._model,
-                self._messages,
-                self._tool_kwargs,
-                self._max_retries,
-                self._max_tokens,
-                self._reasoning_effort,
-            )
+            try:
+                stream = await _acompletion_with_retry(
+                    self._model,
+                    self._messages,
+                    self._tool_kwargs,
+                    self._max_retries,
+                    self._max_tokens,
+                    self._reasoning_effort,
+                )
+            except Exception as exc:
+                if not compacted and self._compact_fn and _is_context_exceeded(exc):
+                    pruned = self._compact_fn(self._messages)
+                    removed = len(self._messages) - len(pruned)
+                    if removed > 0:
+                        self._messages = pruned
+                        compacted = True
+                        yield CompactCallback(messages_removed=removed)
+                        continue
+                raise
             model_turns += 1
 
             # Accumulate streaming response.
