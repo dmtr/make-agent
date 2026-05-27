@@ -467,26 +467,26 @@ class MakeAgentShell:
                 fut.set_result(False)
 
         app_style = Style.from_dict({
-            # Header bar — Catppuccin Mocha base/crust
-            "header": "bg:#181825 #cdd6f4",
-            "header.sep": "bg:#181825 #45475a",
+            # Header bar — IDEA Darcula toolbar
+            "header": "bg:#3c3f41 #a9b7c6",
+            "header.sep": "bg:#3c3f41 #515151",
             # Status indicators
-            "status.idle": "bg:#181825 #6c7086",
-            "status.streaming": "bg:#181825 #a6e3a1 bold",
-            "status.tool": "bg:#181825 #89b4fa bold",
-            "status.approval": "bg:#181825 #f9e2af bold",
-            "status.error": "bg:#181825 #f38ba8 bold",
+            "status.idle": "bg:#3c3f41 #808080",
+            "status.streaming": "bg:#3c3f41 #6a8759 bold",
+            "status.tool": "bg:#3c3f41 #6897bb bold",
+            "status.approval": "bg:#3c3f41 #ffc66d bold",
+            "status.error": "bg:#3c3f41 #ff6b68 bold",
             # Frame borders
-            "frame.border": "#313244",
+            "frame.border": "#4e5254",
             # Hint bar
-            "hint": "#585b70 italic",
-            "hint.busy": "#89b4fa italic",
-            "hint.approval": "#f9e2af bold",
-            "hint.approval.sep": "#45475a",
-            "hint.approval.call": "#fab387",
-            "hint.transcript": "#89b4fa bold",
+            "hint": "#606366 italic",
+            "hint.busy": "#6897bb italic",
+            "hint.approval": "#ffc66d bold",
+            "hint.approval.sep": "#515151",
+            "hint.approval.call": "#cc7832",
+            "hint.transcript": "#6897bb bold",
             # Alert bar
-            "alert": "#fab387",
+            "alert": "#cc7832",
         })
 
         return Application(
