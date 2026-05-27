@@ -183,11 +183,6 @@ class TurnBlock:
             for tool in self.tools:
                 parts.append(tool.render())
 
-        # Inline approval card
-        if self.approval:
-            parts.append("")
-            parts.append(self.approval.render())
-
         # Turn footer — always shown for finished turns
         if self.state != "streaming":
             elapsed = self.elapsed or (time.time() - self.start_time)
