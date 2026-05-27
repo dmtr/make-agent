@@ -301,6 +301,7 @@ class MakeAgentShell:
             self._transcript_area.text = text
             if not self._state.transcript_focused:
                 self._transcript_area.buffer.cursor_position = len(text)
+                self._transcript_area.window.vertical_scroll = 999999
         if self._app is not None:
             self._app.invalidate()
 
