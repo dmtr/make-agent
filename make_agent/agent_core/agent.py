@@ -44,30 +44,37 @@ _SKILL_INSPECTION_TOOLS = frozenset({"list_skills", "read_skill"})
 
 
 def _prune_skill_messages(messages: list[dict]) -> list[dict]:
-    """Remove all but the last purely-skill-inspection assistant turn.
+    """Remove outdated skill-inspection assistant turns.
 
     An assistant turn is "purgeable" when every tool call it contains is either
-    ``list_skills`` or ``read_skill``.  All purgeable turns except the last one
-    are dropped together with their corresponding tool-result messages.
-    Everything else (system, user, assistant text, other tool calls) is kept.
+    ``list_skills`` or ``read_skill``.  The most recent purgeable turn that
+    contains a ``list_skills`` call and the most recent purgeable turn that
+    contains a ``read_skill`` call are both retained (they may be the same turn).
+    All other purgeable turns are dropped together with their corresponding
+    tool-result messages.  Everything else (system, user, assistant text, other
+    tool calls) is kept.
 
-    Returns the original list unchanged when fewer than two purgeable turns exist.
+    Returns the original list unchanged when there is nothing to drop.
     """
-    purgeable_indices: list[int] = []
+    purgeable: list[tuple[int, frozenset[str]]] = []
     for i, msg in enumerate(messages):
         if msg.get("role") != "assistant":
             continue
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
             continue
-        names = {tc.get("function", {}).get("name") for tc in tool_calls}
+        names = frozenset(tc.get("function", {}).get("name") for tc in tool_calls)
         if names <= _SKILL_INSPECTION_TOOLS:
-            purgeable_indices.append(i)
+            purgeable.append((i, names))
 
-    if len(purgeable_indices) <= 1:
+    last_list = next((i for i, names in reversed(purgeable) if "list_skills" in names), None)
+    last_read = next((i for i, names in reversed(purgeable) if "read_skill" in names), None)
+    to_keep = {x for x in (last_list, last_read) if x is not None}
+    to_drop = {i for i, _ in purgeable} - to_keep
+
+    if not to_drop:
         return list(messages)
 
-    to_drop = set(purgeable_indices[:-1])
     dropped_call_ids: set[str] = set()
     for i in to_drop:
         for tc in messages[i].get("tool_calls", []):

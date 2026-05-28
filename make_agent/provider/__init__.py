@@ -33,7 +33,8 @@ def is_context_exceeded(exc: Exception) -> bool:
     """Return True when *exc* signals a context-window overflow."""
     if isinstance(exc, litellm.ContextWindowExceededError):
         return True
-    if isinstance(exc, litellm.BadRequestError):
+    is_bad_request = isinstance(exc, litellm.BadRequestError) or getattr(exc, "status_code", None) == 400
+    if is_bad_request:
         msg = str(exc).lower()
         return "context" in msg and any(w in msg for w in ("exceed", "window", "length", "limit", "size"))
     return False

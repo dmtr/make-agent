@@ -302,7 +302,6 @@ class AgenticLoop:
         model_turns = 0
         tool_calls_executed = 0
         started_at = time.monotonic()
-        compacted = False
 
         while True:
             if model_turns >= MAX_MODEL_TURNS_PER_REQUEST:
@@ -320,13 +319,12 @@ class AgenticLoop:
                     self._reasoning_effort,
                 )
             except Exception as exc:
-                if not compacted and self._compact_fn and is_context_exceeded(exc):
+                if self._compact_fn and is_context_exceeded(exc):
                     logger.info("Context window exceeded; attempting compaction")
                     pruned = self._compact_fn(self._messages)
                     removed = len(self._messages) - len(pruned)
                     if removed > 0:
                         self._messages = pruned
-                        compacted = True
                         yield CompactCallback(messages_removed=removed)
                         continue
                 raise
@@ -380,12 +378,11 @@ class AgenticLoop:
                     if getattr(chunk, "usage", None) is not None:
                         usage = chunk.usage
             except Exception as exc:
-                if not compacted and self._compact_fn and is_context_exceeded(exc):
+                if self._compact_fn and is_context_exceeded(exc):
                     pruned = self._compact_fn(self._messages)
                     removed = len(self._messages) - len(pruned)
                     if removed > 0:
                         self._messages = pruned
-                        compacted = True
                         yield CompactCallback(messages_removed=removed)
                         continue
                 raise

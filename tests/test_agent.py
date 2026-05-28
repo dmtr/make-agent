@@ -858,3 +858,93 @@ class TestPruneSkillMessages:
             self._skill_call("list_skills", "c"),
             self._tool_result("c"),
         ]
+
+    def test_list_skills_and_read_skill_both_kept(self):
+        """The last list_skills turn AND the last read_skill turn are both retained."""
+        from make_agent.agent_core import _prune_skill_messages
+
+        msgs = [
+            self._sys(),
+            self._skill_call("list_skills", "ls1"),
+            self._tool_result("ls1", "skills list"),
+            self._skill_call("read_skill", "rs1"),
+            self._tool_result("rs1", "skill content"),
+        ]
+        result = _prune_skill_messages(msgs)
+        # Both are the last of their type → nothing to drop
+        assert result == msgs
+
+    def test_older_list_skills_dropped_when_newer_read_skill_exists(self):
+        """Older list_skills is dropped; the last list_skills and last read_skill survive."""
+        from make_agent.agent_core import _prune_skill_messages
+
+        msgs = [
+            self._sys(),
+            self._skill_call("list_skills", "ls1"),
+            self._tool_result("ls1", "old list"),
+            self._skill_call("list_skills", "ls2"),
+            self._tool_result("ls2", "new list"),
+            self._skill_call("read_skill", "rs1"),
+            self._tool_result("rs1", "skill content"),
+        ]
+        result = _prune_skill_messages(msgs)
+        assert result == [
+            self._sys(),
+            self._skill_call("list_skills", "ls2"),
+            self._tool_result("ls2", "new list"),
+            self._skill_call("read_skill", "rs1"),
+            self._tool_result("rs1", "skill content"),
+        ]
+
+    def test_list_skills_kept_when_newer_read_skill_exists(self):
+        """The last list_skills turn is kept even when a later read_skill turn exists."""
+        from make_agent.agent_core import _prune_skill_messages
+
+        msgs = [
+            self._sys(),
+            self._skill_call("list_skills", "ls1"),
+            self._tool_result("ls1", "skills list"),
+            self._skill_call("read_skill", "rs1"),
+            self._tool_result("rs1", "old content"),
+            self._skill_call("read_skill", "rs2"),
+            self._tool_result("rs2", "new content"),
+        ]
+        result = _prune_skill_messages(msgs)
+        assert result == [
+            self._sys(),
+            self._skill_call("list_skills", "ls1"),
+            self._tool_result("ls1", "skills list"),
+            self._skill_call("read_skill", "rs2"),
+            self._tool_result("rs2", "new content"),
+        ]
+
+    def test_turn_with_both_tools_counts_for_both(self):
+        """A single purgeable turn with list_skills+read_skill counts as last for both types."""
+        from make_agent.agent_core import _prune_skill_messages
+
+        combined = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "ls1", "type": "function", "function": {"name": "list_skills", "arguments": "{}"}},
+                {"id": "rs1", "type": "function", "function": {"name": "read_skill", "arguments": "{}"}},
+            ],
+        }
+        msgs = [
+            self._sys(),
+            self._skill_call("list_skills", "ls0"),
+            self._tool_result("ls0"),
+            self._skill_call("read_skill", "rs0"),
+            self._tool_result("rs0"),
+            combined,
+            self._tool_result("ls1"),
+            self._tool_result("rs1"),
+        ]
+        result = _prune_skill_messages(msgs)
+        # combined is the last for both list_skills and read_skill → ls0 and rs0 dropped
+        assert result == [
+            self._sys(),
+            combined,
+            self._tool_result("ls1"),
+            self._tool_result("rs1"),
+        ]

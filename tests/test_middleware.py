@@ -489,6 +489,122 @@ class TestAgentManagerCompact:
             with pytest.raises(litellm.BadRequestError):
                 [e async for e in manager.astream_events(session_id, "hi")]
 
+    async def test_compact_triggered_on_custom_provider_error(self):
+        """A non-litellm exception with status_code=400 from a custom provider triggers compact."""
+        import pytest
+        from unittest.mock import patch
+        from make_agent.agent_core import CompactEvent
+        from make_agent.agent_core.loop import AgentConfig
+
+        th = _make_tool_handler()
+        manager = AgentManager(th)
+        config = AgentConfig(system_prompt="sys", model="custom/my-model")
+        session_id = manager.create_session(config)
+
+        loop = manager._sessions[session_id]
+        loop._messages.extend([
+            self._skill_call("tc1"),
+            self._tool_result("tc1"),
+            self._skill_call("tc2"),
+            self._tool_result("tc2"),
+        ])
+
+        call_count = 0
+
+        class CustomBadRequestError(Exception):
+            status_code = 400
+
+        async def _fake_completion(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise CustomBadRequestError(
+                    "request (11313 tokens) exceeds the available context size (8192 tokens)"
+                )
+
+            async def _stream():
+                from tests.test_agent import _make_text_stream
+                async for chunk in _make_text_stream("ok"):
+                    yield chunk
+
+            return _stream()
+
+        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion):
+            events = [e async for e in manager.astream_events(session_id, "do something")]
+
+        types = [type(e).__name__ for e in events]
+        assert "CompactEvent" in types
+        assert "DoneEvent" in types
+        assert call_count == 2
+
+    async def test_multi_round_compaction(self):
+        """If context is still exceeded after one compact round, a second round fires.
+
+        This tests that the removal of the 'compacted' flag allows reactive compaction
+        to retry when the first compact round wasn't enough to fit within the window.
+        Uses a custom compact_fn that removes one pair per call to demonstrate multi-round.
+        """
+        import litellm
+        from unittest.mock import patch
+        from make_agent.agent_core import CompactEvent
+        from make_agent.agent_core.loop import AgentConfig
+
+        th = _make_tool_handler()
+        manager = AgentManager(th)
+        config = AgentConfig(system_prompt="sys", model="gpt-4")
+        session_id = manager.create_session(config)
+
+        loop = manager._sessions[session_id]
+        # Seed four purgeable turns
+        purgeable_pairs = [
+            (self._skill_call(f"tc{i}"), self._tool_result(f"tc{i}")) for i in range(1, 5)
+        ]
+        for assistant, tool in purgeable_pairs:
+            loop._messages.extend([assistant, tool])
+
+        # Custom compact that removes only the oldest purgeable pair per call
+        def _one_at_a_time(messages):
+            for i, msg in enumerate(messages):
+                if (
+                    msg.get("role") == "assistant"
+                    and "tool_calls" in msg
+                    and any(
+                        tc["function"]["name"] == "list_skills"
+                        for tc in msg["tool_calls"]
+                    )
+                ):
+                    # Remove this pair (assistant + next tool message)
+                    return messages[:i] + messages[i + 2:]
+            return messages
+
+        loop._compact_fn = _one_at_a_time
+
+        call_count = 0
+
+        async def _fake_completion(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                raise litellm.BadRequestError(
+                    message="request exceeds the available context size",
+                    model="gpt-4",
+                    llm_provider="openai",
+                )
+
+            async def _stream():
+                from tests.test_agent import _make_text_stream
+                async for chunk in _make_text_stream("ok"):
+                    yield chunk
+
+            return _stream()
+
+        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion):
+            events = [e async for e in manager.astream_events(session_id, "do something")]
+
+        compact_events = [e for e in events if isinstance(e, CompactEvent)]
+        assert len(compact_events) == 2  # two rounds of compaction
+        assert call_count == 3  # failed twice, succeeded third time
+
 
 # ── is_context_exceeded ──────────────────────────────────────────────────────
 
@@ -529,3 +645,25 @@ class TestIsContextExceeded:
         from make_agent.provider import is_context_exceeded
 
         assert not is_context_exceeded(ValueError("something went wrong"))
+
+    def test_non_litellm_bad_request_with_context_message(self):
+        """A non-litellm exception with status_code=400 and a context-overflow message is detected."""
+        from make_agent.provider import is_context_exceeded
+
+        class CustomBadRequestError(Exception):
+            status_code = 400
+
+        exc = CustomBadRequestError(
+            "request (11313 tokens) exceeds the available context size (8192 tokens)"
+        )
+        assert is_context_exceeded(exc)
+
+    def test_non_litellm_bad_request_unrelated_message(self):
+        """A non-litellm exception with status_code=400 but unrelated message is not detected."""
+        from make_agent.provider import is_context_exceeded
+
+        class CustomBadRequestError(Exception):
+            status_code = 400
+
+        exc = CustomBadRequestError("invalid parameter: stop_sequences")
+        assert not is_context_exceeded(exc)
