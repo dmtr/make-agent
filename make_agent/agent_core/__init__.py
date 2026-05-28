@@ -19,8 +19,6 @@ from .bridge import (
     TurnStarted,
 )
 from .constants import (
-    DEFAULT_COMPACT_MAX_THRESHOLD,
-    DEFAULT_COMPACT_MIN_THRESHOLD,
     DEFAULT_COMPACT_THRESHOLD_RATIO,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
@@ -36,8 +34,6 @@ from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 from make_agent.provider import acompletion_with_retry, is_anthropic_model, is_context_exceeded, parse_retry_after
 
 __all__ = [
-    "DEFAULT_COMPACT_MAX_THRESHOLD",
-    "DEFAULT_COMPACT_MIN_THRESHOLD",
     "DEFAULT_COMPACT_THRESHOLD_RATIO",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_MAX_TOKENS",

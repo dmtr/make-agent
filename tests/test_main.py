@@ -46,8 +46,6 @@ def _run_args(**kwargs) -> argparse.Namespace:
         prompt_cache=False,
         compact_context_window=0,
         compact_threshold_ratio=0.75,
-        compact_min_threshold=24000,
-        compact_max_threshold=120000,
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)

@@ -10,12 +10,17 @@ import litellm
 
 from make_agent.agent_core.constants import DEFAULT_MAX_TOKENS, DEFAULT_REASONING_EFFORT
 
+DEFAULT_CONTEXT_WINDOW = 64_000
+DEFAULT_COMPACT_THRESHOLD_RATIO = 0.75
+
 litellm.suppress_debug_info = True
 litellm.verbose = False
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
 logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
 litellm.drop_params = True
+
+logger = logging.getLogger(__name__)
 
 
 def is_anthropic_model(model: str) -> bool:
@@ -90,8 +95,33 @@ async def acompletion_with_retry(
             await asyncio.sleep(wait)
 
 
+def compute_compact_threshold(
+    model: str,
+    threshold_ratio: float = DEFAULT_COMPACT_THRESHOLD_RATIO,
+    context_window: int = 0,
+) -> int:
+    """Return the auto-compact threshold in tokens.
+
+    Uses *context_window* when non-zero; otherwise queries ``litellm.get_model_info``.
+    Falls back to ``DEFAULT_CONTEXT_WINDOW`` when the model is unknown to litellm.
+    """
+    window = context_window
+    if not window:
+        try:
+            info = litellm.get_model_info(model)
+            window = info.get("max_input_tokens") or info.get("max_tokens") or 0
+        except Exception:
+            logger.debug("Could not get model info for %r; using default context window", model)
+    if not window:
+        window = DEFAULT_CONTEXT_WINDOW
+    return int(window * threshold_ratio)
+
+
 __all__ = [
+    "DEFAULT_COMPACT_THRESHOLD_RATIO",
+    "DEFAULT_CONTEXT_WINDOW",
     "acompletion_with_retry",
+    "compute_compact_threshold",
     "is_anthropic_model",
     "is_context_exceeded",
     "parse_retry_after",

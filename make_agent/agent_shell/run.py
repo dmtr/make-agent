@@ -5,10 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-import litellm
 from make_agent.agent_core import (
-    DEFAULT_COMPACT_MAX_THRESHOLD,
-    DEFAULT_COMPACT_MIN_THRESHOLD,
     DEFAULT_COMPACT_THRESHOLD_RATIO,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
@@ -22,38 +19,12 @@ from make_agent.agent_core import (
 )
 from make_agent.app_dirs import project_dir
 from make_agent.memory import Memory
+from make_agent.provider import compute_compact_threshold
 from make_agent.tool_handler import ToolHandler
 
 from .shell import MakeAgentShell
 
 logger = logging.getLogger(__name__)
-
-
-def _compute_compact_threshold(
-    model: str,
-    context_window: int,
-    threshold_ratio: float,
-    min_threshold: int,
-    max_threshold: int,
-) -> int:
-    """Compute the auto-compact threshold in tokens.
-
-    Uses *context_window* if non-zero; otherwise auto-detects via
-    ``litellm.get_model_info``.  Returns 0 (disabled) when the context window
-    cannot be determined.
-    """
-    max_input = context_window
-    if not max_input:
-        try:
-            info = litellm.get_model_info(model)
-            max_input = info.get("max_input_tokens") or info.get("max_tokens") or 0
-        except Exception:
-            logger.exception("Could not get model info for %r; auto-compact disabled", model)
-            return 0
-    if not max_input:
-        return 0
-    threshold = int(max_input * threshold_ratio)
-    return max(min_threshold, min(max_threshold, threshold))
 
 
 async def run(
@@ -70,8 +41,6 @@ async def run(
     use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE,
     compact_context_window: int = 0,
     compact_threshold_ratio: float = DEFAULT_COMPACT_THRESHOLD_RATIO,
-    compact_min_threshold: int = DEFAULT_COMPACT_MIN_THRESHOLD,
-    compact_max_threshold: int = DEFAULT_COMPACT_MAX_THRESHOLD,
 ) -> None:
     """Start the interactive shell (or send a single prompt and return)."""
     await tool_handler.setup(model)
@@ -86,12 +55,10 @@ async def run(
         project_dir=project_dir(),
         use_prompt_cache=use_prompt_cache,
     )
-    compact_threshold = _compute_compact_threshold(
+    compact_threshold = compute_compact_threshold(
         model=model,
-        context_window=compact_context_window,
         threshold_ratio=compact_threshold_ratio,
-        min_threshold=compact_min_threshold,
-        max_threshold=compact_max_threshold,
+        context_window=compact_context_window,
     )
     logger.info("Auto-compact threshold set to %d tokens", compact_threshold)
     agent_manager = AgentManager(

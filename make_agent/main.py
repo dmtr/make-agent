@@ -7,8 +7,6 @@ import sys
 from pathlib import Path
 
 from make_agent.agent_core import (
-    DEFAULT_COMPACT_MAX_THRESHOLD,
-    DEFAULT_COMPACT_MIN_THRESHOLD,
     DEFAULT_COMPACT_THRESHOLD_RATIO,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
@@ -133,8 +131,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
             use_prompt_cache=args.prompt_cache,
             compact_context_window=args.compact_context_window,
             compact_threshold_ratio=args.compact_threshold_ratio,
-            compact_min_threshold=args.compact_min_threshold,
-            compact_max_threshold=args.compact_max_threshold,
         )
     )
 
@@ -262,20 +258,6 @@ def main() -> None:
         default=DEFAULT_COMPACT_THRESHOLD_RATIO,
         metavar="RATIO",
         help=f"Trigger auto-compact when context reaches this fraction of the context window (default: {DEFAULT_COMPACT_THRESHOLD_RATIO})",
-    )
-    run_p.add_argument(
-        "--compact-min-threshold",
-        type=int,
-        default=DEFAULT_COMPACT_MIN_THRESHOLD,
-        metavar="TOKENS",
-        help=f"Lower clamp for adaptive compact threshold (default: {DEFAULT_COMPACT_MIN_THRESHOLD})",
-    )
-    run_p.add_argument(
-        "--compact-max-threshold",
-        type=int,
-        default=DEFAULT_COMPACT_MAX_THRESHOLD,
-        metavar="TOKENS",
-        help=f"Upper clamp for adaptive compact threshold (default: {DEFAULT_COMPACT_MAX_THRESHOLD})",
     )
     raw = sys.argv[1:]
     if not raw or raw[0] not in ("run", "-h", "--help"):
