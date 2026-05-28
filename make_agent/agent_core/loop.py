@@ -336,47 +336,58 @@ class AgenticLoop:
             tool_call_acc: dict[int, dict] = {}  # index → {id, name, arguments}
             usage = None
 
-            async for chunk in stream:
-                if not chunk.choices:
+            try:
+                async for chunk in stream:
+                    if not chunk.choices:
+                        if getattr(chunk, "usage", None) is not None:
+                            usage = chunk.usage
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        content_parts.append(delta.content)
+                        yield TokenCallback(delta.content)
+                    if delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            if tc_delta.id:
+                                # Tool call start event (identified by non-empty id).
+                                # Some providers (e.g. Anthropic via any_llm) hardcode
+                                # index=0 for every tool call, so use id-based lookup
+                                # instead of the index to correctly handle parallel calls.
+                                idx = next(
+                                    (k for k, v in tool_call_acc.items() if v["id"] == tc_delta.id),
+                                    None,
+                                )
+                                if idx is None:
+                                    idx = max(tool_call_acc.keys(), default=-1) + 1
+                                    tool_call_acc[idx] = {
+                                        "id": tc_delta.id,
+                                        "name": "",
+                                        "arguments": "",
+                                    }
+                            else:
+                                # Argument delta: belongs to the most recently started call.
+                                idx = max(tool_call_acc.keys(), default=tc_delta.index)
+                                if idx not in tool_call_acc:
+                                    tool_call_acc[idx] = {
+                                        "id": "",
+                                        "name": "",
+                                        "arguments": "",
+                                    }
+                            if tc_delta.function:
+                                tool_call_acc[idx]["name"] += tc_delta.function.name or ""
+                                tool_call_acc[idx]["arguments"] += tc_delta.function.arguments or ""
                     if getattr(chunk, "usage", None) is not None:
                         usage = chunk.usage
-                    continue
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    content_parts.append(delta.content)
-                    yield TokenCallback(delta.content)
-                if delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        if tc_delta.id:
-                            # Tool call start event (identified by non-empty id).
-                            # Some providers (e.g. Anthropic via any_llm) hardcode
-                            # index=0 for every tool call, so use id-based lookup
-                            # instead of the index to correctly handle parallel calls.
-                            idx = next(
-                                (k for k, v in tool_call_acc.items() if v["id"] == tc_delta.id),
-                                None,
-                            )
-                            if idx is None:
-                                idx = max(tool_call_acc.keys(), default=-1) + 1
-                                tool_call_acc[idx] = {
-                                    "id": tc_delta.id,
-                                    "name": "",
-                                    "arguments": "",
-                                }
-                        else:
-                            # Argument delta: belongs to the most recently started call.
-                            idx = max(tool_call_acc.keys(), default=tc_delta.index)
-                            if idx not in tool_call_acc:
-                                tool_call_acc[idx] = {
-                                    "id": "",
-                                    "name": "",
-                                    "arguments": "",
-                                }
-                        if tc_delta.function:
-                            tool_call_acc[idx]["name"] += tc_delta.function.name or ""
-                            tool_call_acc[idx]["arguments"] += tc_delta.function.arguments or ""
-                if getattr(chunk, "usage", None) is not None:
-                    usage = chunk.usage
+            except Exception as exc:
+                if not compacted and self._compact_fn and _is_context_exceeded(exc):
+                    pruned = self._compact_fn(self._messages)
+                    removed = len(self._messages) - len(pruned)
+                    if removed > 0:
+                        self._messages = pruned
+                        compacted = True
+                        yield CompactCallback(messages_removed=removed)
+                        continue
+                raise
 
             content = "".join(content_parts)
             logger.debug(

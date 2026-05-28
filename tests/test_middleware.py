@@ -414,6 +414,57 @@ class TestAgentManagerCompact:
         assert "DoneEvent" in types
         assert call_count == 2  # first failed, second succeeded after compact
 
+    async def test_compact_triggered_during_stream_iteration(self):
+        """Context-exceeded raised during stream iteration (not at call time) is also handled."""
+        import litellm
+        from unittest.mock import patch
+        from make_agent.agent_core import CompactEvent
+        from make_agent.agent_core.loop import AgentConfig
+
+        th = _make_tool_handler()
+        manager = AgentManager(th)
+        config = AgentConfig(system_prompt="sys", model="gpt-4")
+        session_id = manager.create_session(config)
+
+        loop = manager._sessions[session_id]
+        loop._messages.extend([
+            self._skill_call("tc1"),
+            self._tool_result("tc1"),
+            self._skill_call("tc2"),
+            self._tool_result("tc2"),
+        ])
+
+        call_count = 0
+
+        async def _fake_completion(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+
+            async def _error_stream():
+                # Raise on first chunk — simulates Anthropic returning the error
+                # in the first SSE event rather than at connection time.
+                raise litellm.BadRequestError(
+                    message="request (43980 tokens) exceeds the available context size (42752 tokens)",
+                    model="claude",
+                    llm_provider="anthropic",
+                )
+                yield  # make it an async generator
+
+            async def _ok_stream():
+                from tests.test_agent import _make_text_stream
+                async for chunk in _make_text_stream("ok"):
+                    yield chunk
+
+            return _error_stream() if call_count == 1 else _ok_stream()
+
+        with patch("make_agent.agent_core.loop._acompletion_with_retry", _fake_completion):
+            events = [e async for e in manager.astream_events(session_id, "do something")]
+
+        types = [type(e).__name__ for e in events]
+        assert "CompactEvent" in types
+        assert "DoneEvent" in types
+        assert call_count == 2
+
     async def test_context_exceeded_reraises_when_nothing_to_prune(self):
         """If nothing can be pruned, re-raises the original error."""
         import litellm
