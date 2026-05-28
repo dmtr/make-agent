@@ -24,7 +24,7 @@ from .constants import (
     MAX_RUN_SECONDS_PER_REQUEST,
     MAX_TOOL_CALLS_PER_REQUEST,
 )
-from .provider import _acompletion_with_retry, _is_anthropic_model, _is_context_exceeded
+from make_agent.provider import acompletion_with_retry, is_anthropic_model, is_context_exceeded
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,7 @@ class AgenticLoop:
         self._messages: list[dict] = []
         self._gen: AsyncGenerator[CallBack, None] | None = None
         if config.system_prompt:
-            if config.use_prompt_cache and _is_anthropic_model(config.model):
+            if config.use_prompt_cache and is_anthropic_model(config.model):
                 system_content: str | list = [
                     {
                         "type": "text",
@@ -311,7 +311,7 @@ class AgenticLoop:
                 raise RuntimeError(f"aborted: exceeded {MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
 
             try:
-                stream = await _acompletion_with_retry(
+                stream = await acompletion_with_retry(
                     self._model,
                     self._messages,
                     self._tool_kwargs,
@@ -320,7 +320,7 @@ class AgenticLoop:
                     self._reasoning_effort,
                 )
             except Exception as exc:
-                if not compacted and self._compact_fn and _is_context_exceeded(exc):
+                if not compacted and self._compact_fn and is_context_exceeded(exc):
                     logger.info("Context window exceeded; attempting compaction")
                     pruned = self._compact_fn(self._messages)
                     removed = len(self._messages) - len(pruned)
@@ -380,7 +380,7 @@ class AgenticLoop:
                     if getattr(chunk, "usage", None) is not None:
                         usage = chunk.usage
             except Exception as exc:
-                if not compacted and self._compact_fn and _is_context_exceeded(exc):
+                if not compacted and self._compact_fn and is_context_exceeded(exc):
                     pruned = self._compact_fn(self._messages)
                     removed = len(self._messages) - len(pruned)
                     if removed > 0:

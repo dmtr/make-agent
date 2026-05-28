@@ -406,7 +406,7 @@ class TestAgentManagerCompact:
 
             return _stream()
 
-        with patch("make_agent.agent_core.loop._acompletion_with_retry", _fake_completion):
+        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion):
             events = [e async for e in manager.astream_events(session_id, "do something")]
 
         types = [type(e).__name__ for e in events]
@@ -457,7 +457,7 @@ class TestAgentManagerCompact:
 
             return _error_stream() if call_count == 1 else _ok_stream()
 
-        with patch("make_agent.agent_core.loop._acompletion_with_retry", _fake_completion):
+        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion):
             events = [e async for e in manager.astream_events(session_id, "do something")]
 
         types = [type(e).__name__ for e in events]
@@ -485,47 +485,47 @@ class TestAgentManagerCompact:
                 llm_provider="anthropic",
             )
 
-        with patch("make_agent.agent_core.loop._acompletion_with_retry", _fake_completion):
+        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion):
             with pytest.raises(litellm.BadRequestError):
                 [e async for e in manager.astream_events(session_id, "hi")]
 
 
-# ── _is_context_exceeded ──────────────────────────────────────────────────────
+# ── is_context_exceeded ──────────────────────────────────────────────────────
 
 
 class TestIsContextExceeded:
     def test_context_window_exceeded_error(self):
         import litellm
-        from make_agent.agent_core.provider import _is_context_exceeded
+        from make_agent.provider import is_context_exceeded
 
         exc = litellm.ContextWindowExceededError(
             message="context window exceeded", model="claude", llm_provider="anthropic"
         )
-        assert _is_context_exceeded(exc)
+        assert is_context_exceeded(exc)
 
     def test_bad_request_with_context_message(self):
         import litellm
-        from make_agent.agent_core.provider import _is_context_exceeded
+        from make_agent.provider import is_context_exceeded
 
         exc = litellm.BadRequestError(
             message="request (44403 tokens) exceeds the available context size (42752 tokens)",
             model="claude",
             llm_provider="anthropic",
         )
-        assert _is_context_exceeded(exc)
+        assert is_context_exceeded(exc)
 
     def test_bad_request_unrelated_message(self):
         import litellm
-        from make_agent.agent_core.provider import _is_context_exceeded
+        from make_agent.provider import is_context_exceeded
 
         exc = litellm.BadRequestError(
             message="invalid parameter: max_tokens must be positive",
             model="claude",
             llm_provider="anthropic",
         )
-        assert not _is_context_exceeded(exc)
+        assert not is_context_exceeded(exc)
 
     def test_generic_exception_returns_false(self):
-        from make_agent.agent_core.provider import _is_context_exceeded
+        from make_agent.provider import is_context_exceeded
 
-        assert not _is_context_exceeded(ValueError("something went wrong"))
+        assert not is_context_exceeded(ValueError("something went wrong"))

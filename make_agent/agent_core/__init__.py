@@ -33,7 +33,7 @@ from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEven
 from .export import _render_html, export_conversation
 from .loop import AgentConfig, AgenticLoop, CallBack, CompactCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
-from .provider import _acompletion_with_retry, _is_anthropic_model, _is_context_exceeded, _parse_retry_after
+from make_agent.provider import acompletion_with_retry, is_anthropic_model, is_context_exceeded, parse_retry_after
 
 __all__ = [
     "DEFAULT_COMPACT_MAX_THRESHOLD",
@@ -45,8 +45,8 @@ __all__ = [
     "DEFAULT_REASONING_EFFORT",
     "DEFAULT_TOOL_TIMEOUT",
     "DEFAULT_USE_PROMPT_CACHE",
-    "_is_anthropic_model",
-    "_is_context_exceeded",
+    "is_anthropic_model",
+    "is_context_exceeded",
     "_prune_skill_messages",
     "Agent",
     "AgentConfig",
@@ -81,8 +81,8 @@ __all__ = [
     "TurnCancelled",
     "TurnFinished",
     "TurnStarted",
-    "_acompletion_with_retry",
-    "_parse_retry_after",
+    "acompletion_with_retry",
+    "parse_retry_after",
     "_render_html",
     "export_conversation",
     # Internal — kept for AgenticLoop.arun() and tests only:

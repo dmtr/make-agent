@@ -465,7 +465,7 @@ class TestAgentAutoStorage:
 
             return _stream()
 
-        with patch("make_agent.agent_core.loop._acompletion_with_retry", _fake_acompletion):
+        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_acompletion):
             await manager.arun_agent(session_id, "hello from user")
 
         conn = mem._get_conn()
@@ -487,7 +487,7 @@ class TestAgentAutoStorage:
 
             return _stream()
 
-        with patch("make_agent.agent_core.loop._acompletion_with_retry", _fake_acompletion):
+        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_acompletion):
             await manager.arun_agent(session_id, "hello from user")
 
         conn = mem._get_conn()

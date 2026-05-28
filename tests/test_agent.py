@@ -1,4 +1,4 @@
-"""Tests for rate limit retry logic — _parse_retry_after and _acompletion_with_retry."""
+"""Tests for rate limit retry logic — parse_retry_after and acompletion_with_retry."""
 
 from __future__ import annotations
 
@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import litellm
 import pytest
-from make_agent.agent_core import (
-    _acompletion_with_retry,
-    _is_anthropic_model,
-    _parse_retry_after,
-    AgentConfig,
+from make_agent.agent_core import AgentConfig
+from make_agent.provider import (
+    acompletion_with_retry,
+    is_anthropic_model,
+    parse_retry_after,
 )
 
 
@@ -164,7 +164,7 @@ def _make_tool_call_stream_empty_args(tool_id: str, tool_name: str):
     return _stream()
 
 
-def _mock_acompletion_with_retry(*streams):
+def _mockacompletion_with_retry(*streams):
     """Return an async callable that yields successive streams on each call."""
     streams_list = list(streams)
     call_count = 0
@@ -181,34 +181,34 @@ def _mock_acompletion_with_retry(*streams):
 class TestParseRetryAfter:
     def test_retry_after_seconds(self):
         err = _make_rate_limit_error(retry_after=30)
-        assert _parse_retry_after(err) == 30.0
+        assert parse_retry_after(err) == 30.0
 
     def test_retry_after_ms(self):
         err = _make_rate_limit_error(retry_after_ms=5000)
-        assert _parse_retry_after(err) == 5.0
+        assert parse_retry_after(err) == 5.0
 
     def test_retry_after_ms_takes_priority(self):
         err = _make_rate_limit_error(retry_after=60, retry_after_ms=2000)
-        assert _parse_retry_after(err) == 2.0
+        assert parse_retry_after(err) == 2.0
 
     def test_no_header_returns_none(self):
         err = _make_rate_limit_error()
-        assert _parse_retry_after(err) is None
+        assert parse_retry_after(err) is None
 
     def test_none_response(self):
         err = MagicMock()
         err.response = None
-        assert _parse_retry_after(err) is None
+        assert parse_retry_after(err) is None
 
 
 class TestACompletionWithRetry:
     async def test_succeeds_on_first_attempt(self):
         stream = _make_empty_stream()
         with patch(
-            "make_agent.agent_core.provider.litellm.acompletion",
+            "make_agent.provider.litellm.acompletion",
             AsyncMock(return_value=stream),
         ) as mock_c:
-            result = await _acompletion_with_retry("model", [], {}, max_retries=3)
+            result = await acompletion_with_retry("model", [], {}, max_retries=3)
         assert result is stream
         mock_c.assert_called_once()
 
@@ -216,11 +216,11 @@ class TestACompletionWithRetry:
         err = _make_rate_limit_error(retry_after=10)
         stream = _make_empty_stream()
         with patch(
-            "make_agent.agent_core.provider.litellm.acompletion",
+            "make_agent.provider.litellm.acompletion",
             AsyncMock(side_effect=[err, err, stream]),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                result = await _acompletion_with_retry("model", [], {}, max_retries=3)
+                result = await acompletion_with_retry("model", [], {}, max_retries=3)
         assert result is stream
         assert mock_sleep.call_count == 2
         mock_sleep.assert_called_with(10.0)
@@ -229,11 +229,11 @@ class TestACompletionWithRetry:
         err = _make_rate_limit_error()
         stream = _make_empty_stream()
         with patch(
-            "make_agent.agent_core.provider.litellm.acompletion",
+            "make_agent.provider.litellm.acompletion",
             AsyncMock(side_effect=[err, err, stream]),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                await _acompletion_with_retry("model", [], {}, max_retries=3)
+                await acompletion_with_retry("model", [], {}, max_retries=3)
         assert mock_sleep.call_args_list == [call(1), call(2)]
 
     async def test_exponential_backoff_capped_at_60s(self):
@@ -241,11 +241,11 @@ class TestACompletionWithRetry:
         stream = _make_empty_stream()
         side_effects = [err] * 7 + [stream]
         with patch(
-            "make_agent.agent_core.provider.litellm.acompletion",
+            "make_agent.provider.litellm.acompletion",
             AsyncMock(side_effect=side_effects),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                await _acompletion_with_retry("model", [], {}, max_retries=10)
+                await acompletion_with_retry("model", [], {}, max_retries=10)
         waits = [c.args[0] for c in mock_sleep.call_args_list]
         assert all(w <= 60 for w in waits)
         assert waits[6] == 60  # 2^6=64 capped to 60
@@ -253,33 +253,33 @@ class TestACompletionWithRetry:
     async def test_raises_after_max_retries_exhausted(self):
         err = _make_rate_limit_error(retry_after=1)
         with patch(
-            "make_agent.agent_core.provider.litellm.acompletion",
+            "make_agent.provider.litellm.acompletion",
             AsyncMock(side_effect=err),
         ):
             with patch("asyncio.sleep", AsyncMock()):
                 with pytest.raises(litellm.RateLimitError):
-                    await _acompletion_with_retry("model", [], {}, max_retries=2)
+                    await acompletion_with_retry("model", [], {}, max_retries=2)
 
     async def test_total_calls_equals_max_retries_plus_one(self):
         err = _make_rate_limit_error(retry_after=1)
         with patch(
-            "make_agent.agent_core.provider.litellm.acompletion",
+            "make_agent.provider.litellm.acompletion",
             AsyncMock(side_effect=err),
         ) as mock_c:
             with patch("asyncio.sleep", AsyncMock()):
                 with pytest.raises(litellm.RateLimitError):
-                    await _acompletion_with_retry("model", [], {}, max_retries=3)
+                    await acompletion_with_retry("model", [], {}, max_retries=3)
         assert mock_c.call_count == 4  # 1 initial + 3 retries
 
     async def test_zero_max_retries_raises_immediately(self):
         err = _make_rate_limit_error(retry_after=1)
         with patch(
-            "make_agent.agent_core.provider.litellm.acompletion",
+            "make_agent.provider.litellm.acompletion",
             AsyncMock(side_effect=err),
         ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
                 with pytest.raises(litellm.RateLimitError):
-                    await _acompletion_with_retry("model", [], {}, max_retries=0)
+                    await acompletion_with_retry("model", [], {}, max_retries=0)
         mock_sleep.assert_not_called()
 
 
@@ -323,8 +323,8 @@ class TestAgentSafetyGuards:
         agent = self._make_agent(tmp_path)
 
         with patch(
-            "make_agent.agent_core.loop._acompletion_with_retry",
-            _mock_acompletion_with_retry(
+            "make_agent.agent_core.loop.acompletion_with_retry",
+            _mockacompletion_with_retry(
                 _make_tool_call_stream("tc1", "hidden", "{}"),
                 _make_text_stream("done"),
             ),
@@ -344,7 +344,7 @@ class TestAgentSafetyGuards:
         with (
             patch("make_agent.agent_core.loop.MAX_MODEL_TURNS_PER_REQUEST", 2),
             patch(
-                "make_agent.agent_core.loop._acompletion_with_retry", _always_tool_call
+                "make_agent.agent_core.loop.acompletion_with_retry", _always_tool_call
             ),
         ):
             with pytest.raises(RuntimeError, match="model turns"):
@@ -387,8 +387,8 @@ class TestAssistantMessageContent:
         agent._tool_handler._executors["say_hi"] = lambda **_: "hi"  # noqa: SLF001
 
         with patch(
-            "make_agent.agent_core.loop._acompletion_with_retry",
-            _mock_acompletion_with_retry(
+            "make_agent.agent_core.loop.acompletion_with_retry",
+            _mockacompletion_with_retry(
                 _make_tool_call_stream("tc1", "say_hi", "{}"),
                 _make_text_stream("all done"),
             ),
@@ -466,8 +466,8 @@ class TestAnthropicParallelToolCalls:
         )
 
         with patch(
-            "make_agent.agent_core.loop._acompletion_with_retry",
-            _mock_acompletion_with_retry(parallel_stream, _make_text_stream("done")),
+            "make_agent.agent_core.loop.acompletion_with_retry",
+            _mockacompletion_with_retry(parallel_stream, _make_text_stream("done")),
         ):
             result = await agent.arun("run both tools")
 
@@ -506,8 +506,8 @@ class TestAnthropicParallelToolCalls:
         )
 
         with patch(
-            "make_agent.agent_core.loop._acompletion_with_retry",
-            _mock_acompletion_with_retry(parallel_stream, _make_text_stream("done")),
+            "make_agent.agent_core.loop.acompletion_with_retry",
+            _mockacompletion_with_retry(parallel_stream, _make_text_stream("done")),
         ):
             await agent.arun("run both tools")
 
@@ -568,8 +568,8 @@ class TestAnthropicEmptyArguments:
         agent = self._make_agent(tmp_path)
 
         with patch(
-            "make_agent.agent_core.loop._acompletion_with_retry",
-            _mock_acompletion_with_retry(
+            "make_agent.agent_core.loop.acompletion_with_retry",
+            _mockacompletion_with_retry(
                 _make_tool_call_stream_empty_args("toolu_1", "list_skills"),
                 _make_text_stream("here are your skills"),
             ),
@@ -631,19 +631,19 @@ def _assistant_text(content: str = "ok") -> dict:
 
 class TestIsAnthropicModel:
     def test_anthropic_prefix(self):
-        assert _is_anthropic_model("anthropic/claude-opus-4-5") is True
+        assert is_anthropic_model("anthropic/claude-opus-4-5") is True
 
     def test_claude_substring(self):
-        assert _is_anthropic_model("claude-3-5-sonnet-20241022") is True
+        assert is_anthropic_model("claude-3-5-sonnet-20241022") is True
 
     def test_openai_model_is_false(self):
-        assert _is_anthropic_model("openai/gpt-4o") is False
+        assert is_anthropic_model("openai/gpt-4o") is False
 
     def test_gemini_model_is_false(self):
-        assert _is_anthropic_model("google/gemini-2.0-flash") is False
+        assert is_anthropic_model("google/gemini-2.0-flash") is False
 
     def test_case_insensitive(self):
-        assert _is_anthropic_model("Anthropic/Claude-Opus") is True
+        assert is_anthropic_model("Anthropic/Claude-Opus") is True
 
 
 class TestAgentSystemPromptCache:
