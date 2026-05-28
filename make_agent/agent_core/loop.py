@@ -321,6 +321,7 @@ class AgenticLoop:
                 )
             except Exception as exc:
                 if not compacted and self._compact_fn and _is_context_exceeded(exc):
+                    logger.info("Context window exceeded; attempting compaction")
                     pruned = self._compact_fn(self._messages)
                     removed = len(self._messages) - len(pruned)
                     if removed > 0:

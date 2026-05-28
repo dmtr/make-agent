@@ -6,7 +6,6 @@ import logging
 from typing import Optional
 
 import litellm
-
 from make_agent.agent_core import (
     DEFAULT_COMPACT_MAX_THRESHOLD,
     DEFAULT_COMPACT_MIN_THRESHOLD,
@@ -49,7 +48,7 @@ def _compute_compact_threshold(
             info = litellm.get_model_info(model)
             max_input = info.get("max_input_tokens") or info.get("max_tokens") or 0
         except Exception:
-            logger.debug("Could not get model info for %r; auto-compact disabled", model)
+            logger.exception("Could not get model info for %r; auto-compact disabled", model)
             return 0
     if not max_input:
         return 0
@@ -94,6 +93,7 @@ async def run(
         min_threshold=compact_min_threshold,
         max_threshold=compact_max_threshold,
     )
+    logger.info("Auto-compact threshold set to %d tokens", compact_threshold)
     agent_manager = AgentManager(
         tool_handler,
         middlewares=[SessionMiddleware(memory)],
