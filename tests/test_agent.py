@@ -597,7 +597,118 @@ class TestAnthropicEmptyArguments:
         )
 
 
-# ── _prune_skill_messages ─────────────────────────────────────────────────────
+# ── compact_messages ──────────────────────────────────────────────────────────
+
+
+def _u(text: str = "hi") -> dict:
+    return {"role": "user", "content": text}
+
+
+def _a(text: str = "ok") -> dict:
+    return {"role": "assistant", "content": text}
+
+
+def _sys(text: str = "system") -> dict:
+    return {"role": "system", "content": text}
+
+
+def _turn(n: int) -> list[dict]:
+    return [_u(f"q{n}"), _a(f"a{n}")]
+
+
+class TestCompactMessages:
+    """Tests for the compact_messages pure function."""
+
+    def test_empty_list_returns_empty(self):
+        from make_agent.agent_core import compact_messages
+
+        assert compact_messages([]) == []
+
+    def test_few_turns_unchanged(self):
+        """≤5 turns → no compaction."""
+        from make_agent.agent_core import compact_messages
+
+        msgs = [_sys()] + _turn(1) + _turn(2) + _turn(3)
+        assert compact_messages(msgs) == msgs
+
+    def test_exactly_five_turns_unchanged(self):
+        from make_agent.agent_core import compact_messages
+
+        msgs = [_sys()] + _turn(1) + _turn(2) + _turn(3) + _turn(4) + _turn(5)
+        assert compact_messages(msgs) == msgs
+
+    def test_six_turns_removes_first(self):
+        """6 turns → first turn dropped, last 5 kept."""
+        from make_agent.agent_core import compact_messages
+
+        msgs = [_sys()] + _turn(1) + _turn(2) + _turn(3) + _turn(4) + _turn(5) + _turn(6)
+        result = compact_messages(msgs)
+        assert result == [_sys()] + _turn(2) + _turn(3) + _turn(4) + _turn(5) + _turn(6)
+
+    def test_many_turns_keeps_last_five(self):
+        """10 turns → keeps last 5."""
+        from make_agent.agent_core import compact_messages
+
+        msgs = [_sys()] + [msg for i in range(1, 11) for msg in _turn(i)]
+        result = compact_messages(msgs)
+        expected = [_sys()] + [msg for i in range(6, 11) for msg in _turn(i)]
+        assert result == expected
+
+    def test_no_system_prompt(self):
+        """Works correctly without a system message."""
+        from make_agent.agent_core import compact_messages
+
+        msgs = [msg for i in range(1, 8) for msg in _turn(i)]
+        result = compact_messages(msgs)
+        expected = [msg for i in range(3, 8) for msg in _turn(i)]
+        assert result == expected
+
+    def test_custom_keep_turns(self):
+        from make_agent.agent_core import compact_messages
+
+        msgs = [_sys()] + _turn(1) + _turn(2) + _turn(3)
+        result = compact_messages(msgs, keep_turns=2)
+        assert result == [_sys()] + _turn(2) + _turn(3)
+
+    def test_tool_calls_in_turn_are_kept(self):
+        """Tool call messages within a kept turn are preserved."""
+        from make_agent.agent_core import compact_messages
+
+        tool_turn = [
+            _u("run something"),
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "t1", "type": "function", "function": {"name": "bash", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "t1", "content": "output"},
+            _a("done"),
+        ]
+        msgs = [_sys()] + _turn(1) + _turn(2) + _turn(3) + _turn(4) + _turn(5) + tool_turn
+        result = compact_messages(msgs)
+        assert result == [_sys()] + _turn(2) + _turn(3) + _turn(4) + _turn(5) + tool_turn
+
+    def test_messages_before_first_user_are_dropped(self):
+        """Pre-first-user non-system messages (e.g. orphaned tool calls) are dropped."""
+        from make_agent.agent_core import compact_messages
+
+        orphan = _a("stray assistant message")
+        msgs = [_sys(), orphan] + [msg for i in range(1, 8) for msg in _turn(i)]
+        result = compact_messages(msgs)
+        # orphan is dropped; last 5 of the 7 turns kept
+        expected = [_sys()] + [msg for i in range(3, 8) for msg in _turn(i)]
+        assert result == expected
+
+    def test_removed_count_positive_when_compacting(self):
+        """len(result) < len(input) whenever turns > keep_turns."""
+        from make_agent.agent_core import compact_messages
+
+        msgs = [_sys()] + [msg for i in range(1, 8) for msg in _turn(i)]
+        result = compact_messages(msgs)
+        assert len(result) < len(msgs)
+
+
+# ── _tc / _assistant_tc helpers kept for non-compact tests ───────────────────
 
 
 def _tc(tc_id: str, name: str, args: str = "{}") -> dict:
@@ -627,6 +738,7 @@ def _system(content: str = "system") -> dict:
 
 def _assistant_text(content: str = "ok") -> dict:
     return {"role": "assistant", "content": content}
+
 
 
 class TestIsAnthropicModel:
@@ -687,264 +799,3 @@ class TestAgentSystemPromptCache:
         assert system_msg["content"] == "You are a helpful assistant."
 
 
-# ── _prune_skill_messages ──────────────────────────────────────────────────────
-
-
-class TestPruneSkillMessages:
-    """Tests for the _prune_skill_messages pure function."""
-
-    from make_agent.agent_core import _prune_skill_messages
-
-    def _sys(self) -> dict:
-        return {"role": "system", "content": "You are helpful."}
-
-    def _user(self, text: str = "hi") -> dict:
-        return {"role": "user", "content": text}
-
-    def _assistant(self, text: str = "ok") -> dict:
-        return {"role": "assistant", "content": text}
-
-    def _skill_call(self, name: str, call_id: str) -> dict:
-        return {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {"name": name, "arguments": "{}"},
-                }
-            ],
-        }
-
-    def _tool_result(self, call_id: str, text: str = "result") -> dict:
-        return {"role": "tool", "tool_call_id": call_id, "content": text}
-
-    def _bash_call(self, call_id: str) -> dict:
-        return {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {"name": "bash", "arguments": '{"cmd": "ls"}'},
-                }
-            ],
-        }
-
-    def test_empty_list_returns_empty(self):
-        from make_agent.agent_core import _prune_skill_messages
-
-        assert _prune_skill_messages([]) == []
-
-    def test_no_skill_messages_unchanged(self):
-        from make_agent.agent_core import _prune_skill_messages
-
-        msgs = [self._sys(), self._user(), self._assistant()]
-        assert _prune_skill_messages(msgs) == msgs
-
-    def test_single_purgeable_turn_unchanged(self):
-        from make_agent.agent_core import _prune_skill_messages
-
-        msgs = [
-            self._sys(),
-            self._user(),
-            self._skill_call("list_skills", "tc1"),
-            self._tool_result("tc1"),
-        ]
-        assert _prune_skill_messages(msgs) == msgs
-
-    def test_two_purgeable_turns_drops_first(self):
-        from make_agent.agent_core import _prune_skill_messages
-
-        msgs = [
-            self._sys(),
-            self._user("step1"),
-            self._skill_call("list_skills", "tc1"),
-            self._tool_result("tc1", "skills list 1"),
-            self._user("step2"),
-            self._skill_call("list_skills", "tc2"),
-            self._tool_result("tc2", "skills list 2"),
-        ]
-        result = _prune_skill_messages(msgs)
-        assert result == [
-            self._sys(),
-            self._user("step1"),
-            # tc1 pair dropped
-            self._user("step2"),
-            self._skill_call("list_skills", "tc2"),
-            self._tool_result("tc2", "skills list 2"),
-        ]
-
-    def test_non_skill_tool_call_not_purgeable(self):
-        from make_agent.agent_core import _prune_skill_messages
-
-        msgs = [
-            self._sys(),
-            self._skill_call("list_skills", "tc1"),
-            self._tool_result("tc1"),
-            self._bash_call("tc2"),
-            self._tool_result("tc2", "files"),
-            self._skill_call("list_skills", "tc3"),
-            self._tool_result("tc3"),
-        ]
-        result = _prune_skill_messages(msgs)
-        # tc1 pair dropped; tc2 (bash) kept; tc3 kept
-        assert result == [
-            self._sys(),
-            self._bash_call("tc2"),
-            self._tool_result("tc2", "files"),
-            self._skill_call("list_skills", "tc3"),
-            self._tool_result("tc3"),
-        ]
-
-    def test_mixed_tool_calls_are_not_purgeable(self):
-        """An assistant message with list_skills AND bash is never dropped."""
-        from make_agent.agent_core import _prune_skill_messages
-
-        mixed = {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "list_skills", "arguments": "{}"}},
-                {"id": "tc2", "type": "function", "function": {"name": "bash", "arguments": "{}"}},
-            ],
-        }
-        msgs = [
-            self._sys(),
-            self._skill_call("list_skills", "tc0"),
-            self._tool_result("tc0"),
-            mixed,
-            self._tool_result("tc1"),
-            self._tool_result("tc2"),
-        ]
-        result = _prune_skill_messages(msgs)
-        # tc0 pair is the only purgeable turn, but there's only one → no pruning
-        assert result == msgs
-
-    def test_read_skill_also_purgeable(self):
-        from make_agent.agent_core import _prune_skill_messages
-
-        msgs = [
-            self._sys(),
-            self._skill_call("read_skill", "r1"),
-            self._tool_result("r1", "skill content 1"),
-            self._skill_call("read_skill", "r2"),
-            self._tool_result("r2", "skill content 2"),
-        ]
-        result = _prune_skill_messages(msgs)
-        assert result == [
-            self._sys(),
-            self._skill_call("read_skill", "r2"),
-            self._tool_result("r2", "skill content 2"),
-        ]
-
-    def test_three_purgeable_turns_keeps_only_last(self):
-        from make_agent.agent_core import _prune_skill_messages
-
-        msgs = [
-            self._sys(),
-            self._skill_call("list_skills", "a"),
-            self._tool_result("a"),
-            self._skill_call("list_skills", "b"),
-            self._tool_result("b"),
-            self._skill_call("list_skills", "c"),
-            self._tool_result("c"),
-        ]
-        result = _prune_skill_messages(msgs)
-        assert result == [
-            self._sys(),
-            self._skill_call("list_skills", "c"),
-            self._tool_result("c"),
-        ]
-
-    def test_list_skills_and_read_skill_both_kept(self):
-        """The last list_skills turn AND the last read_skill turn are both retained."""
-        from make_agent.agent_core import _prune_skill_messages
-
-        msgs = [
-            self._sys(),
-            self._skill_call("list_skills", "ls1"),
-            self._tool_result("ls1", "skills list"),
-            self._skill_call("read_skill", "rs1"),
-            self._tool_result("rs1", "skill content"),
-        ]
-        result = _prune_skill_messages(msgs)
-        # Both are the last of their type → nothing to drop
-        assert result == msgs
-
-    def test_older_list_skills_dropped_when_newer_read_skill_exists(self):
-        """Older list_skills is dropped; the last list_skills and last read_skill survive."""
-        from make_agent.agent_core import _prune_skill_messages
-
-        msgs = [
-            self._sys(),
-            self._skill_call("list_skills", "ls1"),
-            self._tool_result("ls1", "old list"),
-            self._skill_call("list_skills", "ls2"),
-            self._tool_result("ls2", "new list"),
-            self._skill_call("read_skill", "rs1"),
-            self._tool_result("rs1", "skill content"),
-        ]
-        result = _prune_skill_messages(msgs)
-        assert result == [
-            self._sys(),
-            self._skill_call("list_skills", "ls2"),
-            self._tool_result("ls2", "new list"),
-            self._skill_call("read_skill", "rs1"),
-            self._tool_result("rs1", "skill content"),
-        ]
-
-    def test_list_skills_kept_when_newer_read_skill_exists(self):
-        """The last list_skills turn is kept even when a later read_skill turn exists."""
-        from make_agent.agent_core import _prune_skill_messages
-
-        msgs = [
-            self._sys(),
-            self._skill_call("list_skills", "ls1"),
-            self._tool_result("ls1", "skills list"),
-            self._skill_call("read_skill", "rs1"),
-            self._tool_result("rs1", "old content"),
-            self._skill_call("read_skill", "rs2"),
-            self._tool_result("rs2", "new content"),
-        ]
-        result = _prune_skill_messages(msgs)
-        assert result == [
-            self._sys(),
-            self._skill_call("list_skills", "ls1"),
-            self._tool_result("ls1", "skills list"),
-            self._skill_call("read_skill", "rs2"),
-            self._tool_result("rs2", "new content"),
-        ]
-
-    def test_turn_with_both_tools_counts_for_both(self):
-        """A single purgeable turn with list_skills+read_skill counts as last for both types."""
-        from make_agent.agent_core import _prune_skill_messages
-
-        combined = {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {"id": "ls1", "type": "function", "function": {"name": "list_skills", "arguments": "{}"}},
-                {"id": "rs1", "type": "function", "function": {"name": "read_skill", "arguments": "{}"}},
-            ],
-        }
-        msgs = [
-            self._sys(),
-            self._skill_call("list_skills", "ls0"),
-            self._tool_result("ls0"),
-            self._skill_call("read_skill", "rs0"),
-            self._tool_result("rs0"),
-            combined,
-            self._tool_result("ls1"),
-            self._tool_result("rs1"),
-        ]
-        result = _prune_skill_messages(msgs)
-        # combined is the last for both list_skills and read_skill → ls0 and rs0 dropped
-        assert result == [
-            self._sys(),
-            combined,
-            self._tool_result("ls1"),
-            self._tool_result("rs1"),
-        ]

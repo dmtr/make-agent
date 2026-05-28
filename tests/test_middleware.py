@@ -259,21 +259,13 @@ def _make_agent_config():
 
 
 class TestAgentManagerCompact:
-    def _skill_call(self, call_id: str) -> dict:
-        return {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {"name": "list_skills", "arguments": "{}"},
-                }
-            ],
-        }
-
-    def _tool_result(self, call_id: str) -> dict:
-        return {"role": "tool", "tool_call_id": call_id, "content": "skill result"}
+    def _turns(self, n: int) -> list[dict]:
+        """Build *n* user+assistant turn pairs."""
+        msgs = []
+        for i in range(1, n + 1):
+            msgs.append({"role": "user", "content": f"question {i}"})
+            msgs.append({"role": "assistant", "content": f"answer {i}"})
+        return msgs
 
     async def test_compact_event_emitted_when_tokens_exceed_threshold(self):
         from make_agent.agent_core import CompactEvent
@@ -284,22 +276,16 @@ class TestAgentManagerCompact:
         cbs = [UsageCallback(model="gpt-4", input_tokens=200, output_tokens=10), MessageCallback("done")]
         _mock_loop_with_cbs(manager, session_id, cbs)
 
-        # Seed two purgeable turns so _compact_session actually removes messages.
+        # Seed 6 turns so _compact_session actually removes messages.
         loop = manager._sessions[session_id]
         loop._config = _make_agent_config()
-        loop.messages = [
-            {"role": "system", "content": "sys"},
-            self._skill_call("tc1"),
-            self._tool_result("tc1"),
-            self._skill_call("tc2"),
-            self._tool_result("tc2"),
-        ]
+        loop.messages = [{"role": "system", "content": "sys"}] + self._turns(6)
 
         events = [e async for e in manager.astream_events(session_id, "go")]
         types = [type(e).__name__ for e in events]
         assert "CompactEvent" in types
         compact_event = next(e for e in events if isinstance(e, CompactEvent))
-        assert compact_event.messages_removed == 2
+        assert compact_event.messages_removed > 0
 
     async def test_compact_event_not_emitted_when_threshold_zero(self):
         from make_agent.agent_core import CompactEvent
@@ -334,18 +320,14 @@ class TestAgentManagerCompact:
         session_id = manager.create_session(config)
 
         loop = manager._sessions[session_id]
-        loop._messages = [
-            {"role": "system", "content": "sys"},
-            self._skill_call("tc1"),
-            self._tool_result("tc1"),
-            self._skill_call("tc2"),
-            self._tool_result("tc2"),
-        ]
+        # 6 turns → compact removes the first turn (2 messages)
+        loop._messages = [{"role": "system", "content": "sys"}] + self._turns(6)
+        original_len = len(loop._messages)
 
         removed = manager._compact_session(session_id)
-        assert removed == 2
+        assert removed > 0
+        assert len(loop.messages) == original_len - removed
         assert manager._sessions[session_id] is loop  # same object, pruned in-place
-        assert len(loop.messages) == 3  # system + tc2 pair
 
     def test_compact_session_returns_zero_when_nothing_pruned(self):
         from make_agent.agent_core.loop import AgentConfig
@@ -356,11 +338,8 @@ class TestAgentManagerCompact:
         session_id = manager.create_session(config)
 
         loop = manager._sessions[session_id]
-        loop._messages = [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "hello"},
-        ]
+        # 5 turns: at the threshold, nothing removed
+        loop._messages = [{"role": "system", "content": "sys"}] + self._turns(5)
 
         removed = manager._compact_session(session_id)
         assert removed == 0
@@ -378,14 +357,9 @@ class TestAgentManagerCompact:
         config = AgentConfig(system_prompt="sys", model="gpt-4")
         session_id = manager.create_session(config)
 
-        # Seed two purgeable skill-inspection turns so compact_fn has something to remove.
+        # Seed 6 past turns so compact_fn has something to remove.
         loop = manager._sessions[session_id]
-        loop._messages.extend([
-            self._skill_call("tc1"),
-            self._tool_result("tc1"),
-            self._skill_call("tc2"),
-            self._tool_result("tc2"),
-        ])
+        loop._messages.extend(self._turns(6))
 
         call_count = 0
 
@@ -427,12 +401,7 @@ class TestAgentManagerCompact:
         session_id = manager.create_session(config)
 
         loop = manager._sessions[session_id]
-        loop._messages.extend([
-            self._skill_call("tc1"),
-            self._tool_result("tc1"),
-            self._skill_call("tc2"),
-            self._tool_result("tc2"),
-        ])
+        loop._messages.extend(self._turns(6))
 
         call_count = 0
 
@@ -502,12 +471,7 @@ class TestAgentManagerCompact:
         session_id = manager.create_session(config)
 
         loop = manager._sessions[session_id]
-        loop._messages.extend([
-            self._skill_call("tc1"),
-            self._tool_result("tc1"),
-            self._skill_call("tc2"),
-            self._tool_result("tc2"),
-        ])
+        loop._messages.extend(self._turns(6))
 
         call_count = 0
 
@@ -555,26 +519,19 @@ class TestAgentManagerCompact:
         session_id = manager.create_session(config)
 
         loop = manager._sessions[session_id]
-        # Seed four purgeable turns
-        purgeable_pairs = [
-            (self._skill_call(f"tc{i}"), self._tool_result(f"tc{i}")) for i in range(1, 5)
-        ]
-        for assistant, tool in purgeable_pairs:
-            loop._messages.extend([assistant, tool])
+        # Seed 8 past turns
+        loop._messages.extend(self._turns(8))
 
-        # Custom compact that removes only the oldest purgeable pair per call
+        # Custom compact that removes only the oldest turn per call
         def _one_at_a_time(messages):
-            for i, msg in enumerate(messages):
-                if (
-                    msg.get("role") == "assistant"
-                    and "tool_calls" in msg
-                    and any(
-                        tc["function"]["name"] == "list_skills"
-                        for tc in msg["tool_calls"]
-                    )
-                ):
-                    # Remove this pair (assistant + next tool message)
-                    return messages[:i] + messages[i + 2:]
+            system = [m for m in messages if m.get("role") == "system"]
+            rest = [m for m in messages if m.get("role") != "system"]
+            # Find first user message and remove its turn
+            for i, msg in enumerate(rest):
+                if msg.get("role") == "user":
+                    # Find where the next user message is
+                    end = next((j for j in range(i + 1, len(rest)) if rest[j].get("role") == "user"), len(rest))
+                    return system + rest[:i] + rest[end:]
             return messages
 
         loop._compact_fn = _one_at_a_time

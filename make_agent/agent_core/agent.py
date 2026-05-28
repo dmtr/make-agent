@@ -30,6 +30,7 @@ from .bridge import (
     TurnFinished,
     TurnStarted,
 )
+from .constants import KEEP_COMPACT_TURNS
 from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import export_conversation
 from .loop import AgentConfig, AgenticLoop, CompactCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
@@ -40,55 +41,32 @@ from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 Agent = AgenticLoop
 
 
-_SKILL_INSPECTION_TOOLS = frozenset({"list_skills", "read_skill"})
+def compact_messages(messages: list[dict], keep_turns: int = KEEP_COMPACT_TURNS) -> list[dict]:
+    """Compact conversation history to the last *keep_turns* turns.
 
+    A "turn" is one user message and all subsequent messages until the next
+    user message.  When the conversation already has *keep_turns* or fewer
+    turns, returns the original list unchanged (``removed == 0``).
 
-def _prune_skill_messages(messages: list[dict]) -> list[dict]:
-    """Remove outdated skill-inspection assistant turns.
-
-    An assistant turn is "purgeable" when every tool call it contains is either
-    ``list_skills`` or ``read_skill``.  The most recent purgeable turn that
-    contains a ``list_skills`` call and the most recent purgeable turn that
-    contains a ``read_skill`` call are both retained (they may be the same turn).
-    All other purgeable turns are dropped together with their corresponding
-    tool-result messages.  Everything else (system, user, assistant text, other
-    tool calls) is kept.
-
-    Returns the original list unchanged when there is nothing to drop.
+    Otherwise, drops older turns and returns the system prompt (if any)
+    followed by the last *keep_turns* turns.  The agent can use memory search
+    tools to recall earlier context.
     """
-    purgeable: list[tuple[int, frozenset[str]]] = []
-    for i, msg in enumerate(messages):
-        if msg.get("role") != "assistant":
-            continue
-        tool_calls = msg.get("tool_calls") or []
-        if not tool_calls:
-            continue
-        names = frozenset(tc.get("function", {}).get("name") for tc in tool_calls)
-        if names <= _SKILL_INSPECTION_TOOLS:
-            purgeable.append((i, names))
+    system = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
 
-    last_list = next((i for i, names in reversed(purgeable) if "list_skills" in names), None)
-    last_read = next((i for i, names in reversed(purgeable) if "read_skill" in names), None)
-    to_keep = {x for x in (last_list, last_read) if x is not None}
-    to_drop = {i for i, _ in purgeable} - to_keep
+    turns: list[list[dict]] = []
+    for msg in non_system:
+        if msg.get("role") == "user":
+            turns.append([msg])
+        elif turns:
+            turns[-1].append(msg)
 
-    if not to_drop:
+    if len(turns) <= keep_turns:
         return list(messages)
 
-    dropped_call_ids: set[str] = set()
-    for i in to_drop:
-        for tc in messages[i].get("tool_calls", []):
-            if tc.get("id"):
-                dropped_call_ids.add(tc["id"])
-
-    result: list[dict] = []
-    for i, msg in enumerate(messages):
-        if i in to_drop:
-            continue
-        if msg.get("role") == "tool" and msg.get("tool_call_id") in dropped_call_ids:
-            continue
-        result.append(msg)
-    return result
+    kept = [msg for turn in turns[-keep_turns:] for msg in turn]
+    return system + kept
 
 
 class SessionNotFoundError(Exception):
@@ -114,7 +92,7 @@ class AgentManager:
     def create_session(self, config: AgentConfig) -> str:
         session_id = self.get_session_id()
         loop = AgenticLoop(
-            config._replace(session_id=session_id, compact_fn=_prune_skill_messages),
+            config._replace(session_id=session_id, compact_fn=compact_messages),
             self._tool_handler,
         )
         self._sessions[session_id] = loop
@@ -127,12 +105,12 @@ class AgentManager:
             raise SessionNotFoundError(f"Session with id {session_id} not found.")
 
     def _compact_session(self, session_id: str) -> int:
-        """Prune skill-inspection messages from the session's conversation history.
+        """Compact the session's conversation history to the last few turns.
 
         Returns the number of messages removed (0 when nothing was pruned).
         """
         loop = self.get_agent(session_id)
-        pruned = _prune_skill_messages(loop.messages)
+        pruned = compact_messages(loop.messages)
         removed = len(loop.messages) - len(pruned)
         if removed > 0:
             loop._messages = pruned

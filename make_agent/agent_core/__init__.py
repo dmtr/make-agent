@@ -1,4 +1,4 @@
-from .agent import Agent, AgentManager, SessionNotFoundError, _prune_skill_messages
+from .agent import Agent, AgentManager, SessionNotFoundError, compact_messages
 from .bridge import (
     ApprovalRequested,
     ApproveSkill,
@@ -26,6 +26,7 @@ from .constants import (
     DEFAULT_REASONING_EFFORT,
     DEFAULT_TOOL_TIMEOUT,
     DEFAULT_USE_PROMPT_CACHE,
+    KEEP_COMPACT_TURNS,
 )
 from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import _render_html, export_conversation
@@ -41,9 +42,10 @@ __all__ = [
     "DEFAULT_REASONING_EFFORT",
     "DEFAULT_TOOL_TIMEOUT",
     "DEFAULT_USE_PROMPT_CACHE",
+    "KEEP_COMPACT_TURNS",
     "is_anthropic_model",
     "is_context_exceeded",
-    "_prune_skill_messages",
+    "compact_messages",
     "Agent",
     "AgentConfig",
     "AgentEvent",
