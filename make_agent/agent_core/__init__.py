@@ -32,7 +32,7 @@ from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEven
 from .export import _render_html, export_conversation
 from .loop import AgentConfig, AgenticLoop, CallBack, CompactCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
-from make_agent.provider import acompletion_with_retry, is_anthropic_model, is_context_exceeded, parse_retry_after
+from make_agent.provider import acompletion_with_retry, is_anthropic_model, is_context_exceeded, is_corrupt_message_history, parse_retry_after
 
 __all__ = [
     "DEFAULT_COMPACT_THRESHOLD_RATIO",
@@ -45,6 +45,7 @@ __all__ = [
     "KEEP_COMPACT_TURNS",
     "is_anthropic_model",
     "is_context_exceeded",
+    "is_corrupt_message_history",
     "compact_messages",
     "compact_with_summary",
     "Agent",

@@ -24,7 +24,7 @@ from .constants import (
     MAX_RUN_SECONDS_PER_REQUEST,
     MAX_TOOL_CALLS_PER_REQUEST,
 )
-from make_agent.provider import acompletion_with_retry, is_anthropic_model, is_context_exceeded
+from make_agent.provider import acompletion_with_retry, is_anthropic_model, is_context_exceeded, is_corrupt_message_history
 
 logger = logging.getLogger(__name__)
 
@@ -319,7 +319,7 @@ class AgenticLoop:
                     self._reasoning_effort,
                 )
             except Exception as exc:
-                if self._compact_fn and is_context_exceeded(exc):
+                if self._compact_fn and (is_context_exceeded(exc) or is_corrupt_message_history(exc)):
                     logger.info("Context window exceeded; attempting compaction")
                     pruned = await self._compact_fn(self._messages)
                     removed = len(self._messages) - len(pruned)
@@ -378,7 +378,7 @@ class AgenticLoop:
                     if getattr(chunk, "usage", None) is not None:
                         usage = chunk.usage
             except Exception as exc:
-                if self._compact_fn and is_context_exceeded(exc):
+                if self._compact_fn and (is_context_exceeded(exc) or is_corrupt_message_history(exc)):
                     pruned = await self._compact_fn(self._messages)
                     removed = len(self._messages) - len(pruned)
                     if removed > 0:

@@ -40,6 +40,23 @@ def is_context_exceeded(exc: Exception) -> bool:
     return False
 
 
+def is_corrupt_message_history(exc: Exception) -> bool:
+    """Return True when *exc* indicates the message history contains invalid content.
+
+    Anthropic raises a 400 BadRequestError when an assistant message in the
+    conversation history contains a ``tool_use`` block whose ``input`` field is
+    not valid JSON (e.g. truncated arguments from a prior streaming turn).
+    Compacting the history removes the offending message, making a retry safe.
+    """
+    is_bad_request = isinstance(exc, litellm.BadRequestError) or getattr(exc, "status_code", None) == 400
+    if not is_bad_request:
+        return False
+    msg = str(exc).lower()
+    return "failed to parse tool call" in msg or (
+        "tool" in msg and "unterminated string" in msg
+    )
+
+
 def parse_retry_after(e: litellm.RateLimitError) -> float | None:
     """Return the wait time in seconds from a RateLimitError's response headers.
 
@@ -125,5 +142,6 @@ __all__ = [
     "compute_compact_threshold",
     "is_anthropic_model",
     "is_context_exceeded",
+    "is_corrupt_message_history",
     "parse_retry_after",
 ]

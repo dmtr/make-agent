@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 
@@ -635,3 +636,96 @@ class TestIsContextExceeded:
 
         exc = CustomBadRequestError("invalid parameter: stop_sequences")
         assert not is_context_exceeded(exc)
+
+
+class TestIsCorruptMessageHistory:
+    def test_anthropic_failed_to_parse_tool_call(self):
+        import litellm
+        from make_agent.provider import is_corrupt_message_history
+
+        exc = litellm.BadRequestError(
+            message="AnthropicException - Failed to parse tool call arguments for tool 'execute_skill' (Anthropic tool invoke). Error: Unterminated string start",
+            model="claude-3-7-sonnet",
+            llm_provider="anthropic",
+        )
+        assert is_corrupt_message_history(exc)
+
+    def test_unrelated_bad_request_returns_false(self):
+        import litellm
+        from make_agent.provider import is_corrupt_message_history
+
+        exc = litellm.BadRequestError(
+            message="invalid parameter: max_tokens must be positive",
+            model="claude",
+            llm_provider="anthropic",
+        )
+        assert not is_corrupt_message_history(exc)
+
+    def test_context_exceeded_error_returns_false(self):
+        import litellm
+        from make_agent.provider import is_corrupt_message_history
+
+        exc = litellm.BadRequestError(
+            message="request (50000 tokens) exceeds the available context size (40000 tokens)",
+            model="claude",
+            llm_provider="anthropic",
+        )
+        assert not is_corrupt_message_history(exc)
+
+    def test_non_bad_request_returns_false(self):
+        from make_agent.provider import is_corrupt_message_history
+
+        assert not is_corrupt_message_history(ValueError("something else"))
+
+
+@pytest.mark.asyncio
+class TestCompactOnCorruptHistory:
+    @staticmethod
+    def _turns(n: int) -> list[dict]:
+        return [msg for i in range(n) for msg in ({"role": "user", "content": f"u{i}"}, {"role": "assistant", "content": f"a{i}"})]
+
+    async def test_compact_triggered_on_failed_to_parse_tool_call(self):
+        """When Anthropic rejects with 'Failed to parse tool call arguments', compact fires."""
+        import litellm
+        from unittest.mock import AsyncMock, patch
+        from make_agent.agent_core import CompactEvent
+        from make_agent.agent_core.loop import AgentConfig
+
+        th = _make_tool_handler()
+        manager = AgentManager(th)
+        config = AgentConfig(system_prompt="sys", model="claude-3-7-sonnet")
+        session_id = manager.create_session(config)
+
+        loop = manager._sessions[session_id]
+        loop._messages.extend(self._turns(6))
+
+        call_count = 0
+
+        async def _fake_completion(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise litellm.BadRequestError(
+                    message="AnthropicException - Failed to parse tool call arguments for tool 'execute_skill'",
+                    model="claude-3-7-sonnet",
+                    llm_provider="anthropic",
+                )
+
+            async def _stream():
+                from tests.test_agent import _make_text_stream
+                async for chunk in _make_text_stream("ok"):
+                    yield chunk
+
+            return _stream()
+
+        with (
+            patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion),
+            patch("make_agent.agent_core.agent._summarize_messages", AsyncMock(return_value="summary")),
+        ):
+            events = [e async for e in manager.astream_events(session_id, "do something")]
+
+        types = [type(e).__name__ for e in events]
+        assert "CompactEvent" in types
+        assert "DoneEvent" in types
+        assert call_count == 2
+
