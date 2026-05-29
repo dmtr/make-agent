@@ -251,6 +251,7 @@ class ShellState:
         self.pending_approval: Optional[ApprovalCard] = None
         self._approval_future: Optional[asyncio.Future[bool]] = None
         self.transcript_focused: bool = False
+        self.viewed_turn_index: Optional[int] = None  # None = always follow latest
         self.current_alert: Optional[InlineAlert] = None
 
     def new_turn(self, message: str) -> TurnBlock:
@@ -338,28 +339,36 @@ class MakeAgentShell:
         icon = _ALERT_ICONS.get(s.current_alert.level, "·")
         return [("class:header.alert", f" {icon} {s.current_alert.message} ")]
 
-    def _render_response(self) -> str:
+    def _viewed_turn(self) -> Optional[TurnBlock]:
         if not self._state.transcript:
-            return ""
-        return self._state.transcript[-1].render_response()
+            return None
+        idx = self._state.viewed_turn_index
+        if idx is None:
+            return self._state.transcript[-1]
+        return self._state.transcript[idx]
+
+    def _render_response(self) -> str:
+        turn = self._viewed_turn()
+        return turn.render_response() if turn else ""
 
     def _render_tools(self) -> str:
-        if not self._state.transcript:
-            return ""
-        return self._state.transcript[-1].render_tools()
+        turn = self._viewed_turn()
+        return turn.render_tools() if turn else ""
 
     def _refresh(self) -> None:
         """Update the response and tools areas and invalidate the app."""
         if self._response_area is not None:
             text = self._render_response()
             self._response_area.text = text
-            if not self._state.transcript_focused:
+            # Auto-scroll only when following the live latest turn
+            if not self._state.transcript_focused and self._state.viewed_turn_index is None:
                 self._response_area.buffer.cursor_position = len(text)
                 self._response_area.window.vertical_scroll = 999999
         if self._tools_area is not None:
             tools_text = self._render_tools()
             self._tools_area.text = tools_text
-            self._tools_area.window.vertical_scroll = 999999
+            if self._state.viewed_turn_index is None:
+                self._tools_area.window.vertical_scroll = 999999
         if self._app is not None:
             self._app.invalidate()
 
@@ -423,9 +432,18 @@ class MakeAgentShell:
                 ("class:hint.approval.call", call),
             ]
 
+        def _transcript_hint() -> list[tuple[str, str]]:
+            n = len(state.transcript)
+            idx = state.viewed_turn_index
+            if idx is None:
+                position = f"Turn {n}"
+            else:
+                position = f"Turn {idx + 1}/{n}"
+            return [("class:hint.transcript", f"  ► {position}  Ctrl+P prev  Ctrl+N next  ↑↓ scroll  Ctrl+T exit")]
+
         hint_control = FormattedTextControl(
             lambda: (
-                [("class:hint.transcript", "  ► TRANSCRIPT  ↑↓ scroll   Ctrl+T return")]
+                _transcript_hint()
                 if state.transcript_focused
                 else (
                     _approval_hint()
@@ -469,7 +487,13 @@ class MakeAgentShell:
 
         # Turn N frame: response area (top) + separator + tools area (bottom)
         def turn_title() -> str:
-            return f"Turn {len(state.transcript)}" if state.transcript else "—"
+            n = len(state.transcript)
+            if n == 0:
+                return "—"
+            idx = state.viewed_turn_index
+            if idx is None:
+                return f"Turn {n}"
+            return f"Turn {idx + 1} / {n}"
 
         turn_frame = Frame(
             body=HSplit([response_area, tools_sep, tools_area]),
@@ -491,6 +515,8 @@ class MakeAgentShell:
             if enabled:
                 layout.focus(response_area)
             else:
+                # Reset history view when exiting — return to live latest turn
+                state.viewed_turn_index = None
                 layout.focus(composer_input)
 
         # Key bindings
@@ -545,6 +571,30 @@ class MakeAgentShell:
                 _set_transcript_focus(False)
             elif state.transcript:
                 _set_transcript_focus(True)
+            self._refresh()
+
+        transcript_focused_filter = Condition(lambda: state.transcript_focused)
+
+        @kb.add("c-p", filter=transcript_focused_filter)
+        def _on_ctrl_p(event) -> None:
+            n = len(state.transcript)
+            if n < 2:
+                return
+            if state.viewed_turn_index is None:
+                state.viewed_turn_index = n - 2
+            elif state.viewed_turn_index > 0:
+                state.viewed_turn_index -= 1
+            self._refresh()
+
+        @kb.add("c-n", filter=transcript_focused_filter)
+        def _on_ctrl_n(event) -> None:
+            if state.viewed_turn_index is None:
+                return
+            n = len(state.transcript)
+            if state.viewed_turn_index >= n - 1:
+                state.viewed_turn_index = None
+            else:
+                state.viewed_turn_index += 1
             self._refresh()
 
         @kb.add("y", filter=approval_active)
