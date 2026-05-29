@@ -313,5 +313,175 @@ def test_os_path_join_safe():
     """os.path.join is safe - only os.system/popen/exec* are flagged."""
     code = "import os\npath = os.path.join('a', 'b')\n"
     is_trusted, patterns = _ast_trust_check(code)
+
+
+# ── AST bypass vectors (should be detected but currently aren't) ────────────────────
+# These tests demonstrate vulnerabilities in the trust check that allow code execution.
+# They will FAIL until the trust check is fixed to catch these patterns.
+
+
+def test_getattr_with_variable_argument_bypass():
+    """getattr(os, name) where name is a variable should be caught."""
+    # This pattern bypasses the current check because the second arg is not a string constant
+    code = """\
+import os
+name = 'system'
+os.__getattribute__(name)('whoami')
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    # Currently this passes (is_trusted=True) — that's the bug!
+    # After fix: should be not is_trusted
+    assert not is_trusted, "getattr with variable arg should be detected"
+
+
+def test_getattr_os_with_variable_bypass():
+    """getattr(os, 'system') with a variable holding 'os' should be caught."""
+    code = """\
+import os as operating_system
+name = 'system'
+getattr(operating_system, name)('whoami')
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "getattr with variable module should be detected"
+
+
+def test_subclasses_introspection_bypass():
+    """object.__subclasses__() chain to find Popen should be caught."""
+    # This finds subprocess.Popen through class introspection
+    code = """\
+classes = object.__subclasses__()
+for c in classes:
+    if c.__name__ == 'Popen':
+        c('whoami', shell=True).wait()
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "__subclasses__() introspection should be detected"
+
+
+def test_builtins_dict_subscript_bypass():
+    """builtins.__dict__['exec'] should be caught."""
+    # This accesses builtins through __dict__ instead of direct attribute access
+    code = """\
+import builtins
+builtins.__dict__['exec']('__import__("os").system("whoami")')
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "builtins.__dict__ subscript should be detected"
+
+
+def test_dynamic_module_name_bypass():
+    """__import__(var) where var is a variable should be caught."""
+    # This bypasses the check because __import__ is called with a variable, not a string literal
+    code = """\
+module_name = 'subprocess'
+mod = __import__(module_name)
+mod.Popen('whoami').wait()
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "__import__ with variable arg should be detected"
+
+
+def test_function_assignment_bypass():
+    """Assigning exec/eval to a variable and calling it should be caught."""
+    # This bypasses the check because exec is not called directly
+    code = """\
+x = exec
+x('import os; os.system("whoami")')
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "exec assigned to variable and called should be detected"
+
+
+def test_eval_through_variable_bypass():
+    """Assigning eval to a variable and calling it should be caught."""
+    code = """\
+f = eval
+f('__import__("os").system("whoami")')
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "eval assigned to variable and called should be detected"
+
+
+def test_string_concatenation_bypass():
+    """String concatenation to form 'exec' or 'eval' should be caught."""
+    # This bypasses the check because the function name is constructed dynamically
+    code = """\
+f = eval
+f('ev' + 'al' + '("1+1")')  # obfuscated
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    # After fix: should be not is_trusted
+    assert not is_trusted, "string concatenation to form dangerous names should be detected"
+
+
+def test_type_subclasses_direct_bypass():
+    """type(1).__subclasses__() should be caught."""
+    code = """\
+type(1).__subclasses__()
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "type().__subclasses__() should be detected"
+
+
+def test_object_subclasses_direct_bypass():
+    """object.__subclasses__() should be caught."""
+    code = """\
+object.__subclasses__()
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "object.__subclasses__() should be detected"
+
+
+def test_getattribute_dangerous_attr_bypass():
+    """os.__getattribute__('system') should be caught."""
+    code = """\
+import os
+os.__getattribute__('system')('whoami')
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "__getattribute__ with dangerous attr should be detected"
+
+
+def test_import_module_variable_bypass():
+    """importlib.import_module(var) where var is a variable should be caught."""
+    code = """\
+import importlib
+mod_name = 'subprocess'
+importlib.import_module(mod_name)
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "import_module with variable arg should be detected"
+
+
+def test_chain_dangerous_calls_bypass():
+    """Chained dangerous calls should be caught."""
+    code = """\
+import os
+result = os.__getattribute__('system')('whoami')
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert not is_trusted, "chained __getattribute__ on os should be detected"
+
+
+def test_safe_getattr_non_dangerous_still_trusted():
+    """getattr on safe attributes should still be trusted (regression check)."""
+    code = """\
+value = getattr(some_obj, 'safe_attr', 'default')
+print(value)
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert is_trusted
+    assert patterns == []
+
+
+def test_safe_os_import_still_trusted():
+    """import os with safe usage should still be trusted (regression check)."""
+    code = """\
+import os
+path = os.path.join('a', 'b')
+"""
+    is_trusted, patterns = _ast_trust_check(code)
+    assert is_trusted
+    assert patterns == []
     assert is_trusted
     assert patterns == []

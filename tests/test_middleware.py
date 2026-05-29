@@ -192,7 +192,6 @@ class TestAgentManagerMiddlewareChain:
                 async def after_response(self, request, response):
                     order.append(f"after:{name}")
             return _Mw()
-
         a, b, c = make_mw("A"), make_mw("B"), make_mw("C")
         manager = AgentManager(th, middlewares=[a, b, c])
         session_id = manager.get_session_id()
@@ -205,6 +204,94 @@ class TestAgentManagerMiddlewareChain:
         # after_response: A innermost first, then B, then C
         assert order.index("after:A") < order.index("after:B") < order.index("after:C")
 
+    async def test_all_middlewares_wired_into_chain(self):
+        """Each middleware in [A,B,C,D] must actually execute — not just the outermost."""
+        th = _make_tool_handler()
+        executed: list[str] = []
+
+        def make_mw(name: str) -> MiddlewareBase:
+            class _Mw(MiddlewareBase):
+                def __call__(self, request, call_next):
+                    async def _gen():
+                        executed.append(f"start:{name}")
+                        async for event in call_next(request):
+                            yield event
+                        executed.append(f"end:{name}")
+                    return _gen()
+
+                async def after_response(self, request, response):
+                    executed.append(f"after:{name}")
+            return _Mw()
+
+        a, b, c, d = make_mw("A"), make_mw("B"), make_mw("C"), make_mw("D")
+        manager = AgentManager(th, middlewares=[a, b, c, d])
+        session_id = manager.get_session_id()
+        _mock_loop_with_cbs(manager, session_id, [MessageCallback("done")])
+
+        [e async for e in manager.astream_events(session_id, "go")]
+
+        # Verify all 4 middlewares executed (not just D)
+        start_events = [e for e in executed if e.startswith("start:")]
+        assert len(start_events) == 4, f"Expected 4 start events, got {len(start_events)}: {start_events}"
+        # Verify correct nesting order: D→C→B→A enter, A→B→C→D exit
+        assert start_events[0] == "start:D"
+        assert start_events[1] == "start:C"
+        assert start_events[2] == "start:B"
+        assert start_events[3] == "start:A"
+        # Verify after_response order: A→B→C→D
+        after_events = [e for e in executed if e.startswith("after:")]
+        assert after_events == ["after:A", "after:B", "after:C", "after:D"]
+
+    async def test_middleware_after_response_runs_even_if_previous_fails(self):
+        """Cleanup (after_response) must not short-circuit on errors."""
+        th = _make_tool_handler()
+        after_calls: list[str] = []
+
+        class FailingMiddleware(MiddlewareBase):
+            async def after_response(self, request, response):
+                after_calls.append("failing")
+                raise RuntimeError("cleanup error")
+
+        class HealthyMiddleware(MiddlewareBase):
+            async def after_response(self, request, response):
+                after_calls.append("healthy")
+
+        manager = AgentManager(th, middlewares=[HealthyMiddleware(), FailingMiddleware()])
+        session_id = manager.get_session_id()
+        _mock_loop_with_cbs(manager, session_id, [MessageCallback("done")])
+
+        with pytest.raises(RuntimeError):
+            [e async for e in manager.astream_events(session_id, "go")]
+
+        # Both should have been called — failing one first, then healthy one
+        # (order may vary; the key is that neither is skipped)
+        assert "failing" in after_calls
+        assert "healthy" in after_calls
+
+    async def test_single_middleware_runs_correctly(self):
+        """Edge case: a single middleware should still work properly."""
+        th = _make_tool_handler()
+        calls: list[str] = []
+
+        class SingleMw(MiddlewareBase):
+            def __call__(self, request, call_next):
+                async def _gen():
+                    calls.append("enter")
+                    async for event in call_next(request):
+                        yield event
+                    calls.append("exit")
+                return _gen()
+
+            async def after_response(self, request, response):
+                calls.append(f"after:{response.content}")
+
+        manager = AgentManager(th, middlewares=[SingleMw()])
+        session_id = manager.get_session_id()
+        _mock_loop_with_cbs(manager, session_id, [MessageCallback("final")])
+
+        [e async for e in manager.astream_events(session_id, "hi")]
+
+        assert calls == ["enter", "exit", "after:final"]
     async def test_response_accumulates_usage_from_multiple_turns(self):
         th = _make_tool_handler()
         received: list[Response] = []
@@ -229,6 +316,7 @@ class TestAgentManagerMiddlewareChain:
         assert resp.input_tokens == 30
         assert resp.output_tokens == 13
         assert resp.content == "result"
+        assert resp.model == "gpt-4"
         assert resp.model == "gpt-4"
 
     def test_get_token_stats_delegates_to_session_middleware(self, tmp_path):

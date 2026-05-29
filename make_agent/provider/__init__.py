@@ -12,6 +12,7 @@ from make_agent.agent_core.constants import DEFAULT_MAX_TOKENS, DEFAULT_REASONIN
 
 DEFAULT_CONTEXT_WINDOW = 64_000
 DEFAULT_COMPACT_THRESHOLD_RATIO = 0.75
+DEFAULT_COMPACT_TARGET_RATIO = 0.5
 
 litellm.suppress_debug_info = True
 litellm.verbose = False
@@ -113,6 +114,23 @@ async def acompletion_with_retry(
             await asyncio.sleep(wait)
 
 
+def _get_context_window(model: str, context_window: int = 0) -> int:
+    """Return the context window size for *model* in tokens.
+
+    Uses *context_window* when non-zero; otherwise queries ``litellm.get_model_info``.
+    Falls back to ``DEFAULT_CONTEXT_WINDOW`` when the model is unknown to litellm.
+    """
+    if context_window:
+        return context_window
+    try:
+        info = litellm.get_model_info(model)
+        window = info.get("max_input_tokens") or info.get("max_tokens") or 0
+    except Exception:
+        logger.debug("Could not get model info for %r; using default context window", model)
+        window = 0
+    return window or DEFAULT_CONTEXT_WINDOW
+
+
 def compute_compact_threshold(
     model: str,
     threshold_ratio: float = DEFAULT_COMPACT_THRESHOLD_RATIO,
@@ -123,23 +141,54 @@ def compute_compact_threshold(
     Uses *context_window* when non-zero; otherwise queries ``litellm.get_model_info``.
     Falls back to ``DEFAULT_CONTEXT_WINDOW`` when the model is unknown to litellm.
     """
-    window = context_window
-    if not window:
-        try:
-            info = litellm.get_model_info(model)
-            window = info.get("max_input_tokens") or info.get("max_tokens") or 0
-        except Exception:
-            logger.debug("Could not get model info for %r; using default context window", model)
-    if not window:
-        window = DEFAULT_CONTEXT_WINDOW
-    return int(window * threshold_ratio)
+    return int(_get_context_window(model, context_window) * threshold_ratio)
+
+
+def compute_compact_target(
+    model: str,
+    target_ratio: float = DEFAULT_COMPACT_TARGET_RATIO,
+    context_window: int = 0,
+) -> int:
+    """Return the post-compaction target token count (hysteresis lower bound).
+
+    Proactive compaction is suppressed after a successful compact until the
+    estimated context size climbs back above the threshold.  The target marks
+    the level below which the context must fall after compaction.
+    """
+    return int(_get_context_window(model, context_window) * target_ratio)
+
+
+def compute_summary_max_tokens(model: str, context_window: int = 0) -> int:
+    """Return a dynamic token budget for the compaction summary.
+
+    Clamps ``5 %`` of the context window between 256 and 2 048 tokens.
+    """
+    window = _get_context_window(model, context_window)
+    return max(256, min(2048, int(window * 0.05)))
+
+
+def estimate_tokens(messages: list[dict], model: str) -> int:
+    """Estimate the token count for *messages* against *model*.
+
+    Uses ``litellm.token_counter`` when available; falls back to a cheap
+    ``len(text) // 4`` approximation on any failure.
+    """
+    try:
+        return litellm.token_counter(model=model, messages=messages)
+    except Exception:
+        total = sum(len(str(m.get("content") or "")) for m in messages)
+        return total // 4
 
 
 __all__ = [
     "DEFAULT_COMPACT_THRESHOLD_RATIO",
+    "DEFAULT_COMPACT_TARGET_RATIO",
     "DEFAULT_CONTEXT_WINDOW",
     "acompletion_with_retry",
+    "compute_compact_target",
     "compute_compact_threshold",
+    "compute_summary_max_tokens",
+    "estimate_tokens",
     "is_anthropic_model",
     "is_context_exceeded",
     "is_corrupt_message_history",

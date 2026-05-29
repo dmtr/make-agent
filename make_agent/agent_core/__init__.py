@@ -19,6 +19,7 @@ from .bridge import (
     TurnStarted,
 )
 from .constants import (
+    DEFAULT_COMPACT_TARGET_RATIO,
     DEFAULT_COMPACT_THRESHOLD_RATIO,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
@@ -27,6 +28,7 @@ from .constants import (
     DEFAULT_TOOL_TIMEOUT,
     DEFAULT_USE_PROMPT_CACHE,
     KEEP_COMPACT_TURNS,
+    KEEP_RECENT_TURNS,
 )
 from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import _render_html, export_conversation
@@ -35,6 +37,7 @@ from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 from make_agent.provider import acompletion_with_retry, is_anthropic_model, is_context_exceeded, is_corrupt_message_history, parse_retry_after
 
 __all__ = [
+    "DEFAULT_COMPACT_TARGET_RATIO",
     "DEFAULT_COMPACT_THRESHOLD_RATIO",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_MAX_TOKENS",
@@ -43,6 +46,7 @@ __all__ = [
     "DEFAULT_TOOL_TIMEOUT",
     "DEFAULT_USE_PROMPT_CACHE",
     "KEEP_COMPACT_TURNS",
+    "KEEP_RECENT_TURNS",
     "is_anthropic_model",
     "is_context_exceeded",
     "is_corrupt_message_history",

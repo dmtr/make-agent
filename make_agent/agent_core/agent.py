@@ -33,13 +33,16 @@ from .bridge import (
     TurnFinished,
     TurnStarted,
 )
-from .constants import KEEP_COMPACT_TURNS
+from .constants import KEEP_COMPACT_TURNS, KEEP_RECENT_TURNS
 from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import export_conversation
 from .loop import AgentConfig, AgenticLoop, CompactCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
+from make_agent.provider import estimate_tokens
 
 logger = logging.getLogger(__name__)
+
+COMPACT_SUMMARY_MARKER = "Summary of earlier conversation:\n"
 
 COMPACT_SUMMARY_PROMPT = (
     "You are compacting a conversation history that has grown too long for the context window.\n\n"
@@ -49,14 +52,30 @@ COMPACT_SUMMARY_PROMPT = (
     "- Errors encountered and how they were resolved\n"
     "- Important facts discovered\n"
     "- The current state of any ongoing tasks\n\n"
+    "If a prior summary is provided at the start, merge it with the new material into one unified summary.\n"
     "Be factual and specific. Omit greetings and filler text."
 )
 
-COMPACT_SUMMARY_MAX_TOKENS = 1024
+COMPACT_SUMMARY_MAX_TOKENS = 1024  # fallback default; actual value computed from context window
 
 
 # Backward-compatible alias.
 Agent = AgenticLoop
+
+
+def _split_into_turns(messages: list[dict]) -> list[list[dict]]:
+    """Split a list of non-system messages into turns.
+
+    A turn starts with a ``user`` message and includes all following
+    non-user messages up to (but not including) the next ``user`` message.
+    """
+    turns: list[list[dict]] = []
+    for msg in messages:
+        if msg.get("role") == "user":
+            turns.append([msg])
+        elif turns:
+            turns[-1].append(msg)
+    return turns
 
 
 def compact_messages(messages: list[dict], keep_turns: int = KEEP_COMPACT_TURNS) -> list[dict]:
@@ -73,12 +92,7 @@ def compact_messages(messages: list[dict], keep_turns: int = KEEP_COMPACT_TURNS)
     system = [m for m in messages if m.get("role") == "system"]
     non_system = [m for m in messages if m.get("role") != "system"]
 
-    turns: list[list[dict]] = []
-    for msg in non_system:
-        if msg.get("role") == "user":
-            turns.append([msg])
-        elif turns:
-            turns[-1].append(msg)
+    turns = _split_into_turns(non_system)
 
     if len(turns) <= keep_turns:
         return list(messages)
@@ -114,7 +128,9 @@ def _format_messages_for_summary(messages: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-async def _summarize_messages(messages: list[dict], model: str) -> str:
+async def _summarize_messages(
+    messages: list[dict], model: str, max_tokens: int = COMPACT_SUMMARY_MAX_TOKENS
+) -> str:
     """Call the LLM to summarise *messages*. Returns an empty string on failure."""
     text = _format_messages_for_summary(messages)
     if not text.strip():
@@ -126,7 +142,7 @@ async def _summarize_messages(messages: list[dict], model: str) -> str:
                 {"role": "system", "content": COMPACT_SUMMARY_PROMPT},
                 {"role": "user", "content": text},
             ],
-            max_tokens=COMPACT_SUMMARY_MAX_TOKENS,
+            max_tokens=max_tokens,
             stream=False,
         )
         return response.choices[0].message.content or ""
@@ -135,13 +151,22 @@ async def _summarize_messages(messages: list[dict], model: str) -> str:
         return ""
 
 
-async def compact_with_summary(messages: list[dict], model: str) -> list[dict]:
-    """Compact history to [system messages] + [one summary system message].
+async def compact_with_summary(
+    messages: list[dict],
+    model: str,
+    keep_recent_turns: int = KEEP_RECENT_TURNS,
+    summary_max_tokens: int = COMPACT_SUMMARY_MAX_TOKENS,
+) -> list[dict]:
+    """Compact history to [system messages] + [one summary] + [recent turns].
 
-    Summarises all non-system messages with a single LLM call and replaces
-    them with a compact summary injected as a system message.  Falls back to
-    :func:`compact_messages` (last 5 turns) when the summarisation call fails
-    or there are fewer than two non-system messages to summarise.
+    Summarises turns older than the last *keep_recent_turns* turns using a
+    single LLM call and replaces them with a compact summary injected as a
+    system message.  Any previously inserted summary is merged into the new
+    one rather than stacked, keeping exactly one summary message at all times.
+
+    Token-based gating: if the summarised result does not reduce the estimated
+    token count, falls back to :func:`compact_messages` (turn-drop), and if
+    that also fails to reduce tokens, returns the original list unchanged.
     """
     system_msgs = [m for m in messages if m.get("role") == "system"]
     non_system = [m for m in messages if m.get("role") != "system"]
@@ -149,12 +174,55 @@ async def compact_with_summary(messages: list[dict], model: str) -> list[dict]:
     if len(non_system) < 2:
         return list(messages)
 
-    summary = await _summarize_messages(non_system, model)
+    # Detect an existing summary message to merge rather than stack.
+    summary_idx = next(
+        (
+            i
+            for i, m in enumerate(system_msgs)
+            if isinstance(m.get("content"), str) and m["content"].startswith(COMPACT_SUMMARY_MARKER)
+        ),
+        None,
+    )
+    existing_summary = ""
+    base_system_msgs = system_msgs
+    if summary_idx is not None:
+        existing_summary = system_msgs[summary_idx]["content"][len(COMPACT_SUMMARY_MARKER):]
+        base_system_msgs = [m for i, m in enumerate(system_msgs) if i != summary_idx]
+
+    # Split into turns; keep the most recent ones verbatim.
+    turns = _split_into_turns(non_system)
+    if len(turns) <= keep_recent_turns:
+        return list(messages)
+
+    to_summarize = [msg for turn in turns[:-keep_recent_turns] for msg in turn]
+    to_keep = [msg for turn in turns[-keep_recent_turns:] for msg in turn]
+
+    # Prepend any prior summary so the LLM merges it into one unified summary.
+    if existing_summary:
+        summarize_input = [{"role": "system", "content": f"Prior summary:\n{existing_summary}"}] + to_summarize
+    else:
+        summarize_input = to_summarize
+
+    summary = await _summarize_messages(summarize_input, model, max_tokens=summary_max_tokens)
     if not summary:
         return compact_messages(messages)
 
-    summary_msg = {"role": "system", "content": f"Summary of earlier conversation:\n{summary}"}
-    return system_msgs + [summary_msg]
+    result = (
+        base_system_msgs
+        + [{"role": "system", "content": f"{COMPACT_SUMMARY_MARKER}{summary}"}]
+        + to_keep
+    )
+
+    # Token-based validation: only commit if the new history is actually smaller.
+    before_tokens = estimate_tokens(messages, model)
+    after_tokens = estimate_tokens(result, model)
+    if after_tokens >= before_tokens:
+        fallback = compact_messages(messages)
+        if estimate_tokens(fallback, model) < before_tokens:
+            return fallback
+        return list(messages)
+
+    return result
 
 
 class SessionNotFoundError(Exception):
@@ -167,11 +235,16 @@ class AgentManager:
         tool_handler: ToolHandlerProtocol,
         middlewares: list[MiddlewareBase] | None = None,
         compact_threshold: int = 0,
+        compact_target: int = 0,
+        summary_max_tokens: int = COMPACT_SUMMARY_MAX_TOKENS,
     ) -> None:
         self._tool_handler = tool_handler
         self._middlewares: list[MiddlewareBase] = middlewares if middlewares is not None else []
         self._sessions: dict[str, AgenticLoop] = {}
         self._compact_threshold = compact_threshold
+        self._compact_target = compact_target
+        self._summary_max_tokens = summary_max_tokens
+        self._skip_proactive: dict[str, bool] = {}
 
     @staticmethod
     def get_session_id() -> str:
@@ -180,9 +253,10 @@ class AgentManager:
     def create_session(self, config: AgentConfig) -> str:
         session_id = self.get_session_id()
         model = config.model
+        summary_max_tokens = self._summary_max_tokens
 
         async def _compact_fn(messages: list[dict]) -> list[dict]:
-            return await compact_with_summary(messages, model)
+            return await compact_with_summary(messages, model, summary_max_tokens=summary_max_tokens)
 
         loop = AgenticLoop(
             config._replace(session_id=session_id, compact_fn=_compact_fn),
@@ -200,10 +274,13 @@ class AgentManager:
     async def _compact_session(self, session_id: str) -> int:
         """Compact the session's conversation history to a summary.
 
-        Returns the number of messages removed (0 when nothing was pruned).
+        Returns the number of messages removed (0 when nothing was pruned or
+        when compaction would not reduce the estimated token count).
         """
         loop = self.get_agent(session_id)
-        pruned = await compact_with_summary(loop.messages, loop.model)
+        pruned = await compact_with_summary(
+            loop.messages, loop.model, summary_max_tokens=self._summary_max_tokens
+        )
         removed = len(loop.messages) - len(pruned)
         if removed > 0:
             loop._messages = pruned
@@ -301,6 +378,7 @@ class AgentManager:
         content = ""
         input_tokens = 0
         output_tokens = 0
+        peak_input_tokens = 0
         model = ""
 
         async for event in self._build_chain()(request):
@@ -309,6 +387,7 @@ class AgentManager:
             elif isinstance(event, UsageEvent):
                 input_tokens += event.input_tokens
                 output_tokens += event.output_tokens
+                peak_input_tokens = max(peak_input_tokens, event.input_tokens)
                 model = event.model
             yield event
 
@@ -322,10 +401,21 @@ class AgentManager:
         for mw in self._middlewares:
             await mw.after_response(request, response)
 
-        if self._compact_threshold > 0 and input_tokens >= self._compact_threshold:
+        # Hysteresis: clear the skip flag once tokens have dropped below the target.
+        if self._compact_target > 0 and self._skip_proactive.get(session_id, False):
+            if peak_input_tokens < self._compact_target:
+                self._skip_proactive[session_id] = False
+
+        if (
+            self._compact_threshold > 0
+            and peak_input_tokens >= self._compact_threshold
+            and not self._skip_proactive.get(session_id, False)
+        ):
             messages_removed = await self._compact_session(session_id)
             if messages_removed > 0:
                 yield CompactEvent(messages_removed=messages_removed)
+                if self._compact_target > 0:
+                    self._skip_proactive[session_id] = True
 
     def export_conversation(self, session_id: str) -> Path | None:
         loop = self.get_agent(session_id)
