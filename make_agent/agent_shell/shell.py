@@ -1,10 +1,10 @@
 """MakeAgentShell — interactive full-screen REPL for the make-agent.
 
-Four-region layout:
-  1. Header     (1 line)   — model | tokens | live status
+Five-region layout:
+  1. Header     (1 line)   — model | tokens | live status | alert (right)
   2. Composer   (3 lines)  — prompt input; Alt+Enter for newlines
-  3. Alert bar  (1 line)   — latest alert message
-  4. Transcript (rest)     — current turn only; Ctrl+T to focus/scroll
+  3. Turn N     (rest)     — response pane (top) + tools pane (bottom)
+  4. Footer     (1 line)   — session start time
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import asyncio
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -23,7 +24,7 @@ from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout, Window
+from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
@@ -168,6 +169,42 @@ class TurnBlock:
     start_time: float = field(default_factory=time.time)
     messages_removed: int = 0  # set when auto-compact fires during this turn
 
+    def render_response(self) -> str:
+        """Render only the user message header + LLM answer lines + turn footer."""
+        parts: list[str] = []
+
+        # User message header
+        parts.append(f"  ▶ {self.user_message}")
+        parts.append("  " + "╌" * 36)
+
+        # Assistant response body
+        for line in self.response_lines:
+            parts.append(f"  {line}")
+
+        # Turn footer — always shown for finished turns
+        if self.state != "streaming":
+            elapsed = self.elapsed or (time.time() - self.start_time)
+            state_label = "" if self.state == "done" else f" {self.state.upper()}"
+            compact_note = f" │ ↩ compact -{self.messages_removed}" if self.messages_removed > 0 else ""
+            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label}{compact_note} {'─' * 8}"
+            parts.append("")
+            parts.append(sep)
+
+        parts.append("")
+        return "\n".join(parts)
+
+    def render_tools(self) -> str:
+        """Render only tool rows and any approval card."""
+        parts: list[str] = []
+
+        if self.approval:
+            parts.append(self.approval.render())
+
+        for tool in self.tools:
+            parts.append(tool.render())
+
+        return "\n".join(parts)
+
     def render(self) -> str:
         parts: list[str] = []
 
@@ -263,8 +300,10 @@ class MakeAgentShell:
         self._command_queue: asyncio.Queue[ShellCommand] = asyncio.Queue()
         self._event_queue: asyncio.Queue[ShellEvent] = asyncio.Queue()
         self._state = ShellState(model=model)
+        self._session_start = datetime.now()
         self._app: Optional[Application] = None
-        self._transcript_area: Optional[TextArea] = None
+        self._response_area: Optional[TextArea] = None
+        self._tools_area: Optional[TextArea] = None
         self._commands: dict[str, Any] = {
             "exit": self._cmd_exit,
             "quit": self._cmd_exit,
@@ -275,7 +314,7 @@ class MakeAgentShell:
 
     # ── rendering ───────────────────────────────────────────────────────────────
 
-    def _header_text(self) -> list[tuple[str, str]]:
+    def _header_left_text(self) -> list[tuple[str, str]]:
         s = self._state
         label = s.status.value
         if s.status == AgentStatus.TOOL and s.active_tool:
@@ -292,19 +331,35 @@ class MakeAgentShell:
             (status_style, f"{indicator} {label} "),
         ]
 
-    def _render_transcript(self) -> str:
+    def _header_alert_text(self) -> list[tuple[str, str]]:
+        s = self._state
+        if s.current_alert is None:
+            return [("class:header", "")]
+        icon = _ALERT_ICONS.get(s.current_alert.level, "·")
+        return [("class:header.alert", f" {icon} {s.current_alert.message} ")]
+
+    def _render_response(self) -> str:
         if not self._state.transcript:
             return ""
-        return self._state.transcript[-1].render()
+        return self._state.transcript[-1].render_response()
+
+    def _render_tools(self) -> str:
+        if not self._state.transcript:
+            return ""
+        return self._state.transcript[-1].render_tools()
 
     def _refresh(self) -> None:
-        """Update the transcript area text and invalidate the app."""
-        if self._transcript_area is not None:
-            text = self._render_transcript()
-            self._transcript_area.text = text
+        """Update the response and tools areas and invalidate the app."""
+        if self._response_area is not None:
+            text = self._render_response()
+            self._response_area.text = text
             if not self._state.transcript_focused:
-                self._transcript_area.buffer.cursor_position = len(text)
-                self._transcript_area.window.vertical_scroll = 999999
+                self._response_area.buffer.cursor_position = len(text)
+                self._response_area.window.vertical_scroll = 999999
+        if self._tools_area is not None:
+            tools_text = self._render_tools()
+            self._tools_area.text = tools_text
+            self._tools_area.window.vertical_scroll = 999999
         if self._app is not None:
             self._app.invalidate()
 
@@ -313,16 +368,28 @@ class MakeAgentShell:
     def _build_app(self) -> Application:
         state = self._state
 
-        # Transcript pane — scrollable, read-only
-        transcript_area = TextArea(
+        # Response pane — LLM answer, bright and scrollable
+        response_area = TextArea(
             text="",
             scrollbar=True,
             focusable=True,
             read_only=True,
             wrap_lines=True,
+            style="fg:#dcdcdc bold",
+        )
+        self._response_area = response_area
+
+        # Tools pane — tool rows, fixed height and scrollable
+        tools_area = TextArea(
+            text="",
+            height=8,
+            scrollbar=True,
+            focusable=False,
+            read_only=True,
+            wrap_lines=True,
             style="fg:#7a8494",
         )
-        self._transcript_area = transcript_area
+        self._tools_area = tools_area
 
         # Composer input — multiline with slash-command completion and history
         completer = WordCompleter(
@@ -373,26 +440,48 @@ class MakeAgentShell:
         )
         hint_window = Window(height=1, content=hint_control)
 
-        # Alert bar — 1 line showing the latest alert (empty when none)
-        alert_control = FormattedTextControl(
-            lambda: [("class:alert", "  " + state.current_alert.render().strip())]
-            if state.current_alert
-            else [("", "")]
-        )
-        alert_window = Window(height=1, content=alert_control)
-
-        # Header — 1 line: model | tokens | status
-        header_window = Window(
+        # Header — VSplit: left (model | tokens | turn | status) + right (alert)
+        header_left = Window(
             height=1,
-            content=FormattedTextControl(self._header_text),
+            content=FormattedTextControl(self._header_left_text),
+            style="class:header",
+        )
+        header_right = Window(
+            height=1,
+            content=FormattedTextControl(self._header_alert_text),
+            style="class:header",
+            dont_extend_width=True,
+        )
+        header_window = VSplit([header_left, header_right], height=1)
+
+        # Tools separator line
+        tools_sep = Window(
+            height=1,
+            content=FormattedTextControl(lambda: [("class:tools.sep", "  ──── tools ────")]),
         )
 
-        # Four-region root layout
+        # Footer — session start time
+        start_str = self._session_start.strftime("%H:%M:%S")
+        footer_window = Window(
+            height=1,
+            content=FormattedTextControl(lambda: [("class:footer", f"  Session started {start_str}")]),
+        )
+
+        # Turn N frame: response area (top) + separator + tools area (bottom)
+        def turn_title() -> str:
+            return f"Turn {len(state.transcript)}" if state.transcript else "—"
+
+        turn_frame = Frame(
+            body=HSplit([response_area, tools_sep, tools_area]),
+            title=turn_title,
+        )
+
+        # Five-region root layout
         root = HSplit([
             header_window,
             Frame(body=HSplit([composer_input, hint_window]), title=""),
-            alert_window,
-            Frame(body=transcript_area, title="TRANSCRIPT"),
+            turn_frame,
+            footer_window,
         ])
 
         layout = Layout(root, focused_element=composer_input)
@@ -400,7 +489,7 @@ class MakeAgentShell:
         def _set_transcript_focus(enabled: bool) -> None:
             state.transcript_focused = enabled
             if enabled:
-                layout.focus(transcript_area)
+                layout.focus(response_area)
             else:
                 layout.focus(composer_input)
 
@@ -474,6 +563,7 @@ class MakeAgentShell:
             # Header bar — IDEA Darcula toolbar
             "header": "bg:#3c3f41 #a9b7c6",
             "header.sep": "bg:#3c3f41 #515151",
+            "header.alert": "bg:#3c3f41 #cc7832",
             # Status indicators
             "status.idle": "bg:#3c3f41 #808080",
             "status.streaming": "bg:#3c3f41 #6a8759 bold",
@@ -489,8 +579,10 @@ class MakeAgentShell:
             "hint.approval.sep": "#515151",
             "hint.approval.call": "#cc7832",
             "hint.transcript": "#6897bb bold",
-            # Alert bar
-            "alert": "#cc7832",
+            # Tools separator
+            "tools.sep": "#4e5254",
+            # Footer
+            "footer": "#606366 italic",
         })
 
         return Application(
@@ -658,10 +750,6 @@ class MakeAgentShell:
             )
         )
         self._app = self._build_app()
-        self._state.add_alert(
-            "INFO",
-            "Type your message and press Enter.  Alt+Enter inserts a newline.  /help for commands.",
-        )
         self._refresh()
         try:
             await self._app.run_async()
