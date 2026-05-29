@@ -8,7 +8,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncGenerator, AsyncIterator, Callable, NamedTuple
+from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, NamedTuple
 
 from make_agent.protocols import ToolHandlerProtocol
 
@@ -155,7 +155,7 @@ class AgentConfig(NamedTuple):
     session_id: str | None = None
     project_dir: Path = Path()
     use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE
-    compact_fn: Callable[[list[dict]], list[dict]] | None = None
+    compact_fn: Callable[[list[dict]], Awaitable[list[dict]]] | None = None
 
 
 def _parse_item(doc: Any) -> list[_ToolCall] | None:
@@ -321,7 +321,7 @@ class AgenticLoop:
             except Exception as exc:
                 if self._compact_fn and is_context_exceeded(exc):
                     logger.info("Context window exceeded; attempting compaction")
-                    pruned = self._compact_fn(self._messages)
+                    pruned = await self._compact_fn(self._messages)
                     removed = len(self._messages) - len(pruned)
                     if removed > 0:
                         self._messages = pruned
@@ -379,7 +379,7 @@ class AgenticLoop:
                         usage = chunk.usage
             except Exception as exc:
                 if self._compact_fn and is_context_exceeded(exc):
-                    pruned = self._compact_fn(self._messages)
+                    pruned = await self._compact_fn(self._messages)
                     removed = len(self._messages) - len(pruned)
                     if removed > 0:
                         self._messages = pruned

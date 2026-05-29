@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from contextlib import suppress
 from pathlib import Path
 from typing import AsyncIterator, Callable
 from uuid import uuid4
+
+import litellm
 
 from make_agent.protocols import ToolHandlerProtocol
 
@@ -35,6 +38,21 @@ from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEven
 from .export import export_conversation
 from .loop import AgentConfig, AgenticLoop, CompactCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
+
+logger = logging.getLogger(__name__)
+
+COMPACT_SUMMARY_PROMPT = (
+    "You are compacting a conversation history that has grown too long for the context window.\n\n"
+    "Summarize the following conversation in 3–5 concise paragraphs. Focus on:\n"
+    "- Decisions made and conclusions reached\n"
+    "- Files examined, modified, or created\n"
+    "- Errors encountered and how they were resolved\n"
+    "- Important facts discovered\n"
+    "- The current state of any ongoing tasks\n\n"
+    "Be factual and specific. Omit greetings and filler text."
+)
+
+COMPACT_SUMMARY_MAX_TOKENS = 1024
 
 
 # Backward-compatible alias.
@@ -69,6 +87,76 @@ def compact_messages(messages: list[dict], keep_turns: int = KEEP_COMPACT_TURNS)
     return system + kept
 
 
+def _format_messages_for_summary(messages: list[dict]) -> str:
+    """Render a list of messages as a readable text block for summarization."""
+    parts = []
+    for msg in messages:
+        role = msg.get("role", "")
+        if role == "user":
+            content = msg.get("content") or ""
+            parts.append(f"User: {content}")
+        elif role == "assistant":
+            content = msg.get("content") or ""
+            tool_calls = msg.get("tool_calls") or []
+            if tool_calls:
+                names = ", ".join(tc.get("function", {}).get("name", "?") for tc in tool_calls)
+                line = f"Assistant: [Called tools: {names}]"
+                if content:
+                    line = f"Assistant: {content}\n[Called tools: {names}]"
+                parts.append(line)
+            elif content:
+                parts.append(f"Assistant: {content}")
+        elif role == "tool":
+            content = msg.get("content") or ""
+            if len(content) > 500:
+                content = content[:500] + "...[truncated]"
+            parts.append(f"Tool result: {content}")
+    return "\n\n".join(parts)
+
+
+async def _summarize_messages(messages: list[dict], model: str) -> str:
+    """Call the LLM to summarise *messages*. Returns an empty string on failure."""
+    text = _format_messages_for_summary(messages)
+    if not text.strip():
+        return ""
+    try:
+        response = await litellm.acompletion(
+            model=model,
+            messages=[
+                {"role": "system", "content": COMPACT_SUMMARY_PROMPT},
+                {"role": "user", "content": text},
+            ],
+            max_tokens=COMPACT_SUMMARY_MAX_TOKENS,
+            stream=False,
+        )
+        return response.choices[0].message.content or ""
+    except Exception:
+        logger.warning("Summarization LLM call failed; falling back to turn-based compact")
+        return ""
+
+
+async def compact_with_summary(messages: list[dict], model: str) -> list[dict]:
+    """Compact history to [system messages] + [one summary system message].
+
+    Summarises all non-system messages with a single LLM call and replaces
+    them with a compact summary injected as a system message.  Falls back to
+    :func:`compact_messages` (last 5 turns) when the summarisation call fails
+    or there are fewer than two non-system messages to summarise.
+    """
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
+
+    if len(non_system) < 2:
+        return list(messages)
+
+    summary = await _summarize_messages(non_system, model)
+    if not summary:
+        return compact_messages(messages)
+
+    summary_msg = {"role": "system", "content": f"Summary of earlier conversation:\n{summary}"}
+    return system_msgs + [summary_msg]
+
+
 class SessionNotFoundError(Exception):
     pass
 
@@ -91,8 +179,13 @@ class AgentManager:
 
     def create_session(self, config: AgentConfig) -> str:
         session_id = self.get_session_id()
+        model = config.model
+
+        async def _compact_fn(messages: list[dict]) -> list[dict]:
+            return await compact_with_summary(messages, model)
+
         loop = AgenticLoop(
-            config._replace(session_id=session_id, compact_fn=compact_messages),
+            config._replace(session_id=session_id, compact_fn=_compact_fn),
             self._tool_handler,
         )
         self._sessions[session_id] = loop
@@ -104,13 +197,13 @@ class AgentManager:
         except KeyError:
             raise SessionNotFoundError(f"Session with id {session_id} not found.")
 
-    def _compact_session(self, session_id: str) -> int:
-        """Compact the session's conversation history to the last few turns.
+    async def _compact_session(self, session_id: str) -> int:
+        """Compact the session's conversation history to a summary.
 
         Returns the number of messages removed (0 when nothing was pruned).
         """
         loop = self.get_agent(session_id)
-        pruned = compact_messages(loop.messages)
+        pruned = await compact_with_summary(loop.messages, loop.model)
         removed = len(loop.messages) - len(pruned)
         if removed > 0:
             loop._messages = pruned
@@ -230,7 +323,7 @@ class AgentManager:
             await mw.after_response(request, response)
 
         if self._compact_threshold > 0 and input_tokens >= self._compact_threshold:
-            messages_removed = self._compact_session(session_id)
+            messages_removed = await self._compact_session(session_id)
             if messages_removed > 0:
                 yield CompactEvent(messages_removed=messages_removed)
 

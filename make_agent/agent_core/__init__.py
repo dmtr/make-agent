@@ -1,4 +1,4 @@
-from .agent import Agent, AgentManager, SessionNotFoundError, compact_messages
+from .agent import Agent, AgentManager, SessionNotFoundError, compact_messages, compact_with_summary
 from .bridge import (
     ApprovalRequested,
     ApproveSkill,
@@ -46,6 +46,7 @@ __all__ = [
     "is_anthropic_model",
     "is_context_exceeded",
     "compact_messages",
+    "compact_with_summary",
     "Agent",
     "AgentConfig",
     "AgentEvent",

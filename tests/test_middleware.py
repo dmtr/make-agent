@@ -269,6 +269,7 @@ class TestAgentManagerCompact:
 
     async def test_compact_event_emitted_when_tokens_exceed_threshold(self):
         from make_agent.agent_core import CompactEvent
+        from unittest.mock import AsyncMock, patch
 
         th = _make_tool_handler()
         manager = AgentManager(th, compact_threshold=100)
@@ -281,7 +282,8 @@ class TestAgentManagerCompact:
         loop._config = _make_agent_config()
         loop.messages = [{"role": "system", "content": "sys"}] + self._turns(6)
 
-        events = [e async for e in manager.astream_events(session_id, "go")]
+        with patch("make_agent.agent_core.agent._summarize_messages", AsyncMock(return_value="summary")):
+            events = [e async for e in manager.astream_events(session_id, "go")]
         types = [type(e).__name__ for e in events]
         assert "CompactEvent" in types
         compact_event = next(e for e in events if isinstance(e, CompactEvent))
@@ -311,8 +313,9 @@ class TestAgentManagerCompact:
         events = [e async for e in manager.astream_events(session_id, "go")]
         assert not any(isinstance(e, CompactEvent) for e in events)
 
-    def test_compact_session_prunes_in_place_and_returns_count(self):
+    async def test_compact_session_prunes_in_place_and_returns_count(self):
         from make_agent.agent_core.loop import AgentConfig, AgenticLoop
+        from unittest.mock import AsyncMock, patch
 
         th = _make_tool_handler()
         manager = AgentManager(th, compact_threshold=100)
@@ -320,16 +323,17 @@ class TestAgentManagerCompact:
         session_id = manager.create_session(config)
 
         loop = manager._sessions[session_id]
-        # 6 turns → compact removes the first turn (2 messages)
+        # 6 turns → compact removes most messages, replacing with a summary
         loop._messages = [{"role": "system", "content": "sys"}] + self._turns(6)
         original_len = len(loop._messages)
 
-        removed = manager._compact_session(session_id)
+        with patch("make_agent.agent_core.agent._summarize_messages", AsyncMock(return_value="summary")):
+            removed = await manager._compact_session(session_id)
         assert removed > 0
         assert len(loop.messages) == original_len - removed
         assert manager._sessions[session_id] is loop  # same object, pruned in-place
 
-    def test_compact_session_returns_zero_when_nothing_pruned(self):
+    async def test_compact_session_returns_zero_when_nothing_pruned(self):
         from make_agent.agent_core.loop import AgentConfig
 
         th = _make_tool_handler()
@@ -338,17 +342,17 @@ class TestAgentManagerCompact:
         session_id = manager.create_session(config)
 
         loop = manager._sessions[session_id]
-        # 5 turns: at the threshold, nothing removed
-        loop._messages = [{"role": "system", "content": "sys"}] + self._turns(5)
+        # Only 1 non-system message → too few to summarise, nothing removed
+        loop._messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
 
-        removed = manager._compact_session(session_id)
+        removed = await manager._compact_session(session_id)
         assert removed == 0
 
     async def test_compact_triggered_on_context_exceeded_error(self):
         """When the API raises a context-window error, compact_fn prunes messages and the turn retries."""
         import litellm
         import pytest
-        from unittest.mock import patch
+        from unittest.mock import AsyncMock, patch
         from make_agent.agent_core import CompactEvent
         from make_agent.agent_core.loop import AgentConfig
 
@@ -380,7 +384,10 @@ class TestAgentManagerCompact:
 
             return _stream()
 
-        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion):
+        with (
+            patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion),
+            patch("make_agent.agent_core.agent._summarize_messages", AsyncMock(return_value="summary")),
+        ):
             events = [e async for e in manager.astream_events(session_id, "do something")]
 
         types = [type(e).__name__ for e in events]
@@ -391,7 +398,7 @@ class TestAgentManagerCompact:
     async def test_compact_triggered_during_stream_iteration(self):
         """Context-exceeded raised during stream iteration (not at call time) is also handled."""
         import litellm
-        from unittest.mock import patch
+        from unittest.mock import AsyncMock, patch
         from make_agent.agent_core import CompactEvent
         from make_agent.agent_core.loop import AgentConfig
 
@@ -410,8 +417,6 @@ class TestAgentManagerCompact:
             call_count += 1
 
             async def _error_stream():
-                # Raise on first chunk — simulates Anthropic returning the error
-                # in the first SSE event rather than at connection time.
                 raise litellm.BadRequestError(
                     message="request (43980 tokens) exceeds the available context size (42752 tokens)",
                     model="claude",
@@ -426,7 +431,10 @@ class TestAgentManagerCompact:
 
             return _error_stream() if call_count == 1 else _ok_stream()
 
-        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion):
+        with (
+            patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion),
+            patch("make_agent.agent_core.agent._summarize_messages", AsyncMock(return_value="summary")),
+        ):
             events = [e async for e in manager.astream_events(session_id, "do something")]
 
         types = [type(e).__name__ for e in events]
@@ -461,7 +469,7 @@ class TestAgentManagerCompact:
     async def test_compact_triggered_on_custom_provider_error(self):
         """A non-litellm exception with status_code=400 from a custom provider triggers compact."""
         import pytest
-        from unittest.mock import patch
+        from unittest.mock import AsyncMock, patch
         from make_agent.agent_core import CompactEvent
         from make_agent.agent_core.loop import AgentConfig
 
@@ -493,7 +501,10 @@ class TestAgentManagerCompact:
 
             return _stream()
 
-        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion):
+        with (
+            patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_completion),
+            patch("make_agent.agent_core.agent._summarize_messages", AsyncMock(return_value="summary")),
+        ):
             events = [e async for e in manager.astream_events(session_id, "do something")]
 
         types = [type(e).__name__ for e in events]
@@ -523,7 +534,7 @@ class TestAgentManagerCompact:
         loop._messages.extend(self._turns(8))
 
         # Custom compact that removes only the oldest turn per call
-        def _one_at_a_time(messages):
+        async def _one_at_a_time(messages):
             system = [m for m in messages if m.get("role") == "system"]
             rest = [m for m in messages if m.get("role") != "system"]
             # Find first user message and remove its turn

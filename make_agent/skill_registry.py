@@ -116,7 +116,7 @@ def _ast_trust_check(code: str) -> tuple[bool, list[str]]:
                     # Check if importing import_module specifically
                     for alias in node.names:
                         if alias.name == "import_module":
-                            detected.append(f"importlib.import_module")
+                            detected.append("importlib.import_module")
 
         # exec(...) / eval(...) / __import__(...)
         elif isinstance(node, ast.Call):
