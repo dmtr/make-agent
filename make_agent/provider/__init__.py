@@ -16,9 +16,14 @@ DEFAULT_COMPACT_TARGET_RATIO = 0.5
 
 litellm.suppress_debug_info = True
 litellm.verbose = False
-logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
-logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
+# Ensure all LiteLLM loggers propagate to our root file handler.
+for _name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"):
+    _llm_logger = logging.getLogger(_name)
+    _llm_logger.setLevel(logging.WARNING)
+    _llm_logger.propagate = True
+    # Remove any handlers LiteLLM attached to itself
+    for _h in _llm_logger.handlers[:]:
+        _llm_logger.removeHandler(_h)
 litellm.drop_params = True
 
 logger = logging.getLogger(__name__)

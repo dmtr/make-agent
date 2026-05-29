@@ -35,6 +35,9 @@ _SKILL_MODES = ("makefile", "python")
 
 def _init_logging(loglevel: str) -> None:
     level = getattr(logging, loglevel.upper(), logging.INFO)
+    # Remove any existing root handlers so basicConfig always adds our file handler.
+    for h in logging.root.handlers[:]:
+        logging.root.removeHandler(h)
     logging.basicConfig(filename=log_file(), level=level, format="%(asctime)s %(levelname)s %(message)s")
 
 
