@@ -124,7 +124,7 @@ def _get_context_window(model: str, context_window: int = 0) -> int:
         return context_window
     try:
         info = litellm.get_model_info(model)
-        window = info.get("max_input_tokens") or info.get("max_tokens") or 0
+        window = info.get("max_input_tokens") or 0
     except Exception:
         logger.debug("Could not get model info for %r; using default context window", model)
         window = 0
@@ -167,16 +167,34 @@ def compute_summary_max_tokens(model: str, context_window: int = 0) -> int:
     return max(256, min(2048, int(window * 0.05)))
 
 
+_MESSAGE_OVERHEAD = 4  # approximate special tokens per message (role, separators)
+
+
 def estimate_tokens(messages: list[dict], model: str) -> int:
     """Estimate the token count for *messages* against *model*.
 
     Uses ``litellm.token_counter`` when available; falls back to a cheap
-    ``len(text) // 4`` approximation on any failure.
+    character-based approximation on any failure.
     """
     try:
         return litellm.token_counter(model=model, messages=messages)
     except Exception:
-        total = sum(len(str(m.get("content") or "")) for m in messages)
+        logger.warning(
+            "litellm.token_counter failed for model %r; using character approximation",
+            model,
+        )
+        total = 0
+        for m in messages:
+            # Content field
+            total += len(str(m.get("content") or ""))
+            # Tool calls: arguments can be large
+            for tc in m.get("tool_calls") or []:
+                total += len(str(tc.get("function", {}).get("arguments", "")))
+                total += len(str(tc.get("function", {}).get("name", "")))
+            # Name field
+            total += len(str(m.get("name") or ""))
+            # Per-message formatting overhead (role labels, special tokens)
+            total += _MESSAGE_OVERHEAD
         return total // 4
 
 

@@ -397,8 +397,8 @@ class AgenticLoop:
             if usage is not None:
                 yield UsageCallback(
                     model=self._model,
-                    input_tokens=usage.prompt_tokens,
-                    output_tokens=usage.completion_tokens,
+                    input_tokens=usage.prompt_tokens or 0,
+                    output_tokens=usage.completion_tokens or 0,
                 )
 
             # Support models that embed tool calls as a JSON array in content.
