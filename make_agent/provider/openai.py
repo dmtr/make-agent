@@ -12,7 +12,7 @@ from typing import Any, AsyncIterator
 
 import openai
 
-from .base import StreamChunk, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta
+from .base import ContextExceededChunk, StreamChunk, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta, is_context_exceeded
 
 logger = logging.getLogger(__name__)
 
@@ -72,35 +72,41 @@ class OpenAIProvider:
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
 
-        stream = await self._create_with_retry(kwargs)
-        async for chunk in stream:
-            if chunk.usage is not None:
-                yield UsageDelta(
-                    input_tokens=chunk.usage.prompt_tokens,
-                    output_tokens=chunk.usage.completion_tokens,
-                )
-                continue
+        try:
+            stream = await self._create_with_retry(kwargs)
+            async for chunk in stream:
+                if chunk.usage is not None:
+                    yield UsageDelta(
+                        input_tokens=chunk.usage.prompt_tokens,
+                        output_tokens=chunk.usage.completion_tokens,
+                    )
+                    continue
 
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
 
-            if delta.content:
-                yield TextDelta(text=delta.content)
+                if delta.content:
+                    yield TextDelta(text=delta.content)
 
-            if delta.tool_calls:
-                for tc in delta.tool_calls:
-                    if tc.id:
-                        yield ToolCallStart(
-                            index=tc.index,
-                            id=tc.id,
-                            name=tc.function.name,
-                        )
-                    if tc.function and tc.function.arguments:
-                        yield ToolCallDelta(
-                            index=tc.index,
-                            args_delta=tc.function.arguments,
-                        )
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        if tc.id:
+                            yield ToolCallStart(
+                                index=tc.index,
+                                id=tc.id,
+                                name=tc.function.name,
+                            )
+                        if tc.function and tc.function.arguments:
+                            yield ToolCallDelta(
+                                index=tc.index,
+                                args_delta=tc.function.arguments,
+                            )
+        except Exception as e:
+            if is_context_exceeded(e):
+                yield ContextExceededChunk()
+            else:
+                raise
 
     async def _create_with_retry(self, kwargs: dict[str, Any]) -> Any:
         """Call ``client.chat.completions.create`` with rate-limit retry logic."""

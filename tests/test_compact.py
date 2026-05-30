@@ -16,7 +16,7 @@ from make_agent.agent_core import (
     MessageCallback,
     TokenCallback,
 )
-from make_agent.provider import TextDelta, UsageDelta
+from make_agent.provider import ContextExceededChunk, TextDelta, UsageDelta
 from make_agent.tool_handler.runner import get_tool_result
 
 
@@ -53,54 +53,45 @@ def _make_loop(messages: list[dict]) -> AgenticLoop:
     return loop
 
 
-def _make_manager_with_error(exc: Exception, then_cbs: list) -> tuple[AgentManager, str]:
-    """Manager whose loop raises *exc* on the first call, then succeeds with *then_cbs*."""
-    tool_handler = MagicMock()
-    tool_handler.is_skill_trusted = MagicMock(return_value=True)
-    tool_handler.execute = AsyncMock(return_value=get_tool_result("ok", "", 0))
+def _make_tool_handler() -> MagicMock:
+    th = MagicMock()
+    th.is_skill_trusted = MagicMock(return_value=True)
+    th.tool_names = []
+    th.llm_tool_kwargs = {"tools": []}
+    th.schemas = []
+    th.execute = AsyncMock(return_value=get_tool_result("ok", "", 0))
+    return th
 
-    manager = AgentManager(tool_handler)
-    session_id = manager.get_session_id()
 
+def _make_manager_with_error(success_text: str) -> tuple[AgentManager, str]:
+    """Manager whose first LLM call yields ContextExceededChunk, then succeeds returning *success_text*.
+
+    Seeds the session with prior conversation history so there is something to drop.
+    """
     call_count = 0
 
-    async def _fake_astream(msg: str):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise exc
-        for cb in then_cbs:
-            yield cb
+    class _FakeProvider:
+        async def astream(self, *a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield ContextExceededChunk()
+                return
+            yield TextDelta(text=success_text)
 
-    loop_mock = MagicMock(spec=AgenticLoop)
-    loop_mock.astream = _fake_astream
-    loop_mock._max_tool_output = 0
-    # Give the mock a real compact_history implementation
-    loop_mock._messages = [_sys("system"), _user("a"), _assistant("b"), _user("c"), _assistant("d")]
-    loop_mock.compact_history = lambda: _compact(loop_mock)
-    manager._sessions[session_id] = loop_mock
+    config = AgentConfig(
+        system_prompt="system",
+        model="claude-3-5-haiku-20241022",
+        provider=_FakeProvider(),
+    )
+    manager = AgentManager(_make_tool_handler())
+    session_id = manager.create_session(config)
+    loop = manager.get_agent(session_id)
+    loop._messages.extend([
+        _user("a"), _assistant("b"),
+        _user("c"), _assistant("d"),
+    ])
     return manager, session_id
-
-
-def _compact(loop_mock) -> int:
-    """Standalone compact_history() applied to loop_mock._messages."""
-    msgs = loop_mock._messages
-    system = [m for m in msgs if m.get("role") == "system"]
-    non_system = [m for m in msgs if m.get("role") != "system"]
-    turns: list[list[dict]] = []
-    for msg in non_system:
-        if msg.get("role") == "user":
-            turns.append([msg])
-        elif turns:
-            turns[-1].append(msg)
-    if len(turns) <= 1:
-        return 0
-    import math
-    keep = math.ceil(len(turns) / 2)
-    kept = [m for turn in turns[-keep:] for m in turn]
-    old_len = len(loop_mock._messages)
-    loop_mock._messages = system + kept
-    return old_len - len(loop_mock._messages)
 
 
 def _context_exceeded_error() -> Exception:
@@ -199,8 +190,7 @@ class TestCompactHistory:
 class TestCompactRetry:
     @pytest.mark.asyncio
     async def test_retries_after_context_exceeded(self):
-        exc = _context_exceeded_error()
-        manager, sid = _make_manager_with_error(exc, [MessageCallback("recovered")])
+        manager, sid = _make_manager_with_error("recovered")
         events = []
         async for event in manager.astream_events(sid, "hello"):
             events.append(event)
@@ -215,16 +205,30 @@ class TestCompactRetry:
 
     @pytest.mark.asyncio
     async def test_non_context_error_propagates_immediately(self):
-        exc = RuntimeError("some other error")
-        manager, sid = _make_manager_with_error(exc, [])
+        """A plain exception from the provider still propagates to the caller."""
+        call_count = 0
+
+        class _FakeProvider:
+            async def astream(self, *a, **kw):
+                nonlocal call_count
+                call_count += 1
+                raise RuntimeError("some other error")
+                yield  # noqa: unreachable
+
+        config = AgentConfig(
+            system_prompt="system",
+            model="claude-3-5-haiku-20241022",
+            provider=_FakeProvider(),
+        )
+        manager = AgentManager(_make_tool_handler())
+        sid = manager.create_session(config)
         with pytest.raises(RuntimeError, match="some other error"):
             async for _ in manager.astream_events(sid, "hello"):
                 pass
 
     @pytest.mark.asyncio
     async def test_compact_event_has_correct_messages_dropped(self):
-        exc = _context_exceeded_error()
-        manager, sid = _make_manager_with_error(exc, [MessageCallback("ok")])
+        manager, sid = _make_manager_with_error("ok")
         events = []
         async for event in manager.astream_events(sid, "hello"):
             events.append(event)
@@ -232,30 +236,32 @@ class TestCompactRetry:
         assert compact_events[0].messages_dropped > 0
 
     @pytest.mark.asyncio
+    async def test_loop_reused_after_compact(self):
+        """After compaction the session reuses the same AgenticLoop instance."""
+        manager, sid = _make_manager_with_error("ok")
+        original_loop = manager.get_agent(sid)
+        async for _ in manager.astream_events(sid, "hello"):
+            pass
+        assert manager.get_agent(sid) is original_loop
+
+    @pytest.mark.asyncio
     async def test_reraises_when_compact_drops_nothing(self):
-        """If compact_history() returns 0, the error is re-raised."""
-        exc = _context_exceeded_error()
-        tool_handler = MagicMock()
-        tool_handler.is_skill_trusted = MagicMock(return_value=True)
-        tool_handler.execute = AsyncMock(return_value=get_tool_result("ok", "", 0))
+        """If compact_history() returns 0 (no compactable turns), a RuntimeError is raised."""
 
-        manager = AgentManager(tool_handler)
-        sid = manager.get_session_id()
+        class _FakeProvider:
+            async def astream(self, *a, **kw):
+                yield ContextExceededChunk()
 
-        async def _always_raises(msg: str):
-            raise exc
-            yield  # make it an async generator  # noqa: unreachable
+        config = AgentConfig(
+            system_prompt="sys",
+            model="claude-3-5-haiku-20241022",
+            provider=_FakeProvider(),
+        )
+        manager = AgentManager(_make_tool_handler())
+        session_id = manager.create_session(config)
+        # No extra history — only the system prompt in _messages
 
-        loop_mock = MagicMock(spec=AgenticLoop)
-        loop_mock.astream = _always_raises
-        loop_mock._max_tool_output = 0
-        # Only one turn → compact_history returns 0
-        loop_mock._messages = [_sys("sys"), _user("only"), _assistant("reply")]
-        loop_mock.compact_history = lambda: 0
-        manager._sessions[sid] = loop_mock
-
-        from make_agent.provider import is_context_exceeded
-        with pytest.raises(Exception) as exc_info:
-            async for _ in manager.astream_events(sid, "hello"):
+        with pytest.raises(RuntimeError, match="no messages can be compacted"):
+            async for _ in manager.astream_events(session_id, "hello"):
                 pass
-        assert is_context_exceeded(exc_info.value)
+

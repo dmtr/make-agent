@@ -1,4 +1,4 @@
-"""Provider protocol and stream chunk types."""
+"""Provider protocol, stream chunk types, and exception helpers."""
 
 from __future__ import annotations
 
@@ -38,7 +38,12 @@ class UsageDelta:
     output_tokens: int
 
 
-StreamChunk = Union[TextDelta, ToolCallStart, ToolCallDelta, UsageDelta]
+@dataclass
+class ContextExceededChunk:
+    """Provider signals context-window overflow via the stream instead of raising."""
+
+
+StreamChunk = Union[TextDelta, ToolCallStart, ToolCallDelta, UsageDelta, ContextExceededChunk]
 
 
 class Provider(Protocol):
@@ -53,3 +58,19 @@ class Provider(Protocol):
         use_prompt_cache: bool = False,
         reasoning_effort: str = "",
     ) -> AsyncIterator[StreamChunk]: ...
+
+
+def is_context_exceeded(exc: Exception) -> bool:
+    """Return True when *exc* signals a context-window overflow."""
+    if getattr(exc, "status_code", None) == 400:
+        msg = str(exc).lower()
+        return "context" in msg and any(w in msg for w in ("exceed", "window", "length", "limit", "size"))
+    return False
+
+
+def is_corrupt_message_history(exc: Exception) -> bool:
+    """Return True when *exc* signals a corrupt or invalid message history."""
+    if getattr(exc, "status_code", None) == 400:
+        msg = str(exc).lower()
+        return "failed to parse tool call" in msg
+    return False

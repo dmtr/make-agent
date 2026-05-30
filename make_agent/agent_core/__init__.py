@@ -28,7 +28,7 @@ from .constants import (
 )
 from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import _render_html, export_conversation
-from .loop import AgentConfig, AgenticLoop, CallBack, MessageCallback, TokenCallback, ToolCallback, UsageCallback
+from .loop import AgentConfig, AgenticLoop, CallBack, ContextExceededCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 
 __all__ = [
@@ -75,6 +75,7 @@ __all__ = [
     "export_conversation",
     # Internal — kept for AgenticLoop.arun() and tests only:
     "CallBack",
+    "ContextExceededCallback",
     "MessageCallback",
     "TokenCallback",
     "ToolCallback",

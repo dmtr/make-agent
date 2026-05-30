@@ -13,7 +13,7 @@ from typing import Any, AsyncIterator
 
 import anthropic
 
-from .base import StreamChunk, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta
+from .base import ContextExceededChunk, StreamChunk, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta, is_context_exceeded
 
 logger = logging.getLogger(__name__)
 
@@ -166,23 +166,29 @@ class AnthropicProvider:
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
 
-        stream = await self._create_with_retry(kwargs)
-        async for event in stream:
-            if event.type == "message_start":
-                usage = event.message.usage
-                yield UsageDelta(input_tokens=usage.input_tokens, output_tokens=0)
-            elif event.type == "content_block_start":
-                block = event.content_block
-                if block.type == "tool_use":
-                    yield ToolCallStart(index=event.index, id=block.id, name=block.name)
-            elif event.type == "content_block_delta":
-                delta = event.delta
-                if delta.type == "text_delta":
-                    yield TextDelta(text=delta.text)
-                elif delta.type == "input_json_delta":
-                    yield ToolCallDelta(index=event.index, args_delta=delta.partial_json)
-            elif event.type == "message_delta":
-                yield UsageDelta(input_tokens=0, output_tokens=event.usage.output_tokens)
+        try:
+            stream = await self._create_with_retry(kwargs)
+            async for event in stream:
+                if event.type == "message_start":
+                    usage = event.message.usage
+                    yield UsageDelta(input_tokens=usage.input_tokens, output_tokens=0)
+                elif event.type == "content_block_start":
+                    block = event.content_block
+                    if block.type == "tool_use":
+                        yield ToolCallStart(index=event.index, id=block.id, name=block.name)
+                elif event.type == "content_block_delta":
+                    delta = event.delta
+                    if delta.type == "text_delta":
+                        yield TextDelta(text=delta.text)
+                    elif delta.type == "input_json_delta":
+                        yield ToolCallDelta(index=event.index, args_delta=delta.partial_json)
+                elif event.type == "message_delta":
+                    yield UsageDelta(input_tokens=0, output_tokens=event.usage.output_tokens)
+        except Exception as e:
+            if is_context_exceeded(e):
+                yield ContextExceededChunk()
+            else:
+                raise
 
     async def _create_with_retry(self, kwargs: dict[str, Any]) -> Any:
         """Call ``client.messages.create`` with rate-limit retry logic."""

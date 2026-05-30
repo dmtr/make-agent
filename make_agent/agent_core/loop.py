@@ -25,7 +25,7 @@ from .constants import (
     MAX_RUN_SECONDS_PER_REQUEST,
     MAX_TOOL_CALLS_PER_REQUEST,
 )
-from make_agent.provider import Provider, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta, provider_for
+from make_agent.provider import ContextExceededChunk, Provider, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta, provider_for
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,13 @@ class ToolCallback(CallBack):
 
     async def wait(self) -> None:
         await self._event.wait()
+
+
+class ContextExceededCallback(CallBack):
+    """Provider signaled context-window overflow; no tool response needed."""
+
+    def __init__(self) -> None:
+        super().__init__("")
 
 
 class UsageCallback(CallBack):
@@ -284,6 +291,9 @@ class AgenticLoop:
                 if isinstance(chunk, TextDelta):
                     content_parts.append(chunk.text)
                     yield TokenCallback(chunk.text)
+                elif isinstance(chunk, ContextExceededChunk):
+                    yield ContextExceededCallback()
+                    return
                 elif isinstance(chunk, ToolCallStart):
                     tool_call_acc[chunk.index] = {"id": chunk.id, "name": chunk.name, "arguments": ""}
                 elif isinstance(chunk, ToolCallDelta):

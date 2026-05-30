@@ -8,7 +8,17 @@ given model name.
 from __future__ import annotations
 
 from .anthropic import AnthropicProvider, _parse_retry_after
-from .base import Provider, StreamChunk, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta
+from .base import (
+    ContextExceededChunk,
+    Provider,
+    StreamChunk,
+    TextDelta,
+    ToolCallDelta,
+    ToolCallStart,
+    UsageDelta,
+    is_context_exceeded,
+    is_corrupt_message_history,
+)
 from .openai import OpenAIProvider
 
 
@@ -32,24 +42,9 @@ def provider_for(model: str) -> Provider:
     )
 
 
-def is_context_exceeded(exc: Exception) -> bool:
-    """Return True when *exc* signals a context-window overflow."""
-    if getattr(exc, "status_code", None) == 400:
-        msg = str(exc).lower()
-        return "context" in msg and any(w in msg for w in ("exceed", "window", "length", "limit", "size"))
-    return False
-
-
-def is_corrupt_message_history(exc: Exception) -> bool:
-    """Return True when *exc* signals a corrupt or invalid message history."""
-    if getattr(exc, "status_code", None) == 400:
-        msg = str(exc).lower()
-        return "failed to parse tool call" in msg
-    return False
-
-
 __all__ = [
     "AnthropicProvider",
+    "ContextExceededChunk",
     "OpenAIProvider",
     "Provider",
     "StreamChunk",

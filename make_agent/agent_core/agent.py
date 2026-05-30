@@ -7,6 +7,7 @@ import logging
 import time
 from contextlib import suppress
 from pathlib import Path
+from dataclasses import dataclass
 from typing import AsyncIterator, Callable
 from uuid import uuid4
 
@@ -33,13 +34,17 @@ from .bridge import (
 )
 from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import export_conversation
-from .loop import AgentConfig, AgenticLoop, MessageCallback, TokenCallback, ToolCallback, UsageCallback
-from make_agent.provider import is_context_exceeded
+from .loop import AgentConfig, AgenticLoop, ContextExceededCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 
 logger = logging.getLogger(__name__)
 
 MAX_COMPACT_RETRIES = 3
+
+
+@dataclass
+class _ContextExceededSignal:
+    """Internal sentinel: emitted by _run_loop to signal context-window overflow."""
 
 
 # Backward-compatible alias.
@@ -88,32 +93,46 @@ class AgentManager:
         return result
 
     async def _stream_events_core(self, request: Request) -> AsyncIterator[AgentEvent]:
-        """Core event-streaming logic with compact-and-retry on context-window errors."""
+        """Core event-streaming logic with compact-and-retry on context-window overflow.
+
+        On context-window overflow the provider yields a :class:`ContextExceededChunk`,
+        which propagates as a :class:`_ContextExceededSignal` from ``_run_loop``.
+        The pre-run message snapshot is compacted (oldest half dropped) and the
+        turn is retried on the same loop.
+        """
         loop = self.get_agent(request.session_id)
 
         for attempt in range(MAX_COMPACT_RETRIES + 1):
             snapshot = list(loop._messages)
-            try:
-                async for event in self._run_loop(loop, request.message):
-                    yield event
+            context_exceeded = False
+            async for event in self._run_loop(loop, request.message):
+                if isinstance(event, _ContextExceededSignal):
+                    context_exceeded = True
+                    break
+                yield event
+            if not context_exceeded:
                 return
-            except Exception as exc:
-                if not is_context_exceeded(exc) or attempt == MAX_COMPACT_RETRIES:
-                    raise
-                loop._messages = snapshot
-                dropped = loop.compact_history()
-                if dropped == 0:
-                    raise
-                logger.warning(
-                    "[compact] context exceeded — dropped %d messages (attempt %d/%d)",
-                    dropped, attempt + 1, MAX_COMPACT_RETRIES,
+            if attempt == MAX_COMPACT_RETRIES:
+                raise RuntimeError(
+                    f"aborted: context window exceeded after {MAX_COMPACT_RETRIES} compact attempts"
                 )
-                yield CompactEvent(attempt=attempt + 1, messages_dropped=dropped)
+            loop._messages = list(snapshot)
+            dropped = loop.compact_history()
+            if dropped == 0:
+                raise RuntimeError("aborted: context window exceeded and no messages can be compacted")
+            logger.warning(
+                "[compact] context exceeded — dropped %d messages (attempt %d/%d)",
+                dropped, attempt + 1, MAX_COMPACT_RETRIES,
+            )
+            yield CompactEvent(attempt=attempt + 1, messages_dropped=dropped)
 
-    async def _run_loop(self, loop: AgenticLoop, message: str) -> AsyncIterator[AgentEvent]:
+    async def _run_loop(self, loop: AgenticLoop, message: str) -> AsyncIterator[AgentEvent | _ContextExceededSignal]:
         """Iterate one agent turn, translating callbacks to AgentEvents."""
         async for cb in loop.astream(message):
-            if isinstance(cb, TokenCallback):
+            if isinstance(cb, ContextExceededCallback):
+                yield _ContextExceededSignal()
+                return
+            elif isinstance(cb, TokenCallback):
                 yield TokenEvent(text=cb.message)
             elif isinstance(cb, MessageCallback):
                 yield DoneEvent(content=cb.message)
