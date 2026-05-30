@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "anthropic>=0.105.2",
+    "openai>=1.0",
     "prompt-toolkit==3.0.52",
     "pyyaml>=6",
 ]

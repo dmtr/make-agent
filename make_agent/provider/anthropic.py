@@ -201,16 +201,3 @@ class AnthropicProvider:
                 await asyncio.sleep(wait)
 
 
-def provider_for(model: str) -> AnthropicProvider:
-    """Return a provider instance for *model*.
-
-    Currently only Anthropic (``claude`` / ``anthropic/``) models are
-    supported.  Raises ``NotImplementedError`` for unknown models.
-    """
-    lower = model.lower()
-    if lower.startswith("anthropic/") or "claude" in lower:
-        return AnthropicProvider()
-    raise NotImplementedError(
-        f"No provider for model {model!r}. "
-        "Only Anthropic (claude/anthropic/) models are currently supported."
-    )
