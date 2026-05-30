@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -413,6 +414,32 @@ class AgenticLoop:
                 logger.debug("[assistant]\n%s", content)
                 yield MessageCallback(content)
                 return
+
+    def compact_history(self) -> int:
+        """Drop the oldest half of non-system turns. Returns number of messages removed.
+
+        System messages (including the system prompt) are never touched.
+        Returns 0 when only one turn (or fewer) remains, signalling the caller
+        that there is nothing left to drop.
+        """
+        system = [m for m in self._messages if m.get("role") == "system"]
+        non_system = [m for m in self._messages if m.get("role") != "system"]
+
+        turns: list[list[dict]] = []
+        for msg in non_system:
+            if msg.get("role") == "user":
+                turns.append([msg])
+            elif turns:
+                turns[-1].append(msg)
+
+        if len(turns) <= 1:
+            return 0
+
+        keep = math.ceil(len(turns) / 2)
+        kept = [m for turn in turns[-keep:] for m in turn]
+        old_len = len(self._messages)
+        self._messages = system + kept
+        return old_len - len(self._messages)
 
     async def arun(self, user_input: str) -> str:
         """Send *user_input* to the LLM and return the assistant's final reply.

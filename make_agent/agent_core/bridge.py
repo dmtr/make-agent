@@ -143,12 +143,22 @@ class StatusChanged:
     is_busy: bool
 
 
+@dataclass
+class HistoryCompacted:
+    """The agent automatically dropped old turns after a context-window error."""
+
+    turn_id: str
+    attempt: int
+    messages_dropped: int
+
+
 ShellEvent = Union[
     TurnStarted,
     TokenEmitted,
     ToolStarted,
     ToolFinished,
     ApprovalRequested,
+    HistoryCompacted,
     TurnFinished,
     TurnCancelled,
     ManagerError,

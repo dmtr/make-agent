@@ -187,6 +187,8 @@ def _make_manager_with_loop(cbs: list[CallBack], trusted_skills: frozenset[str] 
     loop_mock = MagicMock(spec=AgenticLoop)
     loop_mock.astream = _fake_astream
     loop_mock._max_tool_output = 0
+    loop_mock._messages = []
+    loop_mock.compact_history = MagicMock(return_value=0)
     manager._sessions[session_id] = loop_mock
     manager._tool_handler = tool_handler
     return manager, session_id

@@ -75,4 +75,12 @@ class UsageEvent:
     output_tokens: int
 
 
-AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent | ConfirmEvent | UsageEvent
+@dataclass
+class CompactEvent:
+    """History was compacted (oldest turns dropped) after a context-window error."""
+
+    attempt: int
+    messages_dropped: int
+
+
+AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent | ConfirmEvent | UsageEvent | CompactEvent

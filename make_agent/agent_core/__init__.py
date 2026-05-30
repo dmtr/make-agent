@@ -4,6 +4,7 @@ from .bridge import (
     ApproveSkill,
     CancelTurn,
     DenySkill,
+    HistoryCompacted,
     ManagerError,
     ShellCommand,
     ShellEvent,
@@ -25,7 +26,7 @@ from .constants import (
     DEFAULT_TOOL_TIMEOUT,
     DEFAULT_USE_PROMPT_CACHE,
 )
-from .events import AgentEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
+from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import _render_html, export_conversation
 from .loop import AgentConfig, AgenticLoop, CallBack, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
@@ -45,9 +46,11 @@ __all__ = [
     "ApprovalRequested",
     "ApproveSkill",
     "CancelTurn",
+    "CompactEvent",
     "ConfirmEvent",
     "DenySkill",
     "DoneEvent",
+    "HistoryCompacted",
     "ManagerError",
     "MiddlewareBase",
     "Request",

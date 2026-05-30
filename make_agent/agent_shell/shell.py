@@ -35,6 +35,7 @@ from make_agent.agent_core import (
     ApproveSkill,
     CancelTurn,
     DenySkill,
+    HistoryCompacted,
     ManagerError,
     ShellCommand,
     ShellEvent,
@@ -753,6 +754,14 @@ class MakeAgentShell:
                 self._state.finish_turn(turn, cancelled=True)
                 self._refresh()
                 break
+
+            elif isinstance(event, HistoryCompacted):
+                self._state.add_alert(
+                    "COMPACT",
+                    f"context limit — dropped {event.messages_dropped} messages"
+                    f" (retry {event.attempt}/{3})",
+                )
+                self._refresh()
 
             elif isinstance(event, ManagerError):
                 self._state.add_alert("ERROR", event.message)

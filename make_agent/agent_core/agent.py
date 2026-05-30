@@ -17,6 +17,7 @@ from .bridge import (
     CancelTurn,
     DenySkill,
     ApproveSkill,
+    HistoryCompacted,
     ManagerError,
     ShellCommand,
     ShellEvent,
@@ -30,12 +31,15 @@ from .bridge import (
     TurnFinished,
     TurnStarted,
 )
-from .events import AgentEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
+from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import export_conversation
 from .loop import AgentConfig, AgenticLoop, MessageCallback, TokenCallback, ToolCallback, UsageCallback
+from make_agent.provider import is_context_exceeded
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 
 logger = logging.getLogger(__name__)
+
+MAX_COMPACT_RETRIES = 3
 
 
 # Backward-compatible alias.
@@ -84,9 +88,31 @@ class AgentManager:
         return result
 
     async def _stream_events_core(self, request: Request) -> AsyncIterator[AgentEvent]:
-        """Core event-streaming logic with no middleware side-effects."""
+        """Core event-streaming logic with compact-and-retry on context-window errors."""
         loop = self.get_agent(request.session_id)
-        async for cb in loop.astream(request.message):
+
+        for attempt in range(MAX_COMPACT_RETRIES + 1):
+            snapshot = list(loop._messages)
+            try:
+                async for event in self._run_loop(loop, request.message):
+                    yield event
+                return
+            except Exception as exc:
+                if not is_context_exceeded(exc) or attempt == MAX_COMPACT_RETRIES:
+                    raise
+                loop._messages = snapshot
+                dropped = loop.compact_history()
+                if dropped == 0:
+                    raise
+                logger.warning(
+                    "[compact] context exceeded — dropped %d messages (attempt %d/%d)",
+                    dropped, attempt + 1, MAX_COMPACT_RETRIES,
+                )
+                yield CompactEvent(attempt=attempt + 1, messages_dropped=dropped)
+
+    async def _run_loop(self, loop: AgenticLoop, message: str) -> AsyncIterator[AgentEvent]:
+        """Iterate one agent turn, translating callbacks to AgentEvents."""
+        async for cb in loop.astream(message):
             if isinstance(cb, TokenCallback):
                 yield TokenEvent(text=cb.message)
             elif isinstance(cb, MessageCallback):
@@ -320,6 +346,14 @@ class AgentManager:
                         event.allow()
                     else:
                         event.deny()
+                elif isinstance(event, CompactEvent):
+                    await event_queue.put(
+                        HistoryCompacted(
+                            turn_id=turn_id,
+                            attempt=event.attempt,
+                            messages_dropped=event.messages_dropped,
+                        )
+                    )
         except asyncio.CancelledError:
             for fut in list(pending_approvals.values()):
                 if not fut.done():

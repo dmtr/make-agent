@@ -71,6 +71,8 @@ def _make_manager(cbs: list, trusted_skills: frozenset[str] = frozenset()) -> tu
     loop_mock = MagicMock(spec=AgenticLoop)
     loop_mock.astream = _fake_astream
     loop_mock._max_tool_output = 0
+    loop_mock._messages = []
+    loop_mock.compact_history = MagicMock(return_value=0)
     manager._sessions[session_id] = loop_mock
     manager._tool_handler = tool_handler
     return manager, session_id
@@ -258,6 +260,8 @@ async def test_bridge_rejects_second_start_turn_while_busy():
     loop_mock = MagicMock(spec=AgenticLoop)
     loop_mock.astream = _slow_astream
     loop_mock._max_tool_output = 0
+    loop_mock._messages = []
+    loop_mock.compact_history = MagicMock(return_value=0)
     manager._sessions[session_id] = loop_mock
 
     cmd_q: asyncio.Queue[ShellCommand] = asyncio.Queue()
@@ -308,6 +312,8 @@ async def test_bridge_cancel_turn_emits_turn_cancelled():
     loop_mock = MagicMock(spec=AgenticLoop)
     loop_mock.astream = _blocking_astream
     loop_mock._max_tool_output = 0
+    loop_mock._messages = []
+    loop_mock.compact_history = MagicMock(return_value=0)
     manager._sessions[session_id] = loop_mock
 
     cmd_q: asyncio.Queue[ShellCommand] = asyncio.Queue()
