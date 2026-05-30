@@ -8,7 +8,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, NamedTuple
+from typing import Any, AsyncGenerator, AsyncIterator, NamedTuple
 
 from make_agent.protocols import ToolHandlerProtocol
 
@@ -24,7 +24,7 @@ from .constants import (
     MAX_RUN_SECONDS_PER_REQUEST,
     MAX_TOOL_CALLS_PER_REQUEST,
 )
-from make_agent.provider import acompletion_with_retry, is_anthropic_model, is_context_exceeded, is_corrupt_message_history
+from make_agent.provider import Provider, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta, provider_for
 
 logger = logging.getLogger(__name__)
 
@@ -134,14 +134,6 @@ class UsageCallback(CallBack):
         self.output_tokens = output_tokens
 
 
-class CompactCallback(CallBack):
-    """Context window was compacted. Fire-and-forget; always ready."""
-
-    def __init__(self, messages_removed: int) -> None:
-        super().__init__("")
-        self.messages_removed = messages_removed
-
-
 class AgentConfig(NamedTuple):
     system_prompt: str
     model: str
@@ -155,7 +147,7 @@ class AgentConfig(NamedTuple):
     session_id: str | None = None
     project_dir: Path = Path()
     use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE
-    compact_fn: Callable[[list[dict]], Awaitable[list[dict]]] | None = None
+    provider: Any = None  # Provider | None; resolved via provider_for(model) when None
 
 
 def _parse_item(doc: Any) -> list[_ToolCall] | None:
@@ -176,33 +168,6 @@ def _parse_item(doc: Any) -> list[_ToolCall] | None:
             )
         )
     return result
-
-
-def _parse_content_tool_calls(
-    content: str,
-) -> list[_ToolCall] | None:
-    """Parse tool calls embedded in message content (e.g. Gemma-style responses).
-
-    Some models encode tool calls as a JSON array in ``content`` instead of
-    populating the ``tool_calls`` field.  Each element is expected to have
-    ``type == "function"`` and a ``function`` object with ``name`` and
-    ``arguments``.  ``arguments`` may be a dict (Gemma) or a JSON string
-    (standard); both are normalised to a JSON string.
-
-    Returns a list of :class:`_ToolCall` objects,
-    or ``None`` if *content* does not match the expected format.
-    """
-    if not content or not content.strip().startswith("["):
-        return None
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        return None
-
-    if isinstance(parsed, list):
-        return _parse_item(parsed)
-
-    return None
 
 
 class AgenticLoop:
@@ -230,23 +195,14 @@ class AgenticLoop:
         self._tool_timeout = config.tool_timeout
         self._max_tool_output = config.max_tool_output
         self._reasoning_effort = config.reasoning_effort
+        self._use_prompt_cache = config.use_prompt_cache
         self._tool_handler = tool_handler
         self._config = config
-        self._compact_fn = config.compact_fn
+        self._provider: Provider = config.provider if config.provider is not None else provider_for(config.model)
         self._messages: list[dict] = []
         self._gen: AsyncGenerator[CallBack, None] | None = None
         if config.system_prompt:
-            if config.use_prompt_cache and is_anthropic_model(config.model):
-                system_content: str | list = [
-                    {
-                        "type": "text",
-                        "text": config.system_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
-            else:
-                system_content = config.system_prompt
-            self._messages.append({"role": "system", "content": system_content})
+            self._messages.append({"role": "system", "content": config.system_prompt})
             logger.debug("[system]\n%s", config.system_prompt)
 
     @property
@@ -254,8 +210,9 @@ class AgenticLoop:
         return list(self._tool_handler.tool_names)
 
     @property
-    def _tool_kwargs(self) -> dict:
-        return self._tool_handler.llm_tool_kwargs
+    def _tools(self) -> list[dict]:
+        """OpenAI-format tool schemas to pass to the provider."""
+        return self._tool_handler.llm_tool_kwargs.get("tools", [])
 
     @property
     def messages(self) -> list[dict]:
@@ -309,139 +266,78 @@ class AgenticLoop:
             if time.monotonic() - started_at >= MAX_RUN_SECONDS_PER_REQUEST:
                 raise RuntimeError(f"aborted: exceeded {MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
 
-            try:
-                stream = await acompletion_with_retry(
-                    self._model,
-                    self._messages,
-                    self._tool_kwargs,
-                    self._max_retries,
-                    self._max_tokens,
-                    self._reasoning_effort,
-                )
-            except Exception as exc:
-                if self._compact_fn and (is_context_exceeded(exc) or is_corrupt_message_history(exc)):
-                    logger.info("Context window exceeded; attempting compaction")
-                    pruned = await self._compact_fn(self._messages)
-                    removed = len(self._messages) - len(pruned)
-                    if removed > 0:
-                        self._messages = pruned
-                        yield CompactCallback(messages_removed=removed)
-                        continue
-                raise
-            model_turns += 1
-
             # Accumulate streaming response.
             content_parts: list[str] = []
             tool_call_acc: dict[int, dict] = {}  # index → {id, name, arguments}
-            usage = None
+            input_tokens = 0
+            output_tokens = 0
 
-            try:
-                async for chunk in stream:
-                    if not chunk.choices:
-                        if getattr(chunk, "usage", None) is not None:
-                            usage = chunk.usage
-                        continue
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        content_parts.append(delta.content)
-                        yield TokenCallback(delta.content)
-                    if delta.tool_calls:
-                        for tc_delta in delta.tool_calls:
-                            if tc_delta.id:
-                                # Tool call start event (identified by non-empty id).
-                                # Some providers (e.g. Anthropic via any_llm) hardcode
-                                # index=0 for every tool call, so use id-based lookup
-                                # instead of the index to correctly handle parallel calls.
-                                idx = next(
-                                    (k for k, v in tool_call_acc.items() if v["id"] == tc_delta.id),
-                                    None,
-                                )
-                                if idx is None:
-                                    idx = max(tool_call_acc.keys(), default=-1) + 1
-                                    tool_call_acc[idx] = {
-                                        "id": tc_delta.id,
-                                        "name": "",
-                                        "arguments": "",
-                                    }
-                            else:
-                                # Argument delta: belongs to the most recently started call.
-                                idx = max(tool_call_acc.keys(), default=tc_delta.index)
-                                if idx not in tool_call_acc:
-                                    tool_call_acc[idx] = {
-                                        "id": "",
-                                        "name": "",
-                                        "arguments": "",
-                                    }
-                            if tc_delta.function:
-                                tool_call_acc[idx]["name"] += tc_delta.function.name or ""
-                                tool_call_acc[idx]["arguments"] += tc_delta.function.arguments or ""
-                    if getattr(chunk, "usage", None) is not None:
-                        usage = chunk.usage
-            except Exception as exc:
-                if self._compact_fn and (is_context_exceeded(exc) or is_corrupt_message_history(exc)):
-                    pruned = await self._compact_fn(self._messages)
-                    removed = len(self._messages) - len(pruned)
-                    if removed > 0:
-                        self._messages = pruned
-                        yield CompactCallback(messages_removed=removed)
-                        continue
-                raise
+            async for chunk in self._provider.astream(
+                self._model,
+                self._messages,
+                self._tools,
+                self._max_tokens,
+                use_prompt_cache=self._use_prompt_cache,
+                reasoning_effort=self._reasoning_effort,
+            ):
+                if isinstance(chunk, TextDelta):
+                    content_parts.append(chunk.text)
+                    yield TokenCallback(chunk.text)
+                elif isinstance(chunk, ToolCallStart):
+                    tool_call_acc[chunk.index] = {"id": chunk.id, "name": chunk.name, "arguments": ""}
+                elif isinstance(chunk, ToolCallDelta):
+                    if chunk.index in tool_call_acc:
+                        tool_call_acc[chunk.index]["arguments"] += chunk.args_delta
+                elif isinstance(chunk, UsageDelta):
+                    input_tokens += chunk.input_tokens
+                    output_tokens += chunk.output_tokens
 
             content = "".join(content_parts)
+            model_turns += 1
+
             logger.debug(
                 "[model_response] content=%r tool_calls=%d",
                 content[:120],
                 len(tool_call_acc),
             )
 
-            if usage is not None:
+            if input_tokens or output_tokens:
                 yield UsageCallback(
                     model=self._model,
-                    input_tokens=usage.prompt_tokens or 0,
-                    output_tokens=usage.completion_tokens or 0,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
                 )
 
-            # Support models that embed tool calls as a JSON array in content.
-            content_tool_calls = None
-            if not tool_call_acc and content:
-                content_tool_calls = _parse_content_tool_calls(content)
+            if tool_call_acc:
+                # Normalise empty arguments to "{}" (tools with no args have no delta).
+                for tc in tool_call_acc.values():
+                    if not tc["arguments"]:
+                        tc["arguments"] = "{}"
 
-            if tool_call_acc or content_tool_calls:
-                if tool_call_acc:
-                    sorted_tcs = [tool_call_acc[i] for i in sorted(tool_call_acc)]
-                    # Normalise empty arguments to "{}" so _convert_messages_for_anthropic
-                    # (which calls json.loads on the stored string) doesn't raise.
-                    # Anthropic omits input_json_delta events for tools with no arguments,
-                    # leaving the accumulated string as "".
-                    for tc in sorted_tcs:
-                        if not tc["arguments"]:
-                            tc["arguments"] = "{}"
-                    assistant_msg: dict = {
-                        "role": "assistant",
-                        "content": content,
-                        "tool_calls": [
-                            {
-                                "id": tc["id"],
-                                "type": "function",
-                                "function": {
-                                    "name": tc["name"],
-                                    "arguments": tc["arguments"],
-                                },
-                            }
-                            for tc in sorted_tcs
-                        ],
-                    }
-                    tool_calls_to_run = [
-                        _ToolCall(
-                            id=tc["id"],
-                            type="function",
-                            function=_Function(name=tc["name"], arguments=tc["arguments"]),
-                        )
+                sorted_tcs = [tool_call_acc[i] for i in sorted(tool_call_acc)]
+                assistant_msg: dict = {
+                    "role": "assistant",
+                    "content": content,
+                    "tool_calls": [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": tc["arguments"],
+                            },
+                        }
                         for tc in sorted_tcs
-                    ]
-                else:
-                    assistant_msg = {"role": "assistant", "content": content}
-                    tool_calls_to_run = content_tool_calls  # type: ignore[assignment]
+                    ],
+                }
+                tool_calls_to_run = [
+                    _ToolCall(
+                        id=tc["id"],
+                        type="function",
+                        function=_Function(name=tc["name"], arguments=tc["arguments"]),
+                    )
+                    for tc in sorted_tcs
+                ]
 
                 self._messages.append(assistant_msg)
 

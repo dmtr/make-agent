@@ -143,13 +143,6 @@ class StatusChanged:
     is_busy: bool
 
 
-@dataclass
-class CompactNotice:
-    """The agent auto-compacted its context, removing redundant messages."""
-
-    messages_removed: int
-
-
 ShellEvent = Union[
     TurnStarted,
     TokenEmitted,
@@ -160,5 +153,4 @@ ShellEvent = Union[
     TurnCancelled,
     ManagerError,
     StatusChanged,
-    CompactNotice,
 ]

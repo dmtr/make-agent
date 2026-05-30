@@ -1,9 +1,8 @@
-from .agent import Agent, AgentManager, SessionNotFoundError, compact_messages, compact_with_summary
+from .agent import Agent, AgentManager, SessionNotFoundError
 from .bridge import (
     ApprovalRequested,
     ApproveSkill,
     CancelTurn,
-    CompactNotice,
     DenySkill,
     ManagerError,
     ShellCommand,
@@ -19,39 +18,25 @@ from .bridge import (
     TurnStarted,
 )
 from .constants import (
-    DEFAULT_COMPACT_TARGET_RATIO,
-    DEFAULT_COMPACT_THRESHOLD_RATIO,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_TOOL_TIMEOUT,
     DEFAULT_USE_PROMPT_CACHE,
-    KEEP_COMPACT_TURNS,
-    KEEP_RECENT_TURNS,
 )
-from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
+from .events import AgentEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import _render_html, export_conversation
-from .loop import AgentConfig, AgenticLoop, CallBack, CompactCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
+from .loop import AgentConfig, AgenticLoop, CallBack, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
-from make_agent.provider import acompletion_with_retry, is_anthropic_model, is_context_exceeded, is_corrupt_message_history, parse_retry_after
 
 __all__ = [
-    "DEFAULT_COMPACT_TARGET_RATIO",
-    "DEFAULT_COMPACT_THRESHOLD_RATIO",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_MAX_TOKENS",
     "DEFAULT_MAX_TOOL_OUTPUT",
     "DEFAULT_REASONING_EFFORT",
     "DEFAULT_TOOL_TIMEOUT",
     "DEFAULT_USE_PROMPT_CACHE",
-    "KEEP_COMPACT_TURNS",
-    "KEEP_RECENT_TURNS",
-    "is_anthropic_model",
-    "is_context_exceeded",
-    "is_corrupt_message_history",
-    "compact_messages",
-    "compact_with_summary",
     "Agent",
     "AgentConfig",
     "AgentEvent",
@@ -60,8 +45,6 @@ __all__ = [
     "ApprovalRequested",
     "ApproveSkill",
     "CancelTurn",
-    "CompactEvent",
-    "CompactNotice",
     "ConfirmEvent",
     "DenySkill",
     "DoneEvent",
@@ -85,13 +68,10 @@ __all__ = [
     "TurnCancelled",
     "TurnFinished",
     "TurnStarted",
-    "acompletion_with_retry",
-    "parse_retry_after",
     "_render_html",
     "export_conversation",
     # Internal — kept for AgenticLoop.arun() and tests only:
     "CallBack",
-    "CompactCallback",
     "MessageCallback",
     "TokenCallback",
     "ToolCallback",

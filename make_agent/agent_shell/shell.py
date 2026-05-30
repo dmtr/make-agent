@@ -34,7 +34,6 @@ from make_agent.agent_core import (
     ApprovalRequested,
     ApproveSkill,
     CancelTurn,
-    CompactNotice,
     DenySkill,
     ManagerError,
     ShellCommand,
@@ -167,7 +166,6 @@ class TurnBlock:
     elapsed: float = 0.0
     tokens: int = 0
     start_time: float = field(default_factory=time.time)
-    messages_removed: int = 0  # set when auto-compact fires during this turn
 
     def render_response(self) -> str:
         """Render only the user message header + LLM answer lines + turn footer."""
@@ -185,8 +183,7 @@ class TurnBlock:
         if self.state != "streaming":
             elapsed = self.elapsed or (time.time() - self.start_time)
             state_label = "" if self.state == "done" else f" {self.state.upper()}"
-            compact_note = f" │ ↩ compact -{self.messages_removed}" if self.messages_removed > 0 else ""
-            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label}{compact_note} {'─' * 8}"
+            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
             parts.append("")
             parts.append(sep)
 
@@ -226,8 +223,7 @@ class TurnBlock:
         if self.state != "streaming":
             elapsed = self.elapsed or (time.time() - self.start_time)
             state_label = "" if self.state == "done" else f" {self.state.upper()}"
-            compact_note = f" │ ↩ compact -{self.messages_removed}" if self.messages_removed > 0 else ""
-            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label}{compact_note} {'─' * 8}"
+            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
             parts.append("")
             parts.append(sep)
 
@@ -766,14 +762,6 @@ class MakeAgentShell:
 
             elif isinstance(event, (TurnStarted, StatusChanged)):
                 pass  # informational; state managed locally
-
-            elif isinstance(event, CompactNotice):
-                turn.messages_removed += event.messages_removed
-                self._state.add_alert(
-                    "INFO",
-                    f"auto-compact: removed {event.messages_removed} messages",
-                )
-                self._refresh()
 
     # ── agent turn ───────────────────────────────────────────────────────────────
 

@@ -7,8 +7,6 @@ import sys
 from pathlib import Path
 
 from make_agent.agent_core import (
-    DEFAULT_COMPACT_TARGET_RATIO,
-    DEFAULT_COMPACT_THRESHOLD_RATIO,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
     DEFAULT_USE_PROMPT_CACHE,
@@ -133,9 +131,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
             max_tokens=args.max_tokens,
             reasoning_effort=args.reasoning_effort,
             use_prompt_cache=args.prompt_cache,
-            compact_context_window=args.compact_context_window,
-            compact_threshold_ratio=args.compact_threshold_ratio,
-            compact_target_ratio=args.compact_target_ratio,
         )
     )
 
@@ -249,27 +244,6 @@ def main() -> None:
         action="store_true",
         default=DEFAULT_USE_PROMPT_CACHE,
         help="Enable prompt caching for the system prompt (Anthropic models only)",
-    )
-    run_p.add_argument(
-        "--compact-context-window",
-        type=int,
-        default=0,
-        metavar="TOKENS",
-        help="Override model context window for auto-compact threshold (0 = auto-detect via litellm)",
-    )
-    run_p.add_argument(
-        "--compact-threshold-ratio",
-        type=float,
-        default=DEFAULT_COMPACT_THRESHOLD_RATIO,
-        metavar="RATIO",
-        help=f"Trigger auto-compact when context reaches this fraction of the context window (default: {DEFAULT_COMPACT_THRESHOLD_RATIO})",
-    )
-    run_p.add_argument(
-        "--compact-target-ratio",
-        type=float,
-        default=DEFAULT_COMPACT_TARGET_RATIO,
-        metavar="RATIO",
-        help=f"Hysteresis lower bound: re-enable compaction once context drops below this fraction after a compact (default: {DEFAULT_COMPACT_TARGET_RATIO})",
     )
     raw = sys.argv[1:]
     if not raw or raw[0] not in ("run", "-h", "--help"):

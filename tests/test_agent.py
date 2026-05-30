@@ -1,23 +1,60 @@
-"""Tests for rate limit retry logic — parse_retry_after and acompletion_with_retry."""
+"""Tests for provider retry logic and agent loop behaviour."""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-import litellm
+import anthropic
 import pytest
 from make_agent.agent_core import AgentConfig
-from make_agent.provider import (
-    acompletion_with_retry,
-    is_anthropic_model,
-    parse_retry_after,
-)
+from make_agent.provider import TextDelta, ToolCallDelta, ToolCallStart, UsageDelta
+from make_agent.provider.anthropic import MAX_RETRIES, _parse_retry_after
+
+
+# ── MockProvider ──────────────────────────────────────────────────────────────
+
+
+class MockProvider:
+    """A test provider that returns pre-built StreamChunk sequences."""
+
+    def __init__(self, *chunk_sequences: list) -> None:
+        self._sequences = list(chunk_sequences)
+        self._call_count = 0
+
+    async def astream(self, model, messages, tools, max_tokens, **kwargs):
+        seq = self._sequences[self._call_count % len(self._sequences)]
+        self._call_count += 1
+        for chunk in seq:
+            yield chunk
+
+
+# ── Stream helpers ────────────────────────────────────────────────────────────
+
+
+def _text_chunks(content: str, input_tokens: int = 0, output_tokens: int = 0) -> list:
+    chunks = []
+    if input_tokens:
+        chunks.append(UsageDelta(input_tokens=input_tokens, output_tokens=0))
+    chunks.append(TextDelta(text=content))
+    if output_tokens:
+        chunks.append(UsageDelta(input_tokens=0, output_tokens=output_tokens))
+    return chunks
+
+
+def _tool_call_chunks(tool_id: str, tool_name: str, arguments: str, index: int = 0) -> list:
+    chunks = [ToolCallStart(index=index, id=tool_id, name=tool_name)]
+    if arguments:
+        chunks.append(ToolCallDelta(index=index, args_delta=arguments))
+    return chunks
+
+
+# ── TestParseRetryAfter ───────────────────────────────────────────────────────
 
 
 def _make_rate_limit_error(
     retry_after: float | None = None,
     retry_after_ms: float | None = None,
-) -> litellm.RateLimitError:
+) -> anthropic.RateLimitError:
     headers: dict[str, str] = {}
     if retry_after is not None:
         headers["retry-after"] = str(retry_after)
@@ -25,261 +62,97 @@ def _make_rate_limit_error(
         headers["retry-after-ms"] = str(retry_after_ms)
     fake_response = MagicMock()
     fake_response.headers = headers
-    return litellm.RateLimitError(
+    return anthropic.RateLimitError(
         message="rate limit exceeded",
-        llm_provider="anthropic",
-        model="test",
         response=fake_response,
+        body={},
     )
-
-
-def _make_empty_stream():
-    """Return an async iterator that yields no chunks (empty stream)."""
-
-    async def _stream():
-        return
-        yield  # make it an async generator
-
-    return _stream()
-
-
-def _make_text_stream(content: str, prompt_tokens: int = 0):
-    """Return an async iterator that yields a single text chunk.
-
-    If *prompt_tokens* is non-zero a trailing usage chunk is appended so that
-    ``Agent._last_prompt_tokens`` is updated after the stream is consumed.
-    """
-
-    async def _stream():
-        chunk = MagicMock()
-        chunk.choices = [MagicMock()]
-        chunk.choices[0].delta.content = content
-        chunk.choices[0].delta.tool_calls = None
-        chunk.usage = None
-        yield chunk
-        if prompt_tokens:
-            usage_chunk = MagicMock()
-            usage_chunk.choices = []
-            usage_chunk.usage = MagicMock()
-            usage_chunk.usage.prompt_tokens = prompt_tokens
-            usage_chunk.usage.completion_tokens = 10
-            yield usage_chunk
-
-    return _stream()
-
-
-def _make_tool_call_stream(
-    tool_id: str, tool_name: str, arguments: str, prompt_tokens: int = 0
-):
-    """Return an async iterator that yields a single tool-call chunk."""
-    """Return an async iterator that yields a single tool-call chunk."""
-
-    async def _stream():
-        chunk = MagicMock()
-        chunk.choices = [MagicMock()]
-        chunk.choices[0].delta.content = None
-        tc_delta = MagicMock()
-        tc_delta.index = 0
-        tc_delta.id = tool_id
-        tc_delta.function = MagicMock()
-        tc_delta.function.name = tool_name
-        tc_delta.function.arguments = arguments
-        chunk.choices[0].delta.tool_calls = [tc_delta]
-        chunk.usage = None
-        yield chunk
-        if prompt_tokens:
-            usage_chunk = MagicMock()
-            usage_chunk.choices = []
-            usage_chunk.usage = MagicMock()
-            usage_chunk.usage.prompt_tokens = prompt_tokens
-            usage_chunk.usage.completion_tokens = 10
-            yield usage_chunk
-
-    return _stream()
-
-
-def _make_parallel_tool_calls_stream_anthropic_style(calls: list[tuple[str, str, str]]):
-    """Simulate Anthropic-style parallel tool calls where any_llm hardcodes index=0.
-
-    Each call is (tool_id, tool_name, arguments_json).  All start-events and all
-    delta-events carry index=0 — exactly the broken output produced by any_llm's
-    Anthropic provider — so the fix must be id-based, not index-based.
-    """
-
-    async def _stream():
-        for tool_id, tool_name, arguments in calls:
-            # Start event: has id + name, hardcoded index=0
-            start_chunk = MagicMock()
-            start_chunk.choices = [MagicMock()]
-            start_chunk.choices[0].delta.content = None
-            tc_start = MagicMock()
-            tc_start.index = 0  # hardcoded by any_llm bug
-            tc_start.id = tool_id
-            tc_start.function = MagicMock()
-            tc_start.function.name = tool_name
-            tc_start.function.arguments = ""
-            start_chunk.choices[0].delta.tool_calls = [tc_start]
-            start_chunk.usage = None
-            yield start_chunk
-
-            # Argument delta: no id, hardcoded index=0
-            delta_chunk = MagicMock()
-            delta_chunk.choices = [MagicMock()]
-            delta_chunk.choices[0].delta.content = None
-            tc_delta = MagicMock()
-            tc_delta.index = 0  # hardcoded by any_llm bug
-            tc_delta.id = None
-            tc_delta.function = MagicMock()
-            tc_delta.function.name = None
-            tc_delta.function.arguments = arguments
-            delta_chunk.choices[0].delta.tool_calls = [tc_delta]
-            delta_chunk.usage = None
-            yield delta_chunk
-
-    return _stream()
-
-
-def _make_tool_call_stream_empty_args(tool_id: str, tool_name: str):
-    """Anthropic-style stream where a no-argument tool sends only a start event (no delta).
-
-    This replicates what any_llm emits for tools with empty input: the start
-    chunk sets arguments="" and no input_json_delta follows, leaving arguments as "".
-    json.loads("") raises JSONDecodeError — the fix should treat "" as "{}".
-    """
-
-    async def _stream():
-        chunk = MagicMock()
-        chunk.choices = [MagicMock()]
-        chunk.choices[0].delta.content = None
-        tc_delta = MagicMock()
-        tc_delta.index = 0
-        tc_delta.id = tool_id
-        tc_delta.function = MagicMock()
-        tc_delta.function.name = tool_name
-        tc_delta.function.arguments = ""  # no delta follows for empty-input tools
-        chunk.choices[0].delta.tool_calls = [tc_delta]
-        chunk.usage = None
-        yield chunk
-
-    return _stream()
-
-
-def _mockacompletion_with_retry(*streams):
-    """Return an async callable that yields successive streams on each call."""
-    streams_list = list(streams)
-    call_count = 0
-
-    async def _mock(*args, **kwargs):
-        nonlocal call_count
-        stream = streams_list[call_count % len(streams_list)]
-        call_count += 1
-        return stream
-
-    return _mock
 
 
 class TestParseRetryAfter:
     def test_retry_after_seconds(self):
         err = _make_rate_limit_error(retry_after=30)
-        assert parse_retry_after(err) == 30.0
+        assert _parse_retry_after(err) == 30.0
 
     def test_retry_after_ms(self):
         err = _make_rate_limit_error(retry_after_ms=5000)
-        assert parse_retry_after(err) == 5.0
+        assert _parse_retry_after(err) == 5.0
 
     def test_retry_after_ms_takes_priority(self):
         err = _make_rate_limit_error(retry_after=60, retry_after_ms=2000)
-        assert parse_retry_after(err) == 2.0
+        assert _parse_retry_after(err) == 2.0
 
     def test_no_header_returns_none(self):
         err = _make_rate_limit_error()
-        assert parse_retry_after(err) is None
+        assert _parse_retry_after(err) is None
 
     def test_none_response(self):
         err = MagicMock()
         err.response = None
-        assert parse_retry_after(err) is None
+        assert _parse_retry_after(err) is None
 
 
-class TestACompletionWithRetry:
+# ── TestAnthropicProviderRetry ────────────────────────────────────────────────
+
+
+class TestAnthropicProviderRetry:
+    def _make_provider(self):
+        from make_agent.provider.anthropic import AnthropicProvider
+        return AnthropicProvider()
+
     async def test_succeeds_on_first_attempt(self):
-        stream = _make_empty_stream()
-        with patch(
-            "make_agent.provider.litellm.acompletion",
-            AsyncMock(return_value=stream),
-        ) as mock_c:
-            result = await acompletion_with_retry("model", [], {}, max_retries=3)
-        assert result is stream
+        provider = self._make_provider()
+        mock_stream = MagicMock()
+        with patch.object(provider._client.messages, "create", AsyncMock(return_value=mock_stream)) as mock_c:
+            result = await provider._create_with_retry({})
+        assert result is mock_stream
         mock_c.assert_called_once()
 
     async def test_retries_on_rate_limit_then_succeeds(self):
+        provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=10)
-        stream = _make_empty_stream()
-        with patch(
-            "make_agent.provider.litellm.acompletion",
-            AsyncMock(side_effect=[err, err, stream]),
-        ):
+        mock_stream = MagicMock()
+        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=[err, err, mock_stream])):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                result = await acompletion_with_retry("model", [], {}, max_retries=3)
-        assert result is stream
+                result = await provider._create_with_retry({})
+        assert result is mock_stream
         assert mock_sleep.call_count == 2
         mock_sleep.assert_called_with(10.0)
 
     async def test_exponential_backoff_without_header(self):
+        provider = self._make_provider()
         err = _make_rate_limit_error()
-        stream = _make_empty_stream()
-        with patch(
-            "make_agent.provider.litellm.acompletion",
-            AsyncMock(side_effect=[err, err, stream]),
-        ):
+        mock_stream = MagicMock()
+        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=[err, err, mock_stream])):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                await acompletion_with_retry("model", [], {}, max_retries=3)
+                await provider._create_with_retry({})
         assert mock_sleep.call_args_list == [call(1), call(2)]
 
-    async def test_exponential_backoff_capped_at_60s(self):
-        err = _make_rate_limit_error()
-        stream = _make_empty_stream()
-        side_effects = [err] * 7 + [stream]
-        with patch(
-            "make_agent.provider.litellm.acompletion",
-            AsyncMock(side_effect=side_effects),
-        ):
-            with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                await acompletion_with_retry("model", [], {}, max_retries=10)
-        waits = [c.args[0] for c in mock_sleep.call_args_list]
-        assert all(w <= 60 for w in waits)
-        assert waits[6] == 60  # 2^6=64 capped to 60
-
     async def test_raises_after_max_retries_exhausted(self):
+        provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=1)
-        with patch(
-            "make_agent.provider.litellm.acompletion",
-            AsyncMock(side_effect=err),
-        ):
+        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=err)):
             with patch("asyncio.sleep", AsyncMock()):
-                with pytest.raises(litellm.RateLimitError):
-                    await acompletion_with_retry("model", [], {}, max_retries=2)
+                with pytest.raises(anthropic.RateLimitError):
+                    await provider._create_with_retry({})
 
     async def test_total_calls_equals_max_retries_plus_one(self):
+        provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=1)
-        with patch(
-            "make_agent.provider.litellm.acompletion",
-            AsyncMock(side_effect=err),
-        ) as mock_c:
+        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=err)) as mock_c:
             with patch("asyncio.sleep", AsyncMock()):
-                with pytest.raises(litellm.RateLimitError):
-                    await acompletion_with_retry("model", [], {}, max_retries=3)
-        assert mock_c.call_count == 4  # 1 initial + 3 retries
+                with pytest.raises(anthropic.RateLimitError):
+                    await provider._create_with_retry({})
+        assert mock_c.call_count == MAX_RETRIES + 1
 
     async def test_zero_max_retries_raises_immediately(self):
+        provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=1)
-        with patch(
-            "make_agent.provider.litellm.acompletion",
-            AsyncMock(side_effect=err),
-        ):
+        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=err)):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                with pytest.raises(litellm.RateLimitError):
-                    await acompletion_with_retry("model", [], {}, max_retries=0)
+                with patch("make_agent.provider.anthropic.MAX_RETRIES", 0):
+                    with pytest.raises(anthropic.RateLimitError):
+                        await provider._create_with_retry({})
         mock_sleep.assert_not_called()
 
 
@@ -287,7 +160,7 @@ class TestACompletionWithRetry:
 
 
 class TestAgentSafetyGuards:
-    def _make_agent(self, tmp_path):
+    def _make_agent(self, tmp_path, provider):
         from make_agent.agent_core import Agent, AgentConfig
         from make_agent.memory import Memory
         from make_agent.skill_backend import MakefileSkillBackend
@@ -300,8 +173,9 @@ class TestAgentSafetyGuards:
         agent = Agent(
             AgentConfig(
                 system_prompt="You are a helper.",
-                model="openai/gpt-4o-mini",
+                model="claude-3-5-haiku-20241022",
                 skills_dir=str(tmp_path),
+                provider=provider,
             ),
             tool_handler,
         )
@@ -320,39 +194,28 @@ class TestAgentSafetyGuards:
         return agent
 
     async def test_unknown_tool_is_rejected_without_running_make(self, tmp_path):
-        agent = self._make_agent(tmp_path)
-
-        with patch(
-            "make_agent.agent_core.loop.acompletion_with_retry",
-            _mockacompletion_with_retry(
-                _make_tool_call_stream("tc1", "hidden", "{}"),
-                _make_text_stream("done"),
-            ),
-        ):
-            result = await agent.arun("use hidden target")
+        provider = MockProvider(
+            _tool_call_chunks("tc1", "hidden", "{}"),
+            _text_chunks("done"),
+        )
+        agent = self._make_agent(tmp_path, provider)
+        result = await agent.arun("use hidden target")
 
         assert result == "done"
         tool_outputs = [m["content"] for m in agent.messages if m.get("role") == "tool"]
         assert any("unknown tool: hidden" in output for output in tool_outputs)
 
     async def test_model_turn_limit_stops_runaway_tool_loop(self, tmp_path):
-        agent = self._make_agent(tmp_path)
+        provider = MockProvider(_tool_call_chunks("tc1", "hidden", "{}"))
+        agent = self._make_agent(tmp_path, provider)
 
-        async def _always_tool_call(*args, **kwargs):
-            return _make_tool_call_stream("tc1", "hidden", "{}")
-
-        with (
-            patch("make_agent.agent_core.loop.MAX_MODEL_TURNS_PER_REQUEST", 2),
-            patch(
-                "make_agent.agent_core.loop.acompletion_with_retry", _always_tool_call
-            ),
-        ):
+        with patch("make_agent.agent_core.loop.MAX_MODEL_TURNS_PER_REQUEST", 2):
             with pytest.raises(RuntimeError, match="model turns"):
                 await agent.arun("loop forever")
 
 
 class TestAssistantMessageContent:
-    """Assistant messages with tool calls must never have content=None (breaks Ollama provider)."""
+    """Assistant messages with tool calls must never have content=None."""
 
     async def test_tool_call_without_text_has_empty_string_content(self, tmp_path):
         """When the LLM streams a tool call with no text, the assistant message content must be ''."""
@@ -365,11 +228,16 @@ class TestAssistantMessageContent:
         tool_handler = ToolHandler(
             MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
         )
+        provider = MockProvider(
+            _tool_call_chunks("tc1", "say_hi", "{}"),
+            _text_chunks("all done"),
+        )
         agent = Agent(
             AgentConfig(
                 system_prompt="You are a helper.",
-                model="openai/gpt-4o-mini",
+                model="claude-3-5-haiku-20241022",
                 skills_dir=str(tmp_path),
+                provider=provider,
             ),
             tool_handler,
         )
@@ -386,14 +254,7 @@ class TestAssistantMessageContent:
         )
         agent._tool_handler._executors["say_hi"] = lambda **_: "hi"  # noqa: SLF001
 
-        with patch(
-            "make_agent.agent_core.loop.acompletion_with_retry",
-            _mockacompletion_with_retry(
-                _make_tool_call_stream("tc1", "say_hi", "{}"),
-                _make_text_stream("all done"),
-            ),
-        ):
-            result = await agent.arun("call say_hi")
+        result = await agent.arun("call say_hi")
 
         assert result == "all done"
         assistant_msgs = [
@@ -404,21 +265,15 @@ class TestAssistantMessageContent:
         assert assistant_msgs, "expected at least one assistant message with tool_calls"
         for msg in assistant_msgs:
             assert msg["content"] is not None, (
-                "assistant message content must not be None (breaks Ollama)"
+                "assistant message content must not be None"
             )
             assert isinstance(msg["content"], str)
 
 
 class TestAnthropicParallelToolCalls:
-    """Anthropic (via any_llm) hardcodes index=0 for every tool call in a response.
+    """Native Anthropic SDK assigns correct sequential indices for parallel tool calls."""
 
-    When the model returns two parallel tool calls, both start-events and both
-    delta-events carry index=0.  The agent loop must use id-based detection to
-    keep them separate, otherwise names and arguments get concatenated and the
-    next LLM request fails with a JSONDecodeError, breaking the loop.
-    """
-
-    def _make_agent(self, tmp_path):
+    def _make_agent(self, tmp_path, provider):
         from make_agent.agent_core import Agent, AgentConfig
         from make_agent.memory import Memory
         from make_agent.skill_backend import MakefileSkillBackend
@@ -433,6 +288,7 @@ class TestAnthropicParallelToolCalls:
                 system_prompt="You are a helper.",
                 model="anthropic/claude-3-5-sonnet-20241022",
                 skills_dir=str(tmp_path),
+                provider=provider,
             ),
             tool_handler,
         )
@@ -455,35 +311,33 @@ class TestAnthropicParallelToolCalls:
         return agent
 
     async def test_parallel_tool_calls_are_kept_separate(self, tmp_path):
-        """Two parallel Anthropic tool calls (both index=0) must each be executed."""
-        agent = self._make_agent(tmp_path)
-
-        parallel_stream = _make_parallel_tool_calls_stream_anthropic_style(
-            [
-                ("toolu_A", "tool_a", '{"x": 1}'),
-                ("toolu_B", "tool_b", '{"x": 2}'),
-            ]
+        """Two parallel tool calls with sequential indices must each be executed."""
+        parallel_chunks = (
+            _tool_call_chunks("toolu_A", "tool_a", '{"x": 1}', index=0)
+            + _tool_call_chunks("toolu_B", "tool_b", '{"x": 2}', index=1)
         )
+        provider = MockProvider(parallel_chunks, _text_chunks("done"))
+        agent = self._make_agent(tmp_path, provider)
 
-        with patch(
-            "make_agent.agent_core.loop.acompletion_with_retry",
-            _mockacompletion_with_retry(parallel_stream, _make_text_stream("done")),
-        ):
-            result = await agent.arun("run both tools")
+        result = await agent.arun("run both tools")
 
         assert result == "done"
         tool_msgs = [m for m in agent.messages if m.get("role") == "tool"]
         assert len(tool_msgs) == 2, (
             f"expected 2 tool results, got {len(tool_msgs)}: {tool_msgs}"
         )
-
         tool_call_ids = {m["tool_call_id"] for m in tool_msgs}
         assert "toolu_A" in tool_call_ids
         assert "toolu_B" in tool_call_ids
 
     async def test_parallel_tool_calls_have_correct_arguments(self, tmp_path):
         """Arguments must not be concatenated across parallel tool calls."""
-        agent = self._make_agent(tmp_path)
+        parallel_chunks = (
+            _tool_call_chunks("toolu_A", "tool_a", '{"x": 42}', index=0)
+            + _tool_call_chunks("toolu_B", "tool_b", '{"x": 99}', index=1)
+        )
+        provider = MockProvider(parallel_chunks, _text_chunks("done"))
+        agent = self._make_agent(tmp_path, provider)
 
         received: dict[str, dict] = {}
 
@@ -498,18 +352,7 @@ class TestAnthropicParallelToolCalls:
         agent._tool_handler._executors["tool_a"] = capture_a  # noqa: SLF001
         agent._tool_handler._executors["tool_b"] = capture_b  # noqa: SLF001
 
-        parallel_stream = _make_parallel_tool_calls_stream_anthropic_style(
-            [
-                ("toolu_A", "tool_a", '{"x": 42}'),
-                ("toolu_B", "tool_b", '{"x": 99}'),
-            ]
-        )
-
-        with patch(
-            "make_agent.agent_core.loop.acompletion_with_retry",
-            _mockacompletion_with_retry(parallel_stream, _make_text_stream("done")),
-        ):
-            await agent.arun("run both tools")
+        await agent.arun("run both tools")
 
         assert received.get("tool_a") == {"x": 42}, (
             f"tool_a got wrong args: {received.get('tool_a')}"
@@ -520,14 +363,12 @@ class TestAnthropicParallelToolCalls:
 
 
 class TestAnthropicEmptyArguments:
-    """Anthropic tools with no arguments may stream only a start event (no input_json_delta).
+    """Tools with no arguments send only a ToolCallStart (no ToolCallDelta).
 
-    The start chunk from any_llm sets arguments="" and no further delta arrives,
-    leaving the accumulated arguments as "".  json.loads("") raises JSONDecodeError;
-    the fix is to treat "" as "{}".
+    The accumulated arguments string will be ''; the loop must treat '' as '{}'.
     """
 
-    def _make_agent(self, tmp_path):
+    def _make_agent(self, tmp_path, provider):
         from make_agent.agent_core import Agent, AgentConfig
         from make_agent.memory import Memory
         from make_agent.skill_backend import MakefileSkillBackend
@@ -542,6 +383,7 @@ class TestAnthropicEmptyArguments:
                 system_prompt="You are a helper.",
                 model="anthropic/claude-3-5-haiku-20241022",
                 skills_dir=str(tmp_path),
+                provider=provider,
             ),
             tool_handler,
         )
@@ -559,30 +401,20 @@ class TestAnthropicEmptyArguments:
         return agent
 
     async def test_empty_arguments_string_does_not_crash(self, tmp_path):
-        """A tool call whose arguments accumulate to '' must not raise JSONDecodeError.
+        """A tool call with no ToolCallDelta must not raise JSONDecodeError."""
+        # Only ToolCallStart, no ToolCallDelta → arguments accumulate to ""
+        empty_arg_chunks = [ToolCallStart(index=0, id="toolu_1", name="list_skills")]
+        provider = MockProvider(empty_arg_chunks, _text_chunks("here are your skills"))
+        agent = self._make_agent(tmp_path, provider)
 
-        The error surfaces on the *second* LLM request when _convert_messages_for_anthropic
-        calls json.loads() on the stored arguments string — so we verify the full two-turn
-        round-trip completes successfully.
-        """
-        agent = self._make_agent(tmp_path)
-
-        with patch(
-            "make_agent.agent_core.loop.acompletion_with_retry",
-            _mockacompletion_with_retry(
-                _make_tool_call_stream_empty_args("toolu_1", "list_skills"),
-                _make_text_stream("here are your skills"),
-            ),
-        ):
-            result = await agent.arun("list skills")
+        result = await agent.arun("list skills")
 
         assert result == "here are your skills"
         tool_msgs = [m for m in agent.messages if m.get("role") == "tool"]
         assert len(tool_msgs) == 1
         assert "malformed" not in tool_msgs[0]["content"]
 
-        # The stored assistant message must have valid JSON arguments so the
-        # next call to _convert_messages_for_anthropic doesn't raise.
+        # The stored assistant message must have valid JSON arguments.
         assistant_msgs = [
             m
             for m in agent.messages
@@ -597,168 +429,16 @@ class TestAnthropicEmptyArguments:
         )
 
 
-# ── compact_messages ──────────────────────────────────────────────────────────
-
-
-def _u(text: str = "hi") -> dict:
-    return {"role": "user", "content": text}
-
-
-def _a(text: str = "ok") -> dict:
-    return {"role": "assistant", "content": text}
-
-
-def _sys(text: str = "system") -> dict:
-    return {"role": "system", "content": text}
-
-
-def _turn(n: int) -> list[dict]:
-    return [_u(f"q{n}"), _a(f"a{n}")]
-
-
-class TestCompactMessages:
-    """Tests for the compact_messages pure function."""
-
-    def test_empty_list_returns_empty(self):
-        from make_agent.agent_core import compact_messages
-
-        assert compact_messages([]) == []
-
-    def test_few_turns_unchanged(self):
-        """≤5 turns → no compaction."""
-        from make_agent.agent_core import compact_messages
-
-        msgs = [_sys()] + _turn(1) + _turn(2) + _turn(3)
-        assert compact_messages(msgs) == msgs
-
-    def test_exactly_five_turns_unchanged(self):
-        from make_agent.agent_core import compact_messages
-
-        msgs = [_sys()] + _turn(1) + _turn(2) + _turn(3) + _turn(4) + _turn(5)
-        assert compact_messages(msgs) == msgs
-
-    def test_six_turns_removes_first(self):
-        """6 turns → first turn dropped, last 5 kept."""
-        from make_agent.agent_core import compact_messages
-
-        msgs = [_sys()] + _turn(1) + _turn(2) + _turn(3) + _turn(4) + _turn(5) + _turn(6)
-        result = compact_messages(msgs)
-        assert result == [_sys()] + _turn(2) + _turn(3) + _turn(4) + _turn(5) + _turn(6)
-
-    def test_many_turns_keeps_last_five(self):
-        """10 turns → keeps last 5."""
-        from make_agent.agent_core import compact_messages
-
-        msgs = [_sys()] + [msg for i in range(1, 11) for msg in _turn(i)]
-        result = compact_messages(msgs)
-        expected = [_sys()] + [msg for i in range(6, 11) for msg in _turn(i)]
-        assert result == expected
-
-    def test_no_system_prompt(self):
-        """Works correctly without a system message."""
-        from make_agent.agent_core import compact_messages
-
-        msgs = [msg for i in range(1, 8) for msg in _turn(i)]
-        result = compact_messages(msgs)
-        expected = [msg for i in range(3, 8) for msg in _turn(i)]
-        assert result == expected
-
-    def test_custom_keep_turns(self):
-        from make_agent.agent_core import compact_messages
-
-        msgs = [_sys()] + _turn(1) + _turn(2) + _turn(3)
-        result = compact_messages(msgs, keep_turns=2)
-        assert result == [_sys()] + _turn(2) + _turn(3)
-
-    def test_tool_calls_in_turn_are_kept(self):
-        """Tool call messages within a kept turn are preserved."""
-        from make_agent.agent_core import compact_messages
-
-        tool_turn = [
-            _u("run something"),
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{"id": "t1", "type": "function", "function": {"name": "bash", "arguments": "{}"}}],
-            },
-            {"role": "tool", "tool_call_id": "t1", "content": "output"},
-            _a("done"),
-        ]
-        msgs = [_sys()] + _turn(1) + _turn(2) + _turn(3) + _turn(4) + _turn(5) + tool_turn
-        result = compact_messages(msgs)
-        assert result == [_sys()] + _turn(2) + _turn(3) + _turn(4) + _turn(5) + tool_turn
-
-    def test_messages_before_first_user_are_dropped(self):
-        """Pre-first-user non-system messages (e.g. orphaned tool calls) are dropped."""
-        from make_agent.agent_core import compact_messages
-
-        orphan = _a("stray assistant message")
-        msgs = [_sys(), orphan] + [msg for i in range(1, 8) for msg in _turn(i)]
-        result = compact_messages(msgs)
-        # orphan is dropped; last 5 of the 7 turns kept
-        expected = [_sys()] + [msg for i in range(3, 8) for msg in _turn(i)]
-        assert result == expected
-
-    def test_removed_count_positive_when_compacting(self):
-        """len(result) < len(input) whenever turns > keep_turns."""
-        from make_agent.agent_core import compact_messages
-
-        msgs = [_sys()] + [msg for i in range(1, 8) for msg in _turn(i)]
-        result = compact_messages(msgs)
-        assert len(result) < len(msgs)
-
-
-# ── _tc / _assistant_tc helpers kept for non-compact tests ───────────────────
-
-
-def _tc(tc_id: str, name: str, args: str = "{}") -> dict:
-    """Build a single tool-call entry for an assistant message."""
-    return {
-        "id": tc_id,
-        "type": "function",
-        "function": {"name": name, "arguments": args},
-    }
-
-
-def _assistant_tc(*tool_calls, content: str = "") -> dict:
-    return {"role": "assistant", "content": content, "tool_calls": list(tool_calls)}
-
-
-def _tool_result(tc_id: str, content: str = "result") -> dict:
-    return {"role": "tool", "tool_call_id": tc_id, "content": content}
-
-
-def _user(content: str = "hello") -> dict:
-    return {"role": "user", "content": content}
-
-
-def _system(content: str = "system") -> dict:
-    return {"role": "system", "content": content}
-
-
-def _assistant_text(content: str = "ok") -> dict:
-    return {"role": "assistant", "content": content}
-
-
-
-class TestIsAnthropicModel:
-    def test_anthropic_prefix(self):
-        assert is_anthropic_model("anthropic/claude-opus-4-5") is True
-
-    def test_claude_substring(self):
-        assert is_anthropic_model("claude-3-5-sonnet-20241022") is True
-
-    def test_openai_model_is_false(self):
-        assert is_anthropic_model("openai/gpt-4o") is False
-
-    def test_gemini_model_is_false(self):
-        assert is_anthropic_model("google/gemini-2.0-flash") is False
-
-    def test_case_insensitive(self):
-        assert is_anthropic_model("Anthropic/Claude-Opus") is True
+# ── TestAgentSystemPromptCache ────────────────────────────────────────────────
 
 
 class TestAgentSystemPromptCache:
+    """The loop always stores system prompt as a plain string.
+
+    Cache-control headers are added by the Anthropic provider internally at
+    call time — not embedded in the loop's message history.
+    """
+
     def _make_agent(self, tmp_path, model: str, use_prompt_cache: bool):
         from make_agent.agent_core import Agent
         from make_agent.memory import Memory
@@ -771,6 +451,7 @@ class TestAgentSystemPromptCache:
             system_prompt="You are a helpful assistant.",
             model=model,
             use_prompt_cache=use_prompt_cache,
+            provider=MockProvider(),  # no actual API calls
         )
         return Agent(config, tool_handler)
 
@@ -780,20 +461,18 @@ class TestAgentSystemPromptCache:
         assert system_msg["role"] == "system"
         assert system_msg["content"] == "You are a helpful assistant."
 
-    def test_cache_anthropic_stores_content_block(self, tmp_path):
+    def test_cache_enabled_still_stores_plain_string(self, tmp_path):
+        """Even with use_prompt_cache=True, the loop stores a plain string.
+
+        Cache-control is added by AnthropicProvider.astream() at API call time.
+        """
         agent = self._make_agent(tmp_path, "anthropic/claude-3-5-haiku-20241022", True)
         system_msg = agent.messages[0]
         assert system_msg["role"] == "system"
-        content = system_msg["content"]
-        assert isinstance(content, list)
-        assert len(content) == 1
-        block = content[0]
-        assert block["type"] == "text"
-        assert block["text"] == "You are a helpful assistant."
-        assert block["cache_control"] == {"type": "ephemeral"}
+        assert system_msg["content"] == "You are a helpful assistant."
 
-    def test_cache_non_anthropic_stores_plain_string(self, tmp_path):
-        agent = self._make_agent(tmp_path, "openai/gpt-4o", True)
+    def test_non_anthropic_model_stores_plain_string(self, tmp_path):
+        agent = self._make_agent(tmp_path, "openai/gpt-4o", False)
         system_msg = agent.messages[0]
         assert system_msg["role"] == "system"
         assert system_msg["content"] == "You are a helpful assistant."

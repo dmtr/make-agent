@@ -6,8 +6,6 @@ import logging
 from typing import Optional
 
 from make_agent.agent_core import (
-    DEFAULT_COMPACT_TARGET_RATIO,
-    DEFAULT_COMPACT_THRESHOLD_RATIO,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
@@ -20,7 +18,6 @@ from make_agent.agent_core import (
 )
 from make_agent.app_dirs import project_dir
 from make_agent.memory import Memory
-from make_agent.provider import compute_compact_target, compute_compact_threshold, compute_summary_max_tokens
 from make_agent.tool_handler import ToolHandler
 
 from .shell import MakeAgentShell
@@ -40,9 +37,6 @@ async def run(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     reasoning_effort: str = DEFAULT_REASONING_EFFORT,
     use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE,
-    compact_context_window: int = 0,
-    compact_threshold_ratio: float = DEFAULT_COMPACT_THRESHOLD_RATIO,
-    compact_target_ratio: float = DEFAULT_COMPACT_TARGET_RATIO,
 ) -> None:
     """Start the interactive shell (or send a single prompt and return)."""
     await tool_handler.setup(model)
@@ -57,32 +51,9 @@ async def run(
         project_dir=project_dir(),
         use_prompt_cache=use_prompt_cache,
     )
-    compact_threshold = compute_compact_threshold(
-        model=model,
-        threshold_ratio=compact_threshold_ratio,
-        context_window=compact_context_window,
-    )
-    compact_target = compute_compact_target(
-        model=model,
-        target_ratio=compact_target_ratio,
-        context_window=compact_context_window,
-    )
-    summary_max_tokens = compute_summary_max_tokens(
-        model=model,
-        context_window=compact_context_window,
-    )
-    logger.info(
-        "Auto-compact threshold=%d tokens, target=%d tokens, summary_budget=%d tokens",
-        compact_threshold,
-        compact_target,
-        summary_max_tokens,
-    )
     agent_manager = AgentManager(
         tool_handler,
         middlewares=[SessionMiddleware(memory)],
-        compact_threshold=compact_threshold,
-        compact_target=compact_target,
-        summary_max_tokens=summary_max_tokens,
     )
     session_id = agent_manager.create_session(agent_config)
     if system_prompt:

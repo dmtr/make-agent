@@ -443,9 +443,12 @@ class TestAgentAutoStorage:
 
     def _make_manager(self, tmp_path, mem):
         from make_agent.agent_core import AgentConfig, AgentManager, SessionMiddleware
+        from make_agent.provider import TextDelta
         from make_agent.tool_handler import ToolHandler
+        from tests.test_agent import MockProvider
 
-        config = AgentConfig(system_prompt="You are a helper.", model="openai/gpt-4o-mini", skills_dir=str(tmp_path))
+        provider = MockProvider([TextDelta(text="the reply")])
+        config = AgentConfig(system_prompt="You are a helper.", model="claude-3-5-haiku-latest", skills_dir=str(tmp_path), provider=provider)
         tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), mem)
         manager = AgentManager(tool_handler, middlewares=[SessionMiddleware(mem)])
         session_id = manager.create_session(config)
@@ -454,19 +457,7 @@ class TestAgentAutoStorage:
     async def test_user_message_stored(self, tmp_path, mem):
         manager, session_id = self._make_manager(tmp_path, mem)
 
-        async def _fake_acompletion(*args, **kwargs):
-            async def _stream():
-                chunk = MagicMock()
-                chunk.choices = [MagicMock()]
-                chunk.choices[0].delta.content = "the reply"
-                chunk.choices[0].delta.tool_calls = None
-                chunk.usage = None
-                yield chunk
-
-            return _stream()
-
-        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_acompletion):
-            await manager.arun_agent(session_id, "hello from user")
+        await manager.arun_agent(session_id, "hello from user")
 
         conn = mem._get_conn()
         row = conn.execute("SELECT sender, message FROM messages WHERE sender='user'").fetchone()
@@ -476,19 +467,7 @@ class TestAgentAutoStorage:
     async def test_agent_reply_stored(self, tmp_path, mem):
         manager, session_id = self._make_manager(tmp_path, mem)
 
-        async def _fake_acompletion(*args, **kwargs):
-            async def _stream():
-                chunk = MagicMock()
-                chunk.choices = [MagicMock()]
-                chunk.choices[0].delta.content = "the reply"
-                chunk.choices[0].delta.tool_calls = None
-                chunk.usage = None
-                yield chunk
-
-            return _stream()
-
-        with patch("make_agent.agent_core.loop.acompletion_with_retry", _fake_acompletion):
-            await manager.arun_agent(session_id, "hello from user")
+        await manager.arun_agent(session_id, "hello from user")
 
         conn = mem._get_conn()
         row = conn.execute("SELECT sender, message FROM messages WHERE sender='agent'").fetchone()
@@ -505,12 +484,15 @@ class TestMemoryAlwaysActive:
     def test_create_session_always_creates_memory(self, tmp_path):
         from make_agent.agent_core import AgentConfig, AgentManager, SessionMiddleware
         from make_agent.memory import Memory
+        from make_agent.provider import TextDelta
         from make_agent.tool_handler import ToolHandler
+        from tests.test_agent import MockProvider
 
         memory = Memory(tmp_path / "memory.db")
+        provider = MockProvider([TextDelta(text="hi")])
         tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
         manager = AgentManager(tool_handler, middlewares=[SessionMiddleware(memory)])
-        config = AgentConfig(system_prompt="", model="openai/gpt-4o-mini", skills_dir=str(tmp_path), project_dir=tmp_path)
+        config = AgentConfig(system_prompt="", model="claude-3-5-haiku-latest", skills_dir=str(tmp_path), project_dir=tmp_path, provider=provider)
         manager.create_session(config)
 
         assert any(isinstance(mw, SessionMiddleware) and mw._memory is memory for mw in manager._middlewares)
