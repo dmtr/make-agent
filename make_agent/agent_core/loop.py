@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +19,7 @@ from .constants import (
     DEFAULT_REASONING_EFFORT,
     DEFAULT_TOOL_TIMEOUT,
     DEFAULT_USE_PROMPT_CACHE,
+    MAX_COMPACT_RETRIES,
     MAX_MODEL_TURNS_PER_REQUEST,
     MAX_REPEATED_FAILURES,
     MAX_RUN_SECONDS_PER_REQUEST,
@@ -125,11 +125,14 @@ class ToolCallback(CallBack):
         await self._event.wait()
 
 
-class ContextExceededCallback(CallBack):
-    """Provider signaled context-window overflow; no tool response needed."""
+class CompactCallback(CallBack):
+    """Loop compacted history due to context-window overflow."""
 
-    def __init__(self) -> None:
+    def __init__(self, attempt: int, messages_dropped: int, turns_kept: int) -> None:
         super().__init__("")
+        self.attempt = attempt
+        self.messages_dropped = messages_dropped
+        self.turns_kept = turns_kept
 
 
 class UsageCallback(CallBack):
@@ -208,6 +211,7 @@ class AgenticLoop:
         self._config = config
         self._provider: Provider = config.provider if config.provider is not None else provider_for(config.model)
         self._messages: list[dict] = []
+        self._turn_count: int = 0
         self._gen: AsyncGenerator[CallBack, None] | None = None
         if config.system_prompt:
             self._messages.append({"role": "system", "content": config.system_prompt})
@@ -254,6 +258,7 @@ class AgenticLoop:
 
     def astream(self, user_input: str) -> AgenticLoop:
         """Begin a new turn for *user_input*. Returns ``self`` for use in ``async for``."""
+        self._turn_count += 1
         self._gen = self._run(user_input)
         return self
 
@@ -267,6 +272,7 @@ class AgenticLoop:
         model_turns = 0
         tool_calls_executed = 0
         started_at = time.monotonic()
+        compact_attempts = 0
 
         while True:
             if model_turns >= MAX_MODEL_TURNS_PER_REQUEST:
@@ -274,11 +280,15 @@ class AgenticLoop:
             if time.monotonic() - started_at >= MAX_RUN_SECONDS_PER_REQUEST:
                 raise RuntimeError(f"aborted: exceeded {MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
 
+            # Snapshot before each LLM call so we can restore on context overflow.
+            snapshot = list(self._messages)
+
             # Accumulate streaming response.
             content_parts: list[str] = []
             tool_call_acc: dict[int, dict] = {}  # index → {id, name, arguments}
             input_tokens = 0
             output_tokens = 0
+            context_exceeded = False
 
             async for chunk in self._provider.astream(
                 self._model,
@@ -292,8 +302,8 @@ class AgenticLoop:
                     content_parts.append(chunk.text)
                     yield TokenCallback(chunk.text)
                 elif isinstance(chunk, ContextExceededChunk):
-                    yield ContextExceededCallback()
-                    return
+                    context_exceeded = True
+                    break
                 elif isinstance(chunk, ToolCallStart):
                     tool_call_acc[chunk.index] = {"id": chunk.id, "name": chunk.name, "arguments": ""}
                 elif isinstance(chunk, ToolCallDelta):
@@ -302,6 +312,23 @@ class AgenticLoop:
                 elif isinstance(chunk, UsageDelta):
                     input_tokens += chunk.input_tokens
                     output_tokens += chunk.output_tokens
+
+            if context_exceeded:
+                if compact_attempts >= MAX_COMPACT_RETRIES:
+                    raise RuntimeError(
+                        f"aborted: context window exceeded after {MAX_COMPACT_RETRIES} compact attempts"
+                    )
+                self._messages = snapshot
+                dropped, kept = self.compact_history()
+                if dropped == 0:
+                    raise RuntimeError("aborted: context window exceeded and no messages can be compacted")
+                compact_attempts += 1
+                logger.warning(
+                    "[compact] context exceeded — dropped %d messages, kept %d turns (attempt %d/%d)",
+                    dropped, kept, compact_attempts, MAX_COMPACT_RETRIES,
+                )
+                yield CompactCallback(attempt=compact_attempts, messages_dropped=dropped, turns_kept=kept)
+                continue
 
             content = "".join(content_parts)
             model_turns += 1
@@ -425,12 +452,12 @@ class AgenticLoop:
                 yield MessageCallback(content)
                 return
 
-    def compact_history(self) -> int:
-        """Drop the oldest half of non-system turns. Returns number of messages removed.
+    def compact_history(self) -> tuple[int, int]:
+        """Drop turns to fit within context. Returns ``(messages_dropped, turns_kept)``.
 
-        System messages (including the system prompt) are never touched.
-        Returns 0 when only one turn (or fewer) remains, signalling the caller
-        that there is nothing left to drop.
+        Policy: keep the last 2 turns when there are more than 2, otherwise keep
+        the last 1 turn.  System messages are never touched.  Returns
+        ``(0, len(turns))`` when there is only one turn (nothing to drop).
         """
         system = [m for m in self._messages if m.get("role") == "system"]
         non_system = [m for m in self._messages if m.get("role") != "system"]
@@ -443,13 +470,13 @@ class AgenticLoop:
                 turns[-1].append(msg)
 
         if len(turns) <= 1:
-            return 0
+            return 0, len(turns)
 
-        keep = math.ceil(len(turns) / 2)
+        keep = 2 if len(turns) > 2 else 1
         kept = [m for turn in turns[-keep:] for m in turn]
         old_len = len(self._messages)
         self._messages = system + kept
-        return old_len - len(self._messages)
+        return old_len - len(self._messages), keep
 
     async def arun(self, user_input: str) -> str:
         """Send *user_input* to the LLM and return the assistant's final reply.

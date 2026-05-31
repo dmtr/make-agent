@@ -137,7 +137,7 @@ def _mock_loop_with_cbs(manager, session_id, cbs):
     loop.astream = _fake_astream
     loop._max_tool_output = 0
     loop._messages = []
-    loop.compact_history = MagicMock(return_value=0)
+    loop.compact_history = MagicMock(return_value=(0, 0))
     manager._sessions[session_id] = loop
 
 

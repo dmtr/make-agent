@@ -115,16 +115,16 @@ class TestCompactHistory:
 
     def test_returns_zero_when_only_one_turn(self):
         loop = _make_loop([_sys("sys"), _user("only"), _assistant("one")])
-        result = loop.compact_history()
-        assert result == 0
+        dropped, kept = loop.compact_history()
+        assert dropped == 0
 
     def test_returns_zero_when_no_turns(self):
         loop = _make_loop([_sys("sys")])
-        result = loop.compact_history()
-        assert result == 0
+        dropped, kept = loop.compact_history()
+        assert dropped == 0
 
-    def test_drops_oldest_half_of_turns(self):
-        # 4 turns → keep ceil(4/2) = 2 most recent
+    def test_drops_oldest_turns_keeping_last_two(self):
+        # 4 turns → keep last 2 most recent (policy: keep 2 when turns > 2)
         loop = _make_loop([
             _sys("sys"),
             _user("t1"), _assistant("r1"),
@@ -132,8 +132,9 @@ class TestCompactHistory:
             _user("t3"), _assistant("r3"),
             _user("t4"), _assistant("r4"),
         ])
-        dropped = loop.compact_history()
+        dropped, kept = loop.compact_history()
         assert dropped == 4  # t1+r1 and t2+r2 removed
+        assert kept == 2
         non_sys = [m for m in loop._messages if m.get("role") != "system"]
         assert non_sys[0] == _user("t3")
         assert non_sys[-1] == _assistant("r4")
@@ -144,21 +145,23 @@ class TestCompactHistory:
             _user("first"), _assistant("first reply"),
             _user("second"), _assistant("second reply"),
         ])
-        dropped = loop.compact_history()
+        dropped, kept = loop.compact_history()
         assert dropped == 2
+        assert kept == 1
         non_sys = [m for m in loop._messages if m.get("role") != "system"]
         assert non_sys[0] == _user("second")
 
-    def test_odd_turns_keeps_ceiling(self):
-        # 3 turns → keep ceil(3/2) = 2
+    def test_three_turns_keeps_last_two(self):
+        # 3 turns > 2 → keep last 2
         loop = _make_loop([
             _sys("sys"),
             _user("1"), _assistant("a"),
             _user("2"), _assistant("b"),
             _user("3"), _assistant("c"),
         ])
-        dropped = loop.compact_history()
+        dropped, kept = loop.compact_history()
         assert dropped == 2
+        assert kept == 2
         non_sys = [m for m in loop._messages if m.get("role") != "system"]
         assert non_sys[0] == _user("2")
 
@@ -169,7 +172,7 @@ class TestCompactHistory:
             _user("c"), _assistant("d"),
         ])
         before = len(loop._messages)
-        dropped = loop.compact_history()
+        dropped, _kept = loop.compact_history()
         assert dropped == before - len(loop._messages)
 
     def test_multiple_system_messages_all_preserved(self):

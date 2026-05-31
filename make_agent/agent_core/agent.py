@@ -7,7 +7,6 @@ import logging
 import time
 from contextlib import suppress
 from pathlib import Path
-from dataclasses import dataclass
 from typing import AsyncIterator, Callable
 from uuid import uuid4
 
@@ -34,17 +33,10 @@ from .bridge import (
 )
 from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
 from .export import export_conversation
-from .loop import AgentConfig, AgenticLoop, ContextExceededCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
+from .loop import AgentConfig, AgenticLoop, CompactCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 
 logger = logging.getLogger(__name__)
-
-MAX_COMPACT_RETRIES = 3
-
-
-@dataclass
-class _ContextExceededSignal:
-    """Internal sentinel: emitted by _run_loop to signal context-window overflow."""
 
 
 # Backward-compatible alias.
@@ -93,45 +85,16 @@ class AgentManager:
         return result
 
     async def _stream_events_core(self, request: Request) -> AsyncIterator[AgentEvent]:
-        """Core event-streaming logic with compact-and-retry on context-window overflow.
-
-        On context-window overflow the provider yields a :class:`ContextExceededChunk`,
-        which propagates as a :class:`_ContextExceededSignal` from ``_run_loop``.
-        The pre-run message snapshot is compacted (oldest half dropped) and the
-        turn is retried on the same loop.
-        """
+        """Core event-streaming logic. Compact-and-retry is handled by the loop itself."""
         loop = self.get_agent(request.session_id)
+        async for event in self._run_loop(loop, request.message):
+            yield event
 
-        for attempt in range(MAX_COMPACT_RETRIES + 1):
-            snapshot = list(loop._messages)
-            context_exceeded = False
-            async for event in self._run_loop(loop, request.message):
-                if isinstance(event, _ContextExceededSignal):
-                    context_exceeded = True
-                    break
-                yield event
-            if not context_exceeded:
-                return
-            if attempt == MAX_COMPACT_RETRIES:
-                raise RuntimeError(
-                    f"aborted: context window exceeded after {MAX_COMPACT_RETRIES} compact attempts"
-                )
-            loop._messages = list(snapshot)
-            dropped = loop.compact_history()
-            if dropped == 0:
-                raise RuntimeError("aborted: context window exceeded and no messages can be compacted")
-            logger.warning(
-                "[compact] context exceeded — dropped %d messages (attempt %d/%d)",
-                dropped, attempt + 1, MAX_COMPACT_RETRIES,
-            )
-            yield CompactEvent(attempt=attempt + 1, messages_dropped=dropped)
-
-    async def _run_loop(self, loop: AgenticLoop, message: str) -> AsyncIterator[AgentEvent | _ContextExceededSignal]:
+    async def _run_loop(self, loop: AgenticLoop, message: str) -> AsyncIterator[AgentEvent]:
         """Iterate one agent turn, translating callbacks to AgentEvents."""
         async for cb in loop.astream(message):
-            if isinstance(cb, ContextExceededCallback):
-                yield _ContextExceededSignal()
-                return
+            if isinstance(cb, CompactCallback):
+                yield CompactEvent(attempt=cb.attempt, messages_dropped=cb.messages_dropped)
             elif isinstance(cb, TokenCallback):
                 yield TokenEvent(text=cb.message)
             elif isinstance(cb, MessageCallback):
