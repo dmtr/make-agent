@@ -21,6 +21,7 @@ from .constants import (
     DEFAULT_REASONING_EFFORT,
     DEFAULT_TOOL_TIMEOUT,
     DEFAULT_USE_PROMPT_CACHE,
+    MAX_COMPACT_PARALLEL_SUMMARIES,
     MAX_COMPACT_RETRIES,
     MAX_MODEL_TURNS_PER_REQUEST,
     MAX_REPEATED_FAILURES,
@@ -543,7 +544,13 @@ class AgenticLoop:
         prior_turns = turns[:-1]
         current_turn = turns[-1]
 
-        summaries = await asyncio.gather(*[self._summarize_turn(t) for t in prior_turns])
+        sem = asyncio.Semaphore(MAX_COMPACT_PARALLEL_SUMMARIES)
+
+        async def _summarize_limited(turn: list[dict]) -> str:
+            async with sem:
+                return await self._summarize_turn(turn)
+
+        summaries = await asyncio.gather(*[_summarize_limited(t) for t in prior_turns])
         combined = "\n".join(f"Turn {i + 1}: {s}" for i, s in enumerate(summaries))
         summary_msg = {"role": "system", "content": f"Prior conversation summary:\n{combined}"}
 
