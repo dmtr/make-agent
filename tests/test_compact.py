@@ -373,6 +373,36 @@ class TestSmartCompact:
         assert len(call_order) == 3
 
     @pytest.mark.asyncio
+    async def test_single_turn_with_tool_calls_restarts_from_user_msg(self):
+        """When only one turn exists (with tool calls), summarize it and restart
+        from the user message so the agent can retry with context."""
+        loop = self._make_summarizing_loop("did stuff")
+        tool_msg = {"role": "tool", "tool_call_id": "c1", "content": "result"}
+        assistant_tool = {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "run", "arguments": "{}"}}]}
+        loop._messages.extend([
+            _user("do the thing"), assistant_tool, tool_msg,
+        ])
+        dropped, summarized = await loop._smart_compact()
+        assert summarized == 1
+        assert dropped > 0
+        # Only user message should remain (no tool calls)
+        non_sys = [m for m in loop._messages if m.get("role") not in ("system",)]
+        assert len(non_sys) == 1
+        assert non_sys[0] == _user("do the thing")
+        # Summary message injected
+        sys_msgs = [m for m in loop._messages if m.get("role") == "system"]
+        assert any("Prior work summary" in m.get("content", "") for m in sys_msgs)
+
+    @pytest.mark.asyncio
+    async def test_single_turn_no_tool_calls_returns_zero(self):
+        """Single turn with only a user message — nothing to compact."""
+        loop = self._make_summarizing_loop()
+        loop._messages.append(_user("just a question"))
+        dropped, summarized = await loop._smart_compact()
+        assert dropped == 0
+        assert summarized == 0
+
+    @pytest.mark.asyncio
     async def test_current_turn_with_tool_calls_preserved(self):
         """Current turn containing tool calls is preserved wholesale, not summarized."""
         loop = self._make_summarizing_loop("summary")

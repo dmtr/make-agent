@@ -523,9 +523,13 @@ class AgenticLoop:
         return "".join(parts).strip()
 
     async def _smart_compact(self) -> tuple[int, int]:
-        """Summarize all prior turns in parallel and replace them with a combined
-        summary system message. The last (current) turn is always preserved wholesale,
-        whether or not it contains tool calls.
+        """Summarize prior turns in parallel and replace them with a combined summary
+        system message. The last (current) turn is always preserved wholesale.
+
+        Special case: when only one turn exists but it has accumulated tool calls,
+        summarize it in-place and restart from just the user message so the agent
+        can retry with context of what was done.
+
         Returns ``(messages_dropped, turns_summarized)``.
         """
         system = [m for m in self._messages if m.get("role") == "system"]
@@ -538,17 +542,29 @@ class AgenticLoop:
             elif turns:
                 turns[-1].append(msg)
 
-        if len(turns) <= 1:
+        if not turns:
             return 0, 0
-
-        prior_turns = turns[:-1]
-        current_turn = turns[-1]
 
         sem = asyncio.Semaphore(MAX_COMPACT_PARALLEL_SUMMARIES)
 
         async def _summarize_limited(turn: list[dict]) -> str:
             async with sem:
                 return await self._summarize_turn(turn)
+
+        if len(turns) == 1:
+            # Only one turn — if it has no tool calls there is nothing to drop.
+            if len(turns[0]) <= 1:
+                return 0, 0
+            # Summarize the in-progress work and restart from the user message.
+            summary = await _summarize_limited(turns[0])
+            summary_msg = {"role": "system", "content": f"Prior work summary:\n{summary}"}
+            user_msg = turns[0][0]
+            old_len = len(self._messages)
+            self._messages = system + [summary_msg, user_msg]
+            return old_len - len(self._messages), 1
+
+        prior_turns = turns[:-1]
+        current_turn = turns[-1]
 
         summaries = await asyncio.gather(*[_summarize_limited(t) for t in prior_turns])
         combined = "\n".join(f"Turn {i + 1}: {s}" for i, s in enumerate(summaries))
