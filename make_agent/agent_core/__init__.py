@@ -19,6 +19,7 @@ from .bridge import (
     TurnStarted,
 )
 from .constants import (
+    DEFAULT_COMPACT_MODE,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
@@ -32,6 +33,7 @@ from .loop import AgentConfig, AgenticLoop, CallBack, CompactCallback, MessageCa
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 
 __all__ = [
+    "DEFAULT_COMPACT_MODE",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_MAX_TOKENS",
     "DEFAULT_MAX_TOOL_OUTPUT",

@@ -268,3 +268,142 @@ class TestCompactRetry:
             async for _ in manager.astream_events(session_id, "hello"):
                 pass
 
+
+# ── _smart_compact() unit tests ───────────────────────────────────────────────
+
+
+class TestSmartCompact:
+    def _make_summarizing_loop(self, summary_text: str = "summary") -> AgenticLoop:
+        """Loop whose provider returns *summary_text* for every summarization call."""
+        call_count = 0
+
+        class _FakeProvider:
+            async def astream(self, *a, **kw):
+                nonlocal call_count
+                call_count += 1
+                yield TextDelta(text=summary_text)
+
+        config = AgentConfig(
+            system_prompt="sys",
+            model="claude-3-5-haiku-20241022",
+            provider=_FakeProvider(),
+            compact_mode="summarize",
+        )
+        loop = AgenticLoop(config, _make_tool_handler())
+        return loop
+
+    @pytest.mark.asyncio
+    async def test_complete_turns_replaced_by_summary(self):
+        loop = self._make_summarizing_loop("did stuff")
+        loop._messages.extend([
+            _user("t1"), _assistant("r1"),
+            _user("t2"), _assistant("r2"),
+            _user("current"),
+        ])
+        dropped, summarized = await loop._smart_compact()
+        assert summarized == 2
+        assert dropped > 0
+        sys_msgs = [m for m in loop._messages if m.get("role") == "system"]
+        summary_msgs = [m for m in sys_msgs if "Prior conversation summary" in m.get("content", "")]
+        assert len(summary_msgs) == 1
+        assert "Turn 1" in summary_msgs[0]["content"]
+        assert "Turn 2" in summary_msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_current_user_turn_preserved(self):
+        loop = self._make_summarizing_loop()
+        loop._messages.extend([
+            _user("old"), _assistant("old reply"),
+            _user("current question"),
+        ])
+        await loop._smart_compact()
+        non_sys = [m for m in loop._messages if m.get("role") != "system"]
+        assert non_sys[-1] == _user("current question")
+
+    @pytest.mark.asyncio
+    async def test_system_messages_preserved(self):
+        loop = self._make_summarizing_loop()
+        loop._messages.extend([
+            _user("a"), _assistant("b"),
+            _user("c"),
+        ])
+        await loop._smart_compact()
+        sys_msgs = [m for m in loop._messages if m.get("content") == "sys"]
+        assert len(sys_msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_complete_turns_returns_zero(self):
+        loop = self._make_summarizing_loop()
+        loop._messages.append(_user("only current"))
+        dropped, summarized = await loop._smart_compact()
+        assert dropped == 0
+        assert summarized == 0
+
+    @pytest.mark.asyncio
+    async def test_summaries_fetched_in_parallel(self):
+        """All summarization calls should happen concurrently (gathered)."""
+        call_order: list[int] = []
+        gates = [asyncio.Event(), asyncio.Event()]
+
+        class _OrderingProvider:
+            def __init__(self):
+                self._idx = 0
+
+            async def astream(self, model, messages, *a, **kw):
+                idx = self._idx
+                self._idx += 1
+                call_order.append(idx)
+                yield TextDelta(text=f"summary-{idx}")
+
+        config = AgentConfig(
+            system_prompt="",
+            model="test",
+            provider=_OrderingProvider(),
+            compact_mode="summarize",
+        )
+        loop = AgenticLoop(config, _make_tool_handler())
+        loop._messages.extend([
+            _user("t1"), _assistant("r1"),
+            _user("t2"), _assistant("r2"),
+            _user("t3"), _assistant("r3"),
+            _user("current"),
+        ])
+        dropped, summarized = await loop._smart_compact()
+        assert summarized == 3
+        assert len(call_order) == 3
+
+    @pytest.mark.asyncio
+    async def test_smart_compact_triggered_on_context_exceeded(self):
+        """compact_mode='summarize' is dispatched on context overflow."""
+        call_count = 0
+
+        class _FakeProvider:
+            async def astream(self, *a, **kw):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    yield ContextExceededChunk()
+                    return
+                yield TextDelta(text="recovered")
+
+        config = AgentConfig(
+            system_prompt="sys",
+            model="claude-3-5-haiku-20241022",
+            provider=_FakeProvider(),
+            compact_mode="summarize",
+        )
+        manager = AgentManager(_make_tool_handler())
+        sid = manager.create_session(config)
+        loop = manager.get_agent(sid)
+        loop._messages.extend([_user("a"), _assistant("b")])
+
+        events = []
+        async for event in manager.astream_events(sid, "hello"):
+            events.append(event)
+
+        compact_events = [e for e in events if isinstance(e, CompactEvent)]
+        done_events = [e for e in events if isinstance(e, DoneEvent)]
+        assert len(compact_events) == 1
+        assert len(done_events) == 1
+        assert done_events[0].content == "recovered"
+

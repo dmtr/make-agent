@@ -13,6 +13,8 @@ from typing import Any, AsyncGenerator, AsyncIterator, NamedTuple
 from make_agent.protocols import ToolHandlerProtocol
 
 from .constants import (
+    COMPACT_SUMMARY_MAX_TOKENS,
+    DEFAULT_COMPACT_MODE,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
@@ -159,6 +161,7 @@ class AgentConfig(NamedTuple):
     project_dir: Path = Path()
     use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE
     provider: Any = None  # Provider | None; resolved via provider_for(model) when None
+    compact_mode: str = DEFAULT_COMPACT_MODE  # "drop" | "summarize"
 
 
 def _parse_item(doc: Any) -> list[_ToolCall] | None:
@@ -210,6 +213,7 @@ class AgenticLoop:
         self._tool_handler = tool_handler
         self._config = config
         self._provider: Provider = config.provider if config.provider is not None else provider_for(config.model)
+        self._compact_mode: str = config.compact_mode
         self._messages: list[dict] = []
         self._turn_count: int = 0
         self._gen: AsyncGenerator[CallBack, None] | None = None
@@ -319,7 +323,10 @@ class AgenticLoop:
                         f"aborted: context window exceeded after {MAX_COMPACT_RETRIES} compact attempts"
                     )
                 self._messages = snapshot
-                dropped, kept = self.compact_history()
+                if self._compact_mode == "summarize":
+                    dropped, kept = await self._smart_compact()
+                else:
+                    dropped, kept = self.compact_history()
                 if dropped == 0:
                     raise RuntimeError("aborted: context window exceeded and no messages can be compacted")
                 compact_attempts += 1
@@ -477,6 +484,71 @@ class AgenticLoop:
         old_len = len(self._messages)
         self._messages = system + kept
         return old_len - len(self._messages), keep
+
+    async def _summarize_turn(self, msgs: list[dict]) -> str:
+        """Ask the LLM for a one-paragraph summary of a single conversation turn."""
+        lines: list[str] = []
+        for msg in msgs:
+            role = msg.get("role", "")
+            content = str(msg.get("content") or "")
+            if role == "user":
+                lines.append(f"User: {content}")
+            elif role == "assistant":
+                tool_calls = msg.get("tool_calls") or []
+                if tool_calls:
+                    names = ", ".join(tc.get("function", {}).get("name", "?") for tc in tool_calls)
+                    lines.append(f"Assistant called tools: {names}")
+                if content:
+                    lines.append(f"Assistant: {content}")
+            elif role == "tool":
+                lines.append(f"Tool result: {content[:300]}")
+
+        prompt = (
+            "Summarize the following conversation turn in one concise paragraph. "
+            "Focus on what was asked, what actions were taken, and any key outcomes or decisions.\n\n"
+            + "\n".join(lines)
+        )
+        parts: list[str] = []
+        async for chunk in self._provider.astream(
+            self._model,
+            [{"role": "user", "content": prompt}],
+            [],
+            COMPACT_SUMMARY_MAX_TOKENS,
+            use_prompt_cache=False,
+            reasoning_effort=self._reasoning_effort,
+        ):
+            if isinstance(chunk, TextDelta):
+                parts.append(chunk.text)
+        return "".join(parts).strip()
+
+    async def _smart_compact(self) -> tuple[int, int]:
+        """Summarize all complete turns in parallel and replace them with a combined
+        summary system message. The current (unanswered) user turn is preserved.
+        Returns ``(messages_dropped, turns_summarized)``.
+        """
+        system = [m for m in self._messages if m.get("role") == "system"]
+        non_system = [m for m in self._messages if m.get("role") != "system"]
+
+        turns: list[list[dict]] = []
+        for msg in non_system:
+            if msg.get("role") == "user":
+                turns.append([msg])
+            elif turns:
+                turns[-1].append(msg)
+
+        complete = [t for t in turns if len(t) > 1]
+        incomplete = [m for t in turns if len(t) == 1 for m in t]
+
+        if not complete:
+            return 0, 0
+
+        summaries = await asyncio.gather(*[self._summarize_turn(t) for t in complete])
+        combined = "\n".join(f"Turn {i + 1}: {s}" for i, s in enumerate(summaries))
+        summary_msg = {"role": "system", "content": f"Prior conversation summary:\n{combined}"}
+
+        old_len = len(self._messages)
+        self._messages = system + [summary_msg] + incomplete
+        return old_len - len(self._messages), len(complete)
 
     async def arun(self, user_input: str) -> str:
         """Send *user_input* to the LLM and return the assistant's final reply.
