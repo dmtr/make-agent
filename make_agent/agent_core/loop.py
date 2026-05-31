@@ -522,8 +522,9 @@ class AgenticLoop:
         return "".join(parts).strip()
 
     async def _smart_compact(self) -> tuple[int, int]:
-        """Summarize all complete turns in parallel and replace them with a combined
-        summary system message. The current (unanswered) user turn is preserved.
+        """Summarize all prior turns in parallel and replace them with a combined
+        summary system message. The last (current) turn is always preserved wholesale,
+        whether or not it contains tool calls.
         Returns ``(messages_dropped, turns_summarized)``.
         """
         system = [m for m in self._messages if m.get("role") == "system"]
@@ -536,19 +537,19 @@ class AgenticLoop:
             elif turns:
                 turns[-1].append(msg)
 
-        complete = [t for t in turns if len(t) > 1]
-        incomplete = [m for t in turns if len(t) == 1 for m in t]
-
-        if not complete:
+        if len(turns) <= 1:
             return 0, 0
 
-        summaries = await asyncio.gather(*[self._summarize_turn(t) for t in complete])
+        prior_turns = turns[:-1]
+        current_turn = turns[-1]
+
+        summaries = await asyncio.gather(*[self._summarize_turn(t) for t in prior_turns])
         combined = "\n".join(f"Turn {i + 1}: {s}" for i, s in enumerate(summaries))
         summary_msg = {"role": "system", "content": f"Prior conversation summary:\n{combined}"}
 
         old_len = len(self._messages)
-        self._messages = system + [summary_msg] + incomplete
-        return old_len - len(self._messages), len(complete)
+        self._messages = system + [summary_msg] + current_turn
+        return old_len - len(self._messages), len(prior_turns)
 
     async def arun(self, user_input: str) -> str:
         """Send *user_input* to the LLM and return the assistant's final reply.

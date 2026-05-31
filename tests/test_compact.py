@@ -373,6 +373,26 @@ class TestSmartCompact:
         assert len(call_order) == 3
 
     @pytest.mark.asyncio
+    async def test_current_turn_with_tool_calls_preserved(self):
+        """Current turn containing tool calls is preserved wholesale, not summarized."""
+        loop = self._make_summarizing_loop("summary")
+        tool_msg = {"role": "tool", "tool_call_id": "c1", "content": "result"}
+        assistant_tool = {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "run", "arguments": "{}"}}]}
+        loop._messages.extend([
+            _user("old"), _assistant("old reply"),
+            _user("current"), assistant_tool, tool_msg,
+        ])
+        dropped, summarized = await loop._smart_compact()
+        # Only the prior "old" turn should be summarized.
+        assert summarized == 1
+        assert dropped > 0
+        # The current turn (user + tool call + tool result) must all survive.
+        non_sys = [m for m in loop._messages if m.get("role") not in ("system",)]
+        assert non_sys[0] == _user("current")
+        assert non_sys[1] == assistant_tool
+        assert non_sys[2] == tool_msg
+
+    @pytest.mark.asyncio
     async def test_smart_compact_triggered_on_context_exceeded(self):
         """compact_mode='summarize' is dispatched on context overflow."""
         call_count = 0
