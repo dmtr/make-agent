@@ -403,6 +403,27 @@ class TestSmartCompact:
         assert summarized == 0
 
     @pytest.mark.asyncio
+    async def test_previous_summaries_not_accumulated(self):
+        """Calling _smart_compact twice should replace the old summary, not stack them."""
+        loop = self._make_summarizing_loop("summary")
+        loop._messages.extend([
+            _user("t1"), _assistant("r1"),
+            _user("current"),
+        ])
+        await loop._smart_compact()
+        # Simulate another round: add more turns and compact again.
+        loop._messages.extend([_assistant("r2"), _user("t3"), _assistant("r3"), _user("next")])
+        await loop._smart_compact()
+
+        sys_msgs = [m for m in loop._messages if m.get("role") == "system"]
+        summary_count = sum(
+            1 for m in sys_msgs
+            if "Prior conversation summary" in m.get("content", "")
+            or "Prior work summary" in m.get("content", "")
+        )
+        assert summary_count == 1, f"Expected 1 summary, got {summary_count}"
+
+    @pytest.mark.asyncio
     async def test_current_turn_with_tool_calls_preserved(self):
         """Current turn containing tool calls is preserved wholesale, not summarized."""
         loop = self._make_summarizing_loop("summary")

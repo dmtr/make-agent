@@ -522,6 +522,9 @@ class AgenticLoop:
                 parts.append(chunk.text)
         return "".join(parts).strip()
 
+    # Sentinel prefix used to identify injected compact summaries.
+    _COMPACT_SUMMARY_PREFIX = ("Prior conversation summary:", "Prior work summary:")
+
     async def _smart_compact(self) -> tuple[int, int]:
         """Summarize prior turns in parallel and replace them with a combined summary
         system message. The last (current) turn is always preserved wholesale.
@@ -530,9 +533,19 @@ class AgenticLoop:
         summarize it in-place and restart from just the user message so the agent
         can retry with context of what was done.
 
+        Previously injected summary messages are stripped before each compact so
+        they do not accumulate across multiple compaction cycles.
+
         Returns ``(messages_dropped, turns_summarized)``.
         """
-        system = [m for m in self._messages if m.get("role") == "system"]
+        def _is_injected_summary(msg: dict) -> bool:
+            if msg.get("role") != "system":
+                return False
+            content = msg.get("content", "")
+            return any(content.startswith(p) for p in self._COMPACT_SUMMARY_PREFIX)
+
+        # Keep only original system messages; drop previously injected summaries.
+        system = [m for m in self._messages if m.get("role") == "system" and not _is_injected_summary(m)]
         non_system = [m for m in self._messages if m.get("role") != "system"]
 
         turns: list[list[dict]] = []
