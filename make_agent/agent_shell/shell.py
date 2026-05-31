@@ -747,6 +747,8 @@ class MakeAgentShell:
                     turn.tokens = stats["total_tokens"] - self._state.total_tokens
                     self._state.total_tokens = stats["total_tokens"]
                 self._state.finish_turn(turn)
+                if self._state.current_alert and self._state.current_alert.level == "COMPACT":
+                    self._state.current_alert = None
                 self._refresh()
                 break
 
