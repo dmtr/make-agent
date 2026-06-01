@@ -128,7 +128,9 @@ class ApprovalCard:
             mark = "✓" if self.resolved else "✗"
             word = "approved" if self.resolved else "denied"
             return f"  {mark} {self.skill_name}/{self.target} {word}"
-        args_repr = ", ".join(f"{k}={v!r}" for k, v in self.kwargs.items())[:38]
+        # Ensure kwargs is a dict before calling .items()
+        kwargs_dict = self.kwargs if isinstance(self.kwargs, dict) else {}
+        args_repr = ", ".join(f"{k}={v!r}" for k, v in kwargs_dict.items())[:38]
         width = 44
         pad = width - 2
         return "\n".join([
@@ -421,7 +423,9 @@ class MakeAgentShell:
             card = state.pending_approval
             if card is None:
                 return [("class:hint.approval", "  [Y] approve   [N] deny")]
-            args_repr = ", ".join(f"{k}={v!r}" for k, v in (card.kwargs or {}).items())[:60]
+            # Ensure kwargs is a dict before calling .items()
+            kwargs_dict = card.kwargs if isinstance(card.kwargs, dict) else {}
+            args_repr = ", ".join(f"{k}={v!r}" for k, v in kwargs_dict.items())[:60]
             call = f"{card.skill_name}/{card.target}({args_repr})"
             return [
                 ("class:hint.approval", "  [Y] approve   [N] deny"),
