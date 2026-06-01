@@ -421,7 +421,7 @@ class MakeAgentShell:
             card = state.pending_approval
             if card is None:
                 return [("class:hint.approval", "  [Y] approve   [N] deny")]
-            args_repr = ", ".join(f"{k}={v!r}" for k, v in card.kwargs.items())[:60]
+            args_repr = ", ".join(f"{k}={v!r}" for k, v in (card.kwargs or {}).items())[:60]
             call = f"{card.skill_name}/{card.target}({args_repr})"
             return [
                 ("class:hint.approval", "  [Y] approve   [N] deny"),
