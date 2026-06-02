@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, AsyncIterator, NamedTuple
 
 from make_agent.protocols import ToolHandlerProtocol
+from make_agent.provider import ContextExceededChunk, Provider, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta, provider_for
 
 from .constants import (
     COMPACT_SUMMARY_MAX_TOKENS,
@@ -28,7 +29,6 @@ from .constants import (
     MAX_RUN_SECONDS_PER_REQUEST,
     MAX_TOOL_CALLS_PER_REQUEST,
 )
-from make_agent.provider import ContextExceededChunk, Provider, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta, provider_for
 
 logger = logging.getLogger(__name__)
 
@@ -320,9 +320,7 @@ class AgenticLoop:
 
             if context_exceeded:
                 if compact_attempts >= MAX_COMPACT_RETRIES:
-                    raise RuntimeError(
-                        f"aborted: context window exceeded after {MAX_COMPACT_RETRIES} compact attempts"
-                    )
+                    raise RuntimeError(f"aborted: context window exceeded after {MAX_COMPACT_RETRIES} compact attempts")
                 self._messages = snapshot
                 if self._compact_mode == "summarize":
                     dropped, kept = await self._smart_compact()
@@ -333,7 +331,10 @@ class AgenticLoop:
                 compact_attempts += 1
                 logger.warning(
                     "[compact] context exceeded — dropped %d messages, kept %d turns (attempt %d/%d)",
-                    dropped, kept, compact_attempts, MAX_COMPACT_RETRIES,
+                    dropped,
+                    kept,
+                    compact_attempts,
+                    MAX_COMPACT_RETRIES,
                 )
                 yield CompactCallback(attempt=compact_attempts, messages_dropped=dropped, turns_kept=kept)
                 continue
@@ -396,7 +397,7 @@ class AgenticLoop:
                         arguments = json.loads(tc.function.arguments)
                     except json.JSONDecodeError as e:
                         error_output = self._tool_handler.get_tool_result("", f"malformed JSON arguments: {e}", None).output
-                        logger.error("[tool_result] %s -> %s", target, error_output)
+                        logger.error("[tool_result] %s -> %s, arguments %s", target, error_output, tc.function.arguments)
                         self._messages.append(
                             {
                                 "role": "tool",
@@ -506,8 +507,7 @@ class AgenticLoop:
 
         prompt = (
             "Summarize the following conversation turn in one concise paragraph. "
-            "Focus on what was asked, what actions were taken, and any key outcomes or decisions.\n\n"
-            + "\n".join(lines)
+            "Focus on what was asked, what actions were taken, and any key outcomes or decisions.\n\n" + "\n".join(lines)
         )
         parts: list[str] = []
         async for chunk in self._provider.astream(
@@ -538,6 +538,7 @@ class AgenticLoop:
 
         Returns ``(messages_dropped, turns_summarized)``.
         """
+
         def _is_injected_summary(msg: dict) -> bool:
             if msg.get("role") != "system":
                 return False
