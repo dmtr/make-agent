@@ -1,3 +1,7 @@
+"""HTML conversation export helpers."""
+
+from __future__ import annotations
+
 import html as _html
 from datetime import datetime
 from pathlib import Path
@@ -45,7 +49,11 @@ def _render_html(messages: list[dict], model: str) -> str:
     esc = _html.escape
 
     # Pre-index tool results by tool_call_id for O(1) lookup.
-    tool_results: dict[str, str] = {msg["tool_call_id"]: msg.get("content", "") for msg in messages if msg.get("role") == "tool"}
+    tool_results: dict[str, str] = {
+        msg["tool_call_id"]: msg.get("content", "")
+        for msg in messages
+        if msg.get("role") == "tool"
+    }
 
     parts: list[str] = []
     for msg in messages:
@@ -53,11 +61,19 @@ def _render_html(messages: list[dict], model: str) -> str:
 
         if role == "system":
             content = esc(msg.get("content", ""))
-            parts.append(f'<div class="msg system">' f'<div class="label">System prompt</div>' f'<div class="bubble">{content}</div></div>')
+            parts.append(
+                f'<div class="msg system">'
+                f'<div class="label">System prompt</div>'
+                f'<div class="bubble">{content}</div></div>'
+            )
 
         elif role == "user":
             content = esc(msg.get("content", ""))
-            parts.append(f'<div class="msg user">' f'<div class="label">You</div>' f'<div class="bubble">{content}</div></div>')
+            parts.append(
+                f'<div class="msg user">'
+                f'<div class="label">You</div>'
+                f'<div class="bubble">{content}</div></div>'
+            )
 
         elif role == "assistant":
             tool_calls = msg.get("tool_calls") or []
@@ -78,7 +94,10 @@ def _render_html(messages: list[dict], model: str) -> str:
             if content:
                 inner.append(f'<div class="bubble">{content}</div>')
             if inner:
-                parts.append('<div class="msg assistant">' '<div class="label">Assistant</div>' + "".join(inner) + "</div>")
+                parts.append(
+                    '<div class="msg assistant">'
+                    '<div class="label">Assistant</div>' + "".join(inner) + "</div>"
+                )
 
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     body = "\n".join(parts)

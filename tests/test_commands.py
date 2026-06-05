@@ -1,6 +1,6 @@
 """Tests for HTML conversation export helpers."""
 
-from make_agent.commands import _render_html
+from make_agent.agent_core import _render_html
 
 
 def test_render_html_escapes_model_name():

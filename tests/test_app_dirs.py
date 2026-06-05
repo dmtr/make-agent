@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-
 import make_agent.app_dirs as app_dirs
 
 
@@ -21,7 +20,6 @@ class TestProjectSlug:
 
     def test_uses_cwd_when_no_argument(self, monkeypatch):
         monkeypatch.chdir("/")
-        # os.getcwd() returns "/" — slug should be empty string (stripped)
         slug = app_dirs.project_slug()
         assert isinstance(slug, str)
 
@@ -46,7 +44,19 @@ class TestProjectDir:
     def test_idempotent_when_dir_already_exists(self, tmp_path):
         with patch.object(app_dirs, "_APP_HOME", tmp_path):
             app_dirs.project_dir("/a/b")
-            result = app_dirs.project_dir("/a/b")  # second call should not raise
+            result = app_dirs.project_dir("/a/b")
+        assert result.is_dir()
+
+
+class TestModeDir:
+    def test_returns_mode_subdirectory(self, tmp_path):
+        with patch.object(app_dirs, "_APP_HOME", tmp_path):
+            result = app_dirs.mode_dir("python", "/proj/foo")
+        assert result == tmp_path / "proj_foo" / "python"
+
+    def test_creates_mode_directory(self, tmp_path):
+        with patch.object(app_dirs, "_APP_HOME", tmp_path):
+            result = app_dirs.mode_dir("makefile", "/proj/foo")
         assert result.is_dir()
 
 
@@ -65,6 +75,30 @@ class TestDefaultAgentsDir:
         with patch.object(app_dirs, "_APP_HOME", tmp_path):
             result = app_dirs.default_agents_dir("/proj/foo")
         assert isinstance(result, str)
+
+
+class TestDefaultSkillsDir:
+    def test_returns_mode_skills_subdirectory(self, tmp_path):
+        with patch.object(app_dirs, "_APP_HOME", tmp_path):
+            result = app_dirs.default_skills_dir("python", "/proj/foo")
+        assert result == tmp_path / "proj_foo" / "python" / "skills"
+
+    def test_creates_skills_directory(self, tmp_path):
+        with patch.object(app_dirs, "_APP_HOME", tmp_path):
+            result = app_dirs.default_skills_dir("makefile", "/proj/foo")
+        assert result.is_dir()
+
+    def test_returns_path(self, tmp_path):
+        with patch.object(app_dirs, "_APP_HOME", tmp_path):
+            result = app_dirs.default_skills_dir("python", "/proj/foo")
+        assert isinstance(result, Path)
+
+
+class TestModeMemoryPath:
+    def test_returns_mode_memory_path(self, tmp_path):
+        with patch.object(app_dirs, "_APP_HOME", tmp_path):
+            result = app_dirs.mode_memory_path("python", "/proj/bar")
+        assert result == tmp_path / "proj_bar" / "python" / "memory.db"
 
 
 class TestLogFile:

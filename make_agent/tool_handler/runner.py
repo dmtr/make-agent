@@ -1,8 +1,4 @@
-"""Tool schema builder and executor for the make-agent.
-
-Converts parsed Makefile rules into tool definitions and
-executes them by invoking ``make`` with parameters injected via the subprocess
-environment.
+"""Tool schema builders, subprocess runner, and execution result type.
 
 Parameter injection
 -------------------
@@ -34,7 +30,6 @@ from make_agent.parser import Makefile, Param
 
 logger = logging.getLogger(__name__)
 
-
 _VALID_MAKE_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -47,14 +42,52 @@ def _is_valid_make_var_name(name: str) -> bool:
     return bool(_VALID_MAKE_VAR_NAME_RE.fullmatch(name))
 
 
-def get_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output: int = 0) -> ToolExecutionResult:
-    """
+def _param_schema(p: Param) -> dict[str, str]:
+    """Return the JSON Schema fragment for a single tool parameter."""
+    json_type = (
+        p.type if p.type in ("string", "number", "integer", "boolean") else "string"
+    )
+    return {"type": json_type, "description": p.description}
+
+
+def build_tools(makefile: Makefile) -> list[dict[str, Any]]:
+    """Return a list of OpenAI function-tool dicts for every rule that has a
+    ``# <tool>`` description block."""
+    tools = []
+    for rule in makefile.rules:
+        if rule.description is None:
+            continue
+        properties = {p.name: _param_schema(p) for p in rule.params}
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": rule.target,
+                    "description": rule.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": [p.name for p in rule.params],
+                    },
+                },
+            }
+        )
+    return tools
+
+
+def get_tool_result(
+    stdout: str, stderr: str, exit_code: int | None, max_output: int = 0
+) -> ToolExecutionResult:
+    """Build a :class:`ToolExecutionResult` from raw subprocess output.
+
     *max_output* limits how many characters of the final combined output are kept.
     When the combined output exceeds that limit, the excess is dropped and a
     truncation notice is included within the limit.  ``0`` means no limit.
     """
     result = []
-    is_error = (exit_code != 0 if exit_code is not None else True) or bool(stderr.strip())
+    is_error = (exit_code != 0 if exit_code is not None else True) or bool(
+        stderr.strip()
+    )
     is_stdout_empty = stdout.strip() == ""
 
     if is_error:
@@ -88,37 +121,6 @@ def get_tool_result(stdout: str, stderr: str, exit_code: int | None, max_output:
     return ToolExecutionResult(is_error=is_error, output=final_result)
 
 
-def _param_schema(p: Param) -> dict[str, str]:
-    """Return the JSON Schema fragment for a single tool parameter."""
-    json_type = p.type if p.type in ("string", "number", "integer", "boolean") else "string"
-    return {"type": json_type, "description": p.description}
-
-
-def build_tools(makefile: Makefile) -> list[dict[str, Any]]:
-    """Return a list of OpenAI function-tool dicts for every rule that has a
-    ``# <tool>`` description block."""
-    tools = []
-    for rule in makefile.rules:
-        if rule.description is None:
-            continue
-        properties = {p.name: _param_schema(p) for p in rule.params}
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": rule.target,
-                    "description": rule.description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": properties,
-                        "required": [p.name for p in rule.params],
-                    },
-                },
-            }
-        )
-    return tools
-
-
 async def run_tool(
     target: str,
     arguments: dict[str, Any],
@@ -140,7 +142,11 @@ async def run_tool(
         if not _is_valid_make_var_name(k):
             return get_tool_result("", f"{k!r} is not a valid make variable name", None)
         if k in os.environ:
-            return get_tool_result("", f"argument {k!r} shadows the system environment variable {k!r}", None)
+            return get_tool_result(
+                "",
+                f"argument {k!r} shadows the system environment variable {k!r}",
+                None,
+            )
 
     env = {**os.environ, **{k: str(v) for k, v in arguments.items()}}
     cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target]

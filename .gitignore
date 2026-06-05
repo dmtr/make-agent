@@ -11,5 +11,8 @@ wheels/
 
 .claude
 .agents
+.skills
 *.log
 docs/
+.todo_config.json
+conversation-*.html

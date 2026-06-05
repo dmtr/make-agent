@@ -1,320 +1,402 @@
-"""Tests for make_agent/builtin_tools.py."""
+"""Tests for skill modules, skill backends, and file tools."""
 
 from __future__ import annotations
 
-import textwrap
+import os
+from unittest.mock import MagicMock, patch
 
 import pytest
-from make_agent.builtin_tools import (
-    BUILTIN_SCHEMAS,
-    _agent_description,
-    _RunAgent,
-    _valid_agent_name,
-    create_agent,
-    get_builtin_tools,
-    list_agent,
-    run_agent,
-    validate_agent,
+from make_agent.builtin_tools import builtin_tool_names
+from make_agent.builtin_tools.file_tools import FILE_SCHEMAS, edit_file, write_file
+from make_agent.builtin_tools.skill_tools import SKILL_SCHEMAS as MAKEFILE_SKILL_SCHEMAS
+from make_agent.builtin_tools.skill_tools import (
+    _valid_skill_name,
+    create_skill,
+    execute_skill,
+    list_skills,
+    read_skill,
+    validate_skill,
 )
+from make_agent.skill_backend import MakefileSkillBackend
 
-# ── _valid_agent_name ─────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("name", ["file-search", "agent1", "my.agent", "A_B"])
-def test_valid_agent_name_accepts_valid(name):
-    assert _valid_agent_name(name) is True
-
-
-@pytest.mark.parametrize("name", ["", "-bad", "../escape", "has space", "has/slash"])
-def test_valid_agent_name_rejects_invalid(name):
-    assert _valid_agent_name(name) is False
-
-
-# ── _agent_description ───────────────────────────────────────────────────────
-
-_AGENT_MK = """\
-define SYSTEM_PROMPT
-You are a file specialist.
+_SKILL_MK = """\
+define DESCRIPTION
+Read and write files on the filesystem
 endef
 
 .PHONY: read-file write-file
 
-# <tool>
-# Read the contents of a file.
-# @param PATH string The file path
-# </tool>
 read-file:
-\t@cat "$(PATH)"
+@cat "$$FILE"
 
-# <tool>
-# Write content to a file.
-# @param PATH string The destination path
-# @param CONTENT string The content to write
-# </tool>
 write-file:
-\t@printf '%s' "$$CONTENT" > "$(PATH)"
+@printf '%s' "$$CONTENT" > "$$FILE"
 """
 
 
-def test_agent_description_returns_description(tmp_path):
-    mk = tmp_path / "agent.mk"
-    mk.write_text("define DESCRIPTION\nA file specialist.\nendef\n")
-    result = _agent_description(mk)
-    assert "A file specialist." in result
+@pytest.mark.parametrize("name", ["file-search", "skill1", "my.skill", "A_B"])
+def test_valid_skill_name_accepts_valid(name):
+    assert _valid_skill_name(name) is True
 
 
-def test_agent_description_no_description(tmp_path):
-    mk = tmp_path / "agent.mk"
-    mk.write_text(_AGENT_MK)
-    result = _agent_description(mk)
-    assert "(no description)" in result
+@pytest.mark.parametrize("name", ["", "-bad", "../escape", "has space", "has/slash"])
+def test_valid_skill_name_rejects_invalid(name):
+    assert _valid_skill_name(name) is False
 
 
-def test_agent_description_parse_error(tmp_path):
-    mk = tmp_path / "bad.mk"
-    mk.write_text("")
-    result = _agent_description(mk)
-    assert isinstance(result, str)
+def test_list_skills_missing_dir(tmp_path):
+    result = list_skills(str(tmp_path / "nonexistent"))
+    assert "No skills found" in result
 
 
-# ── list_agent ────────────────────────────────────────────────────────────────
+def test_list_skills_empty_dir(tmp_path):
+    result = list_skills(str(tmp_path))
+    assert "No skills found" in result
 
 
-def test_list_agent_missing_dir(tmp_path):
-    result = list_agent(str(tmp_path / "nonexistent"))
-    assert "No agents found" in result
-
-
-def test_list_agent_empty_dir(tmp_path):
-    result = list_agent(str(tmp_path))
-    assert "No agents found" in result
-
-
-def test_list_agent_returns_agents(tmp_path):
-    (tmp_path / "search.mk").write_text("define DESCRIPTION\nSearches files by pattern.\nendef\n")
-    (tmp_path / "writer.mk").write_text("define DESCRIPTION\nWrites and edits files.\nendef\n")
-    result = list_agent(str(tmp_path))
+def test_list_skills_returns_skills(tmp_path):
+    (tmp_path / "search").mkdir()
+    (tmp_path / "search" / "skill.mk").write_text(
+        "define DESCRIPTION\nSearches files by pattern.\nendef\n\nsearch:\n\t@echo hi\n"
+    )
+    (tmp_path / "writer").mkdir()
+    (tmp_path / "writer" / "skill.mk").write_text(
+        "define DESCRIPTION\nWrites and edits files.\nendef\n\nwrite:\n\t@echo hi\n"
+    )
+    result = list_skills(str(tmp_path))
     assert "search:" in result
     assert "Searches files by pattern." in result
     assert "writer:" in result
     assert "Writes and edits files." in result
 
 
-def test_list_agent_sorted(tmp_path):
-    (tmp_path / "zzz.mk").write_text("define DESCRIPTION\nZ agent.\nendef\n")
-    (tmp_path / "aaa.mk").write_text("define DESCRIPTION\nA agent.\nendef\n")
-    result = list_agent(str(tmp_path))
+def test_list_skills_sorted(tmp_path):
+    (tmp_path / "zzz").mkdir()
+    (tmp_path / "zzz" / "skill.mk").write_text("define DESCRIPTION\nZ skill.\nendef\n")
+    (tmp_path / "aaa").mkdir()
+    (tmp_path / "aaa" / "skill.mk").write_text("define DESCRIPTION\nA skill.\nendef\n")
+    result = list_skills(str(tmp_path))
     assert result.index("aaa:") < result.index("zzz:")
 
 
-def test_list_agent_excludes_current_agent(tmp_path):
-    (tmp_path / "me.mk").write_text("define DESCRIPTION\nSelf.\nendef\n")
-    (tmp_path / "other.mk").write_text("define DESCRIPTION\nOther.\nendef\n")
-    result = list_agent(str(tmp_path), current_agent="me")
-    assert "me:" not in result
-    assert "other:" in result
+def test_list_skills_no_description_fallback(tmp_path):
+    (tmp_path / "bare").mkdir()
+    (tmp_path / "bare" / "skill.mk").write_text("search:\n\t@echo hi\n")
+    result = list_skills(str(tmp_path))
+    assert "(no description)" in result
 
 
-def test_list_agent_no_agents_when_only_self(tmp_path):
-    (tmp_path / "me.mk").write_text("define DESCRIPTION\nSelf.\nendef\n")
-    result = list_agent(str(tmp_path), current_agent="me")
-    assert "No agents found" in result
-
-
-# ── validate_agent ────────────────────────────────────────────────────────────
-
-
-def test_validate_agent_ok(tmp_path):
-    (tmp_path / "ok.mk").write_text(_AGENT_MK)
-    result = validate_agent("ok", str(tmp_path))
-    assert result.startswith("OK")
-    assert "2 tool(s)" in result
-
-
-def test_validate_agent_not_found(tmp_path):
-    result = validate_agent("ghost", str(tmp_path))
+def test_read_skill_not_found(tmp_path):
+    result = read_skill("ghost", str(tmp_path))
     assert "not found" in result
 
 
-def test_validate_agent_invalid_name(tmp_path):
-    result = validate_agent("../evil", str(tmp_path))
+def test_read_skill_invalid_name(tmp_path):
+    result = read_skill("../evil", str(tmp_path))
     assert result.startswith("Error")
 
 
-def test_validate_agent_reports_errors(tmp_path):
-    # param declared but never used in recipe → validation error
-    bad_mk = textwrap.dedent(
-        """\
-        define SYSTEM_PROMPT
-        Bad agent.
-        endef
-
-        .PHONY: do-thing
-
-        # <tool>
-        # Do something.
-        # @param UNUSED string Not referenced
-        # </tool>
-        do-thing:
-        \t@echo hello
-    """
-    )
-    (tmp_path / "bad.mk").write_text(bad_mk)
-    result = validate_agent("bad", str(tmp_path))
-    assert "Validation errors" in result
-    assert "UNUSED" in result
+def test_read_skill_missing_skill_mk(tmp_path):
+    (tmp_path / "broken").mkdir()
+    result = read_skill("broken", str(tmp_path))
+    assert "missing skill.mk" in result
 
 
-def test_validate_agent_no_tools(tmp_path):
-    # Makefile has a rule but no # <tool> annotations
-    no_tools_mk = textwrap.dedent(
-        """\
-        define SYSTEM_PROMPT
-        I do things.
-        endef
-
-        search:
-        \t@echo searching
-    """
-    )
-    (tmp_path / "notool.mk").write_text(no_tools_mk)
-    result = validate_agent("notool", str(tmp_path))
-    assert "Validation errors" in result
-    assert "No tools defined" in result
+def test_read_skill_returns_raw_mk(tmp_path):
+    (tmp_path / "simple").mkdir()
+    (tmp_path / "simple" / "skill.mk").write_text(_SKILL_MK)
+    result = read_skill("simple", str(tmp_path))
+    assert "define DESCRIPTION" in result
+    assert "read-file" in result
 
 
+def test_execute_skill_invalid_name(tmp_path):
+    result = execute_skill("../evil", "make", str(tmp_path))
+    assert result.startswith("Error")
 
-def test_create_agent_writes_file(tmp_path):
-    result = create_agent("myagent", _AGENT_MK, "A file management agent.", str(tmp_path))
-    assert result.startswith("Created agent 'myagent'")
-    written = (tmp_path / "myagent.mk").read_text()
+
+def test_execute_skill_not_found(tmp_path):
+    result = execute_skill("ghost", "make", str(tmp_path))
+    assert "not found" in result
+
+
+def test_execute_skill_runs_default_target(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    fake_proc = MagicMock()
+    fake_proc.stdout = b"hello world\n"
+    fake_proc.stderr = b""
+    fake_proc.returncode = 0
+    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc) as mock_run:
+        result = execute_skill("full", "make", str(tmp_path))
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args.args[0]
+    assert "make" in call_args
+    assert result == "hello world"
+
+
+def test_execute_skill_runs_named_target(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    fake_proc = MagicMock()
+    fake_proc.stdout = b"hello world\n"
+    fake_proc.stderr = b""
+    fake_proc.returncode = 0
+    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc) as mock_run:
+        result = execute_skill("full", "make read-file", str(tmp_path))
+    call_args = mock_run.call_args.args[0]
+    assert "read-file" in call_args
+    assert result == "hello world"
+
+
+def test_execute_skill_leading_env_vars(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    fake_proc = MagicMock()
+    fake_proc.stdout = b"ok\n"
+    fake_proc.stderr = b""
+    fake_proc.returncode = 0
+    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc) as mock_run:
+        execute_skill("full", "FILE=/safe/f.txt make read-file", str(tmp_path))
+    call_kwargs = mock_run.call_args.kwargs
+    assert call_kwargs["env"]["FILE"] == "/safe/f.txt"
+    assert "read-file" in mock_run.call_args.args[0]
+
+
+def test_execute_skill_failed_target(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    fake_proc = MagicMock()
+    fake_proc.stdout = b""
+    fake_proc.stderr = b"make: *** No rule to make target 'bad-target'"
+    fake_proc.returncode = 2
+    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc):
+        result = execute_skill("full", "make bad-target", str(tmp_path))
+    assert "ERROR" in result
+
+
+def test_execute_skill_invalid_env_var_name(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    result = execute_skill("full", "bad-key=value make read-file", str(tmp_path))
+    assert result.startswith("Error")
+
+
+def test_execute_skill_empty_command(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    result = execute_skill("full", "", str(tmp_path))
+    assert result.startswith("Error")
+
+
+def test_execute_skill_rejects_forbidden_make_options(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    with patch("make_agent.builtin_tools.skill_tools.subprocess.run") as mock_run:
+        result = execute_skill("full", "make -f /tmp/evil.mk read-file", str(tmp_path))
+    assert result.startswith("Error")
+    assert "not allowed" in result
+    mock_run.assert_not_called()
+
+
+def test_create_skill_invalid_name(tmp_path):
+    result = create_skill("../evil", _SKILL_MK, str(tmp_path))
+    assert result.startswith("Error")
+
+
+def test_create_skill_success(tmp_path):
+    result = create_skill("myskill", _SKILL_MK, str(tmp_path))
+    assert result.startswith("Created skill 'myskill'")
+    written = (tmp_path / "myskill" / "skill.mk").read_text()
     assert "define DESCRIPTION" in written
-    assert "A file management agent." in written
-    assert "DISABLED_BUILTINS" in written
-    assert written.startswith("define  DISABLED_BUILTINS")
 
 
-def test_create_agent_disables_builtins_first(tmp_path):
-    result = create_agent("myagent", _AGENT_MK, "desc", str(tmp_path))
-    assert result.startswith("Created agent 'myagent'")
-    written = (tmp_path / "myagent.mk").read_text()
-    assert written.startswith("define  DISABLED_BUILTINS\nall\nendef")
+def test_create_skill_rejects_symlinked_skill_dir(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(outside, tmp_path / "myskill")
+    result = create_skill("myskill", _SKILL_MK, str(tmp_path))
+    assert result.startswith("Error")
+    assert not (outside / "skill.mk").exists()
 
 
-def test_create_agent_reports_tool_count(tmp_path):
-    result = create_agent("myagent", _AGENT_MK, "A file management agent.", str(tmp_path))
-    assert "2 tool(s)" in result
+def test_create_skill_missing_description_block(tmp_path):
+    no_desc = ".PHONY: do-thing\n\ndo-thing:\n\t@echo hello\n"
+    result = create_skill("nodesc", no_desc, str(tmp_path))
+    assert "DESCRIPTION" in result
+    assert not (tmp_path / "nodesc").exists()
 
 
-def test_create_agent_invalid_name(tmp_path):
-    result = create_agent("../evil", _AGENT_MK, "Evil agent.", str(tmp_path))
+def test_create_skill_invalid_makefile(tmp_path):
+    result = create_skill("bad", "define DESCRIPTION\nOK\nendef\n\n{{not valid make", str(tmp_path))
+    assert isinstance(result, str)
+
+
+def test_validate_skill_invalid_name(tmp_path):
+    result = validate_skill("../evil", str(tmp_path))
     assert result.startswith("Error")
 
 
-def test_create_agent_validation_error(tmp_path):
-    bad_mk = textwrap.dedent(
-        """\
-        define SYSTEM_PROMPT
-        Bad agent.
-        endef
-
-        .PHONY: do-thing
-
-        # <tool>
-        # Do something.
-        # @param UNUSED string Not referenced
-        # </tool>
-        do-thing:
-        \t@echo hello
-    """
-    )
-    result = create_agent("bad", bad_mk, "Bad agent.", str(tmp_path))
-    assert "Validation errors" in result
-    assert "UNUSED" in result
-    assert not (tmp_path / "bad.mk").exists()
+def test_validate_skill_not_found(tmp_path):
+    result = validate_skill("ghost", str(tmp_path))
+    assert "not found" in result
 
 
-def test_get_builtin_tools_create_agent_callable(tmp_path):
-    tools = get_builtin_tools(str(tmp_path))
-    result = tools["create_agent"](name="myagent", description="A file agent.", makefile=_AGENT_MK)
-    assert result.startswith("Created agent 'myagent'")
+def test_validate_skill_missing_mk(tmp_path):
+    (tmp_path / "broken").mkdir()
+    result = validate_skill("broken", str(tmp_path))
+    assert "missing skill.mk" in result
 
 
-# ── BUILTIN_SCHEMAS ───────────────────────────────────────────────────────────
+def test_validate_skill_ok(tmp_path):
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
+    result = validate_skill("full", str(tmp_path))
+    assert result.startswith("OK")
 
 
-def test_builtin_schemas_has_five_entries():
-    assert len(BUILTIN_SCHEMAS) == 4
+def test_validate_skill_missing_description(tmp_path):
+    no_desc = "search:\n\t@echo searching\n"
+    (tmp_path / "notool").mkdir()
+    (tmp_path / "notool" / "skill.mk").write_text(no_desc)
+    result = validate_skill("notool", str(tmp_path))
+    assert "DESCRIPTION" in result
 
 
-def test_builtin_schemas_names():
-    names = {s["function"]["name"] for s in BUILTIN_SCHEMAS}
-    assert names == {"list_agent", "validate_agent", "create_agent", "run_agent"}
+def test_makefile_skill_schemas_names():
+    names = {schema["function"]["name"] for schema in MAKEFILE_SKILL_SCHEMAS}
+    assert names == {"list_skills", "read_skill", "execute_skill", "create_skill", "validate_skill"}
 
 
-def test_builtin_schemas_are_function_type():
-    for schema in BUILTIN_SCHEMAS:
-        assert schema["type"] == "function"
+def test_makefile_skill_schemas_required_params():
+    by_name = {schema["function"]["name"]: schema["function"] for schema in MAKEFILE_SKILL_SCHEMAS}
+    assert by_name["list_skills"]["parameters"]["required"] == []
+    assert by_name["read_skill"]["parameters"]["required"] == ["name"]
+    assert set(by_name["execute_skill"]["parameters"]["required"]) == {"name", "command"}
+    assert set(by_name["create_skill"]["parameters"]["required"]) == {"name", "mk_content"}
+    assert by_name["validate_skill"]["parameters"]["required"] == ["name"]
 
 
-def test_builtin_schemas_required_params():
-    by_name = {s["function"]["name"]: s["function"] for s in BUILTIN_SCHEMAS}
-    assert by_name["list_agent"]["parameters"]["required"] == []
-    assert by_name["validate_agent"]["parameters"]["required"] == ["name"]
-    assert set(by_name["create_agent"]["parameters"]["required"]) == {"name", "description", "makefile"}
-    assert set(by_name["run_agent"]["parameters"]["required"]) == {"name", "prompt"}
+def test_file_schemas_structure():
+    assert len(FILE_SCHEMAS) == 2
+    names = {schema["function"]["name"] for schema in FILE_SCHEMAS}
+    assert names == {"write_file", "edit_file"}
+    by_name = {schema["function"]["name"]: schema["function"] for schema in FILE_SCHEMAS}
+    assert set(by_name["write_file"]["parameters"]["required"]) == {"path", "content"}
+    assert set(by_name["edit_file"]["parameters"]["required"]) == {"path", "old_text", "new_text"}
 
 
-# ── get_builtin_tools ─────────────────────────────────────────────────────────
-
-
-def test_get_builtin_tools_returns_all_four():
-    tools = get_builtin_tools(".agents")
-    assert set(tools.keys()) == {
-        "list_agent",
-        "validate_agent",
-        "create_agent",
-        "run_agent",
+def test_builtin_tool_names_makefile():
+    assert builtin_tool_names("makefile") == {
+        "list_skills",
+        "read_skill",
+        "execute_skill",
+        "create_skill",
+        "validate_skill",
+        "write_file",
+        "edit_file",
+        "search_user_memory",
+        "search_agent_memory",
+        "get_recent_messages",
     }
 
 
-def test_get_builtin_tools_list_agent_callable(tmp_path):
-    tools = get_builtin_tools(str(tmp_path))
-    result = tools["list_agent"]()
-    assert "No agents found" in result
+def test_builtin_tool_names_unsupported_mode():
+    with pytest.raises(ValueError, match="unsupported skill mode"):
+        builtin_tool_names("python")
 
 
-def test_get_builtin_tools_validate_agent_callable(tmp_path):
-    (tmp_path / "ok.mk").write_text(_AGENT_MK)
-    tools = get_builtin_tools(str(tmp_path))
-    result = tools["validate_agent"](name="ok")
+def test_makefile_backend_returns_expected_tools(tmp_path):
+    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
+    assert set(backend.executors) == {"list_skills", "read_skill", "execute_skill", "create_skill", "validate_skill", "write_file", "edit_file"}
+    assert {schema["function"]["name"] for schema in backend.schemas} == set(backend.executors)
+
+
+def test_makefile_backend_list_skills_callable(tmp_path):
+    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
+    result = backend.executors["list_skills"]()
+    assert "No skills found" in result
+
+
+def test_makefile_backend_validate_skill_callable(tmp_path):
+    (tmp_path / "ok").mkdir()
+    (tmp_path / "ok" / "skill.mk").write_text(_SKILL_MK)
+    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
+    result = backend.executors["validate_skill"](name="ok")
     assert result.startswith("OK")
 
 
-# ── run_agent ─────────────────────────────────────────────────────────────────
+def test_makefile_backend_execute_skill_callable(tmp_path):
+    (tmp_path / "simple").mkdir()
+    (tmp_path / "simple" / "skill.mk").write_text(_SKILL_MK)
+    fake_proc = MagicMock()
+    fake_proc.stdout = b"done\n"
+    fake_proc.stderr = b""
+    fake_proc.returncode = 0
+    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
+    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc):
+        result = backend.executors["execute_skill"](name="simple", command="make read-file")
+    assert result == "done"
 
 
-def test_run_agent_missing_mk_file(tmp_path):
-    result = run_agent("ghost", "do something", str(tmp_path))
-    assert "not found" in result
+def test_write_file_creates_new_file(tmp_path):
+    result = write_file("hello.txt", "hello world", tmp_path)
+    assert "Successfully wrote" in result
+    assert (tmp_path / "hello.txt").read_text() == "hello world"
 
 
-def test_run_agent_invalid_name(tmp_path):
-    result = run_agent("../evil", "do something", str(tmp_path))
+def test_write_file_overwrites_existing(tmp_path):
+    (tmp_path / "f.txt").write_text("old content")
+    write_file("f.txt", "new content", tmp_path)
+    assert (tmp_path / "f.txt").read_text() == "new content"
+
+
+def test_write_file_creates_parent_dirs(tmp_path):
+    result = write_file("a/b/c.txt", "deep", tmp_path)
+    assert "Successfully wrote" in result
+    assert (tmp_path / "a" / "b" / "c.txt").read_text() == "deep"
+
+
+def test_write_file_rejects_traversal(tmp_path):
+    result = write_file("../../evil.txt", "x", tmp_path)
     assert result.startswith("Error")
 
 
-def test_run_agent_returns_run_sentinel(tmp_path):
-    (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nWorker.\nendef\n")
-    result = run_agent("worker", "do the task", str(tmp_path))
-    assert isinstance(result, _RunAgent)
-    assert result.mk_path == tmp_path / "worker.mk"
-    assert result.prompt == "do the task"
+def test_edit_file_replaces_first_occurrence(tmp_path):
+    (tmp_path / "code.py").write_text("foo bar foo")
+    result = edit_file("code.py", "foo", "baz", tmp_path)
+    assert "Successfully replaced" in result
+    assert (tmp_path / "code.py").read_text() == "baz bar foo"
 
 
-def test_get_builtin_tools_run_agent_returns_sentinel(tmp_path):
-    (tmp_path / "worker.mk").write_text("define SYSTEM_PROMPT\nW.\nendef\n")
-    tools = get_builtin_tools(str(tmp_path))
-    result = tools["run_agent"](name="worker", prompt="go")
-    assert isinstance(result, _RunAgent)
-    assert result.prompt == "go"
+def test_edit_file_missing_file(tmp_path):
+    result = edit_file("ghost.txt", "x", "y", tmp_path)
+    assert result.startswith("Error")
+    assert "does not exist" in result
+
+
+def test_edit_file_text_not_found(tmp_path):
+    (tmp_path / "f.txt").write_text("hello world")
+    result = edit_file("f.txt", "missing text", "replacement", tmp_path)
+    assert result.startswith("Error")
+    assert "not found" in result
+
+
+def test_edit_file_rejects_traversal(tmp_path):
+    result = edit_file("../../evil.txt", "x", "y", tmp_path)
+    assert result.startswith("Error")
+
+
+def test_makefile_backend_write_file_callable(tmp_path):
+    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
+    result = backend.executors["write_file"](path="out.txt", content="hello")
+    assert "Successfully wrote" in result
+    assert (tmp_path / "out.txt").read_text() == "hello"
+
+
+def test_makefile_backend_edit_file_callable(tmp_path):
+    (tmp_path / "src.py").write_text("x = 1")
+    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
+    result = backend.executors["edit_file"](path="src.py", old_text="x = 1", new_text="x = 2")
+    assert "Successfully replaced" in result
+    assert (tmp_path / "src.py").read_text() == "x = 2"

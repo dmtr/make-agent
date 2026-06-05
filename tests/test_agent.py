@@ -1,18 +1,60 @@
-"""Tests for rate limit retry logic — _parse_retry_after and _acompletion_with_retry."""
+"""Tests for provider retry logic and agent loop behaviour."""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-import any_llm
+import anthropic
 import pytest
-from make_agent.agent import _acompletion_with_retry, _parse_retry_after
+from make_agent.agent_core import AgentConfig
+from make_agent.provider import TextDelta, ToolCallDelta, ToolCallStart, UsageDelta
+from make_agent.provider.anthropic import MAX_RETRIES, _parse_retry_after
+
+
+# ── MockProvider ──────────────────────────────────────────────────────────────
+
+
+class MockProvider:
+    """A test provider that returns pre-built StreamChunk sequences."""
+
+    def __init__(self, *chunk_sequences: list) -> None:
+        self._sequences = list(chunk_sequences)
+        self._call_count = 0
+
+    async def astream(self, model, messages, tools, max_tokens, **kwargs):
+        seq = self._sequences[self._call_count % len(self._sequences)]
+        self._call_count += 1
+        for chunk in seq:
+            yield chunk
+
+
+# ── Stream helpers ────────────────────────────────────────────────────────────
+
+
+def _text_chunks(content: str, input_tokens: int = 0, output_tokens: int = 0) -> list:
+    chunks = []
+    if input_tokens:
+        chunks.append(UsageDelta(input_tokens=input_tokens, output_tokens=0))
+    chunks.append(TextDelta(text=content))
+    if output_tokens:
+        chunks.append(UsageDelta(input_tokens=0, output_tokens=output_tokens))
+    return chunks
+
+
+def _tool_call_chunks(tool_id: str, tool_name: str, arguments: str, index: int = 0) -> list:
+    chunks = [ToolCallStart(index=index, id=tool_id, name=tool_name)]
+    if arguments:
+        chunks.append(ToolCallDelta(index=index, args_delta=arguments))
+    return chunks
+
+
+# ── TestParseRetryAfter ───────────────────────────────────────────────────────
 
 
 def _make_rate_limit_error(
     retry_after: float | None = None,
     retry_after_ms: float | None = None,
-) -> any_llm.RateLimitError:
+) -> anthropic.RateLimitError:
     headers: dict[str, str] = {}
     if retry_after is not None:
         headers["retry-after"] = str(retry_after)
@@ -20,71 +62,11 @@ def _make_rate_limit_error(
         headers["retry-after-ms"] = str(retry_after_ms)
     fake_response = MagicMock()
     fake_response.headers = headers
-    fake_orig = MagicMock()
-    fake_orig.response = fake_response
-    return any_llm.RateLimitError(
+    return anthropic.RateLimitError(
         message="rate limit exceeded",
-        original_exception=fake_orig,
-        provider_name="anthropic",
+        response=fake_response,
+        body={},
     )
-
-
-def _make_empty_stream():
-    """Return an async iterator that yields no chunks (empty stream)."""
-
-    async def _stream():
-        return
-        yield  # make it an async generator
-
-    return _stream()
-
-
-def _make_text_stream(content: str):
-    """Return an async iterator that yields a single text chunk."""
-
-    async def _stream():
-        chunk = MagicMock()
-        chunk.choices = [MagicMock()]
-        chunk.choices[0].delta.content = content
-        chunk.choices[0].delta.tool_calls = None
-        chunk.usage = None
-        yield chunk
-
-    return _stream()
-
-
-def _make_tool_call_stream(tool_id: str, tool_name: str, arguments: str):
-    """Return an async iterator that yields a single tool-call chunk."""
-
-    async def _stream():
-        chunk = MagicMock()
-        chunk.choices = [MagicMock()]
-        chunk.choices[0].delta.content = None
-        tc_delta = MagicMock()
-        tc_delta.index = 0
-        tc_delta.id = tool_id
-        tc_delta.function = MagicMock()
-        tc_delta.function.name = tool_name
-        tc_delta.function.arguments = arguments
-        chunk.choices[0].delta.tool_calls = [tc_delta]
-        chunk.usage = None
-        yield chunk
-
-    return _stream()
-
-
-def _mock_acompletion_with_retry(*streams):
-    """Return an async callable that yields successive streams on each call."""
-    streams_list = list(streams)
-    call_count = 0
-
-    async def _mock(*args, **kwargs):
-        nonlocal call_count
-        stream = streams_list[call_count % len(streams_list)]
-        call_count += 1
-        return stream
-
-    return _mock
 
 
 class TestParseRetryAfter:
@@ -105,305 +87,394 @@ class TestParseRetryAfter:
         assert _parse_retry_after(err) is None
 
     def test_none_response(self):
-        err = any_llm.RateLimitError(
-            message="rate limit exceeded",
-            original_exception=None,
-            provider_name="anthropic",
-        )
+        err = MagicMock()
+        err.response = None
         assert _parse_retry_after(err) is None
 
 
-class TestACompletionWithRetry:
+# ── TestAnthropicProviderRetry ────────────────────────────────────────────────
+
+
+class TestAnthropicProviderRetry:
+    def _make_provider(self):
+        from make_agent.provider.anthropic import AnthropicProvider
+        return AnthropicProvider()
+
     async def test_succeeds_on_first_attempt(self):
-        stream = _make_empty_stream()
-        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(return_value=stream)) as mock_c:
-            result = await _acompletion_with_retry("model", [], {}, max_retries=3)
-        assert result is stream
+        provider = self._make_provider()
+        mock_stream = MagicMock()
+        with patch.object(provider._client.messages, "create", AsyncMock(return_value=mock_stream)) as mock_c:
+            result = await provider._create_with_retry({})
+        assert result is mock_stream
         mock_c.assert_called_once()
 
     async def test_retries_on_rate_limit_then_succeeds(self):
+        provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=10)
-        stream = _make_empty_stream()
-        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=[err, err, stream])):
+        mock_stream = MagicMock()
+        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=[err, err, mock_stream])):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                result = await _acompletion_with_retry("model", [], {}, max_retries=3)
-        assert result is stream
+                result = await provider._create_with_retry({})
+        assert result is mock_stream
         assert mock_sleep.call_count == 2
         mock_sleep.assert_called_with(10.0)
 
     async def test_exponential_backoff_without_header(self):
+        provider = self._make_provider()
         err = _make_rate_limit_error()
-        stream = _make_empty_stream()
-        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=[err, err, stream])):
+        mock_stream = MagicMock()
+        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=[err, err, mock_stream])):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                await _acompletion_with_retry("model", [], {}, max_retries=3)
+                await provider._create_with_retry({})
         assert mock_sleep.call_args_list == [call(1), call(2)]
 
-    async def test_exponential_backoff_capped_at_60s(self):
-        err = _make_rate_limit_error()
-        stream = _make_empty_stream()
-        side_effects = [err] * 7 + [stream]
-        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=side_effects)):
-            with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                await _acompletion_with_retry("model", [], {}, max_retries=10)
-        waits = [c.args[0] for c in mock_sleep.call_args_list]
-        assert all(w <= 60 for w in waits)
-        assert waits[6] == 60  # 2^6=64 capped to 60
-
     async def test_raises_after_max_retries_exhausted(self):
+        provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=err)):
+        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=err)):
             with patch("asyncio.sleep", AsyncMock()):
-                with pytest.raises(any_llm.RateLimitError):
-                    await _acompletion_with_retry("model", [], {}, max_retries=2)
+                with pytest.raises(anthropic.RateLimitError):
+                    await provider._create_with_retry({})
 
     async def test_total_calls_equals_max_retries_plus_one(self):
+        provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=err)) as mock_c:
+        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=err)) as mock_c:
             with patch("asyncio.sleep", AsyncMock()):
-                with pytest.raises(any_llm.RateLimitError):
-                    await _acompletion_with_retry("model", [], {}, max_retries=3)
-        assert mock_c.call_count == 4  # 1 initial + 3 retries
+                with pytest.raises(anthropic.RateLimitError):
+                    await provider._create_with_retry({})
+        assert mock_c.call_count == MAX_RETRIES + 1
 
     async def test_zero_max_retries_raises_immediately(self):
+        provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=1)
-        with patch("make_agent.agent.any_llm.acompletion", AsyncMock(side_effect=err)):
+        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=err)):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-                with pytest.raises(any_llm.RateLimitError):
-                    await _acompletion_with_retry("model", [], {}, max_retries=0)
+                with patch("make_agent.provider.anthropic.MAX_RETRIES", 0):
+                    with pytest.raises(anthropic.RateLimitError):
+                        await provider._create_with_retry({})
         mock_sleep.assert_not_called()
 
 
-# ── Load-time validation tests ────────────────────────────────────────────────
-
-
-class TestAgentValidation:
-    def _write_makefile(self, tmp_path, content: str):
-        mf = tmp_path / "Makefile"
-        mf.write_text(content)
-        return mf
-    def test_valid_makefile_loads(self, tmp_path):
-        mf = self._write_makefile(tmp_path, ("# <tool>\n# Greet.\n# @param NAME string A name\n# </tool>\n" "greet:\n	@echo $(NAME)\n"))
-        from make_agent.agent import Agent, AgentConfig
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
-        assert "greet" in agent.tool_names
-
-    def test_broken_recipe_raises_on_load(self, tmp_path):
-        mf = self._write_makefile(tmp_path, ("# <tool>\n# Install.\n# @param FILE string A file\n# </tool>\n" "install:\n\t@pip install -r\n"))
-        import pytest
-        from make_agent.agent import Agent, AgentConfig
-
-        with pytest.raises(ValueError, match="FILE"):
-            Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
-
-    def test_error_message_names_tool_and_param(self, tmp_path):
-        mf = self._write_makefile(tmp_path, ("# <tool>\n# Do X.\n# @param QUERY string Search term\n# </tool>\n" "search:\n\t@grep foo .\n"))
-        import pytest
-        from make_agent.agent import Agent, AgentConfig
-
-        with pytest.raises(ValueError) as exc_info:
-            Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
-        assert "search" in str(exc_info.value)
-        assert "QUERY" in str(exc_info.value)
-
-
-# ── DISABLED_BUILTINS Makefile variable ───────────────────────────────────────
-
-
-class TestDisabledBuiltins:
-    def _make_agent(self, tmp_path, content: str):
-        from make_agent.agent import Agent, AgentConfig
-
-        mf = tmp_path / "Makefile"
-        mf.write_text(content)
-        return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
-
-    def test_single_tool_disabled_via_makefile(self, tmp_path):
-        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = run_agent\n")
-        assert "run_agent" not in agent.tool_names
-
-    def test_multiple_tools_disabled_via_makefile(self, tmp_path):
-        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = run_agent,validate_agent\n")
-        assert "run_agent" not in agent.tool_names
-        assert "validate_agent" not in agent.tool_names
-
-    def test_all_disables_everything(self, tmp_path):
-        from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
-
-        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS = all\n")
-        for name in BUILTIN_TOOL_NAMES:
-            assert name not in agent.tool_names
-
-    def test_unknown_tool_raises_value_error(self, tmp_path):
-        import pytest
-
-        with pytest.raises(ValueError, match="DISABLED_BUILTINS"):
-            self._make_agent(tmp_path, "DISABLED_BUILTINS = no_such_tool\n")
-
-    def test_makefile_and_cli_flags_are_merged(self, tmp_path):
-        from make_agent.agent import Agent, AgentConfig
-
-        mf = tmp_path / "Makefile"
-        mf.write_text("DISABLED_BUILTINS = run_agent\n")
-        agent = Agent(
-            AgentConfig(
-                makefile_path=mf,
-                model="openai/gpt-4o-mini",
-                agents_dir=str(tmp_path),
-                disabled_builtin_tools=frozenset({"validate_agent"}),
-            ),
-            None,
-        )
-        assert "run_agent" not in agent.tool_names
-        assert "validate_agent" not in agent.tool_names
-
-    def test_empty_disabled_builtins_is_no_op(self, tmp_path):
-        from make_agent.builtin_tools import BUILTIN_TOOL_NAMES
-
-        agent = self._make_agent(tmp_path, "DISABLED_BUILTINS =\n")
-        builtin_names_present = [n for n in agent.tool_names if n in BUILTIN_TOOL_NAMES]
-        assert len(builtin_names_present) > 0
-
-
-# ── run_agent in-process dispatch ─────────────────────────────────────────────
-
-
-class TestRunAgentInProcess:
-    def _make_agent(self, tmp_path, content: str, agents_dir: str | None = None):
-        from make_agent.agent import Agent, AgentConfig
-
-        mf = tmp_path / "Makefile"
-        mf.write_text(content)
-        return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=agents_dir or str(tmp_path)), None)
-
-    def test_run_agent_disabled_for_sub_agent(self, tmp_path):
-        """Sub-agents must not have run_agent available (prevents infinite loops)."""
-        from make_agent.agent import Agent, AgentConfig
-
-        (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
-        mf = tmp_path / "Makefile"
-        mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
-
-        # Build sub-config as _run_agent would and verify run_agent is disabled
-        sub_disabled = agent._disabled_builtin_tools | frozenset({"run_agent"})  # noqa: SLF001
-        assert "run_agent" in sub_disabled
-
-    def test_run_agent_sub_agent_gets_same_model(self, tmp_path):
-        from make_agent.agent import Agent, AgentConfig
-
-        (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
-        mf = tmp_path / "Makefile"
-        mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
-        assert agent._model == "openai/gpt-4o-mini"  # noqa: SLF001
-
-    async def test_run_agent_dispatched_via_call(self, tmp_path):
-        """agent.arun() runs the sub-agent via _arun_agent and returns final text."""
-        from make_agent.agent import Agent, AgentConfig
-
-        (tmp_path / "specialist.mk").write_text("define SYSTEM_PROMPT\nSpecialist.\nendef\n")
-        mf = tmp_path / "Makefile"
-        mf.write_text("define SYSTEM_PROMPT\nOrchestrator.\nendef\n")
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini", agents_dir=str(tmp_path)), None)
-
-        with patch.object(agent, "_arun_agent", new_callable=AsyncMock, return_value="specialist done") as mock_run:
-            with patch(
-                "make_agent.agent._acompletion_with_retry",
-                _mock_acompletion_with_retry(
-                    _make_tool_call_stream("tc1", "run_agent", '{"name": "specialist", "prompt": "go"}'),
-                    _make_text_stream("all done"),
-                ),
-            ):
-                result = await agent.arun("delegate to specialist")
-
-        mock_run.assert_called_once()
-        assert result == "all done"
+# ── Agent safety guards ───────────────────────────────────────────────────────
 
 
 class TestAgentSafetyGuards:
-    def _make_agent(self, tmp_path):
-        from make_agent.agent import Agent, AgentConfig
+    def _make_agent(self, tmp_path, provider):
+        from make_agent.agent_core import Agent, AgentConfig
+        from make_agent.memory import Memory
+        from make_agent.skill_backend import MakefileSkillBackend
+        from make_agent.tool_handler import ToolHandler
 
-        mf = tmp_path / "Makefile"
-        mf.write_text(
-            "# <tool>\n"
-            "# Visible tool.\n"
-            "# </tool>\n"
-            "safe:\n"
-            "\t@echo safe\n"
-            "hidden:\n"
-            "\t@echo hidden\n"
+        memory = Memory(tmp_path / "memory.db")
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
         )
-        return Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
+        agent = Agent(
+            AgentConfig(
+                system_prompt="You are a helper.",
+                model="claude-3-5-haiku-20241022",
+                skills_dir=str(tmp_path),
+                provider=provider,
+            ),
+            tool_handler,
+        )
+        # Inject a custom tool to give the agent a known tool set
+        agent._tool_handler._schemas.append(  # noqa: SLF001
+            {
+                "type": "function",
+                "function": {
+                    "name": "safe",
+                    "description": "A safe tool.",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        )
+        agent._tool_handler._executors["safe"] = lambda **_: "ok"  # noqa: SLF001
+        return agent
 
     async def test_unknown_tool_is_rejected_without_running_make(self, tmp_path):
-        agent = self._make_agent(tmp_path)
-
-        with (
-            patch(
-                "make_agent.agent._acompletion_with_retry",
-                _mock_acompletion_with_retry(
-                    _make_tool_call_stream("tc1", "hidden", "{}"),
-                    _make_text_stream("done"),
-                ),
-            ),
-            patch("make_agent.agent.run_tool", new_callable=AsyncMock) as mock_run_tool,
-        ):
-            result = await agent.arun("use hidden target")
+        provider = MockProvider(
+            _tool_call_chunks("tc1", "hidden", "{}"),
+            _text_chunks("done"),
+        )
+        agent = self._make_agent(tmp_path, provider)
+        result = await agent.arun("use hidden target")
 
         assert result == "done"
-        mock_run_tool.assert_not_called()
         tool_outputs = [m["content"] for m in agent.messages if m.get("role") == "tool"]
         assert any("unknown tool: hidden" in output for output in tool_outputs)
 
     async def test_model_turn_limit_stops_runaway_tool_loop(self, tmp_path):
-        agent = self._make_agent(tmp_path)
+        provider = MockProvider(_tool_call_chunks("tc1", "hidden", "{}"))
+        agent = self._make_agent(tmp_path, provider)
 
-        async def _always_tool_call(*args, **kwargs):
-            return _make_tool_call_stream("tc1", "hidden", "{}")
-
-        with (
-            patch("make_agent.agent._MAX_MODEL_TURNS_PER_REQUEST", 2),
-            patch("make_agent.agent._acompletion_with_retry", _always_tool_call),
-        ):
+        with patch("make_agent.agent_core.loop.MAX_MODEL_TURNS_PER_REQUEST", 2):
             with pytest.raises(RuntimeError, match="model turns"):
                 await agent.arun("loop forever")
 
 
 class TestAssistantMessageContent:
-    """Assistant messages with tool calls must never have content=None (breaks Ollama provider)."""
+    """Assistant messages with tool calls must never have content=None."""
 
     async def test_tool_call_without_text_has_empty_string_content(self, tmp_path):
         """When the LLM streams a tool call with no text, the assistant message content must be ''."""
-        from make_agent.agent import Agent, AgentConfig
+        from make_agent.agent_core import Agent, AgentConfig
+        from make_agent.memory import Memory
+        from make_agent.skill_backend import MakefileSkillBackend
+        from make_agent.tool_handler import ToolHandler
 
-        mf = tmp_path / "Makefile"
-        mf.write_text(
-            "# <tool>\n"
-            "# A simple tool.\n"
-            "# </tool>\n"
-            "say_hi:\n"
-            "\t@echo hi\n"
+        memory = Memory(tmp_path / "memory.db")
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
         )
-        agent = Agent(AgentConfig(makefile_path=mf, model="openai/gpt-4o-mini"), None)
-
-        with (
-            patch(
-                "make_agent.agent._acompletion_with_retry",
-                _mock_acompletion_with_retry(
-                    _make_tool_call_stream("tc1", "say_hi", "{}"),
-                    _make_text_stream("all done"),
-                ),
+        provider = MockProvider(
+            _tool_call_chunks("tc1", "say_hi", "{}"),
+            _text_chunks("all done"),
+        )
+        agent = Agent(
+            AgentConfig(
+                system_prompt="You are a helper.",
+                model="claude-3-5-haiku-20241022",
+                skills_dir=str(tmp_path),
+                provider=provider,
             ),
-            patch("make_agent.agent.run_tool", new_callable=AsyncMock, return_value=MagicMock(output="hi", is_error=False)),
-        ):
-            result = await agent.arun("call say_hi")
+            tool_handler,
+        )
+        # Inject say_hi as a known builtin tool
+        agent._tool_handler._schemas.append(  # noqa: SLF001
+            {
+                "type": "function",
+                "function": {
+                    "name": "say_hi",
+                    "description": "Say hi.",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        )
+        agent._tool_handler._executors["say_hi"] = lambda **_: "hi"  # noqa: SLF001
+
+        result = await agent.arun("call say_hi")
 
         assert result == "all done"
-        assistant_msgs = [m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m]
+        assistant_msgs = [
+            m
+            for m in agent.messages
+            if m.get("role") == "assistant" and "tool_calls" in m
+        ]
         assert assistant_msgs, "expected at least one assistant message with tool_calls"
         for msg in assistant_msgs:
-            assert msg["content"] is not None, "assistant message content must not be None (breaks Ollama)"
+            assert msg["content"] is not None, (
+                "assistant message content must not be None"
+            )
             assert isinstance(msg["content"], str)
+
+
+class TestAnthropicParallelToolCalls:
+    """Native Anthropic SDK assigns correct sequential indices for parallel tool calls."""
+
+    def _make_agent(self, tmp_path, provider):
+        from make_agent.agent_core import Agent, AgentConfig
+        from make_agent.memory import Memory
+        from make_agent.skill_backend import MakefileSkillBackend
+        from make_agent.tool_handler import ToolHandler
+
+        memory = Memory(tmp_path / "memory.db")
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
+        agent = Agent(
+            AgentConfig(
+                system_prompt="You are a helper.",
+                model="anthropic/claude-3-5-sonnet-20241022",
+                skills_dir=str(tmp_path),
+                provider=provider,
+            ),
+            tool_handler,
+        )
+        for name in ("tool_a", "tool_b"):
+            agent._tool_handler._schemas.append(  # noqa: SLF001
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": f"Tool {name}.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"x": {"type": "integer"}},
+                            "required": ["x"],
+                        },
+                    },
+                }
+            )
+            agent._tool_handler._executors[name] = lambda x, _n=name: f"{_n}_result"  # noqa: SLF001
+        return agent
+
+    async def test_parallel_tool_calls_are_kept_separate(self, tmp_path):
+        """Two parallel tool calls with sequential indices must each be executed."""
+        parallel_chunks = (
+            _tool_call_chunks("toolu_A", "tool_a", '{"x": 1}', index=0)
+            + _tool_call_chunks("toolu_B", "tool_b", '{"x": 2}', index=1)
+        )
+        provider = MockProvider(parallel_chunks, _text_chunks("done"))
+        agent = self._make_agent(tmp_path, provider)
+
+        result = await agent.arun("run both tools")
+
+        assert result == "done"
+        tool_msgs = [m for m in agent.messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 2, (
+            f"expected 2 tool results, got {len(tool_msgs)}: {tool_msgs}"
+        )
+        tool_call_ids = {m["tool_call_id"] for m in tool_msgs}
+        assert "toolu_A" in tool_call_ids
+        assert "toolu_B" in tool_call_ids
+
+    async def test_parallel_tool_calls_have_correct_arguments(self, tmp_path):
+        """Arguments must not be concatenated across parallel tool calls."""
+        parallel_chunks = (
+            _tool_call_chunks("toolu_A", "tool_a", '{"x": 42}', index=0)
+            + _tool_call_chunks("toolu_B", "tool_b", '{"x": 99}', index=1)
+        )
+        provider = MockProvider(parallel_chunks, _text_chunks("done"))
+        agent = self._make_agent(tmp_path, provider)
+
+        received: dict[str, dict] = {}
+
+        def capture_a(**kwargs):
+            received["tool_a"] = kwargs
+            return "result_a"
+
+        def capture_b(**kwargs):
+            received["tool_b"] = kwargs
+            return "result_b"
+
+        agent._tool_handler._executors["tool_a"] = capture_a  # noqa: SLF001
+        agent._tool_handler._executors["tool_b"] = capture_b  # noqa: SLF001
+
+        await agent.arun("run both tools")
+
+        assert received.get("tool_a") == {"x": 42}, (
+            f"tool_a got wrong args: {received.get('tool_a')}"
+        )
+        assert received.get("tool_b") == {"x": 99}, (
+            f"tool_b got wrong args: {received.get('tool_b')}"
+        )
+
+
+class TestAnthropicEmptyArguments:
+    """Tools with no arguments send only a ToolCallStart (no ToolCallDelta).
+
+    The accumulated arguments string will be ''; the loop must treat '' as '{}'.
+    """
+
+    def _make_agent(self, tmp_path, provider):
+        from make_agent.agent_core import Agent, AgentConfig
+        from make_agent.memory import Memory
+        from make_agent.skill_backend import MakefileSkillBackend
+        from make_agent.tool_handler import ToolHandler
+
+        memory = Memory(tmp_path / "memory.db")
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
+        agent = Agent(
+            AgentConfig(
+                system_prompt="You are a helper.",
+                model="anthropic/claude-3-5-haiku-20241022",
+                skills_dir=str(tmp_path),
+                provider=provider,
+            ),
+            tool_handler,
+        )
+        agent._tool_handler._schemas.append(  # noqa: SLF001
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_skills",
+                    "description": "List all available skills.",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        )
+        agent._tool_handler._executors["list_skills"] = lambda **_: "skill1, skill2"  # noqa: SLF001
+        return agent
+
+    async def test_empty_arguments_string_does_not_crash(self, tmp_path):
+        """A tool call with no ToolCallDelta must not raise JSONDecodeError."""
+        # Only ToolCallStart, no ToolCallDelta → arguments accumulate to ""
+        empty_arg_chunks = [ToolCallStart(index=0, id="toolu_1", name="list_skills")]
+        provider = MockProvider(empty_arg_chunks, _text_chunks("here are your skills"))
+        agent = self._make_agent(tmp_path, provider)
+
+        result = await agent.arun("list skills")
+
+        assert result == "here are your skills"
+        tool_msgs = [m for m in agent.messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 1
+        assert "malformed" not in tool_msgs[0]["content"]
+
+        # The stored assistant message must have valid JSON arguments.
+        assistant_msgs = [
+            m
+            for m in agent.messages
+            if m.get("role") == "assistant" and "tool_calls" in m
+        ]
+        assert assistant_msgs
+        stored_args = assistant_msgs[0]["tool_calls"][0]["function"]["arguments"]
+        import json
+
+        assert json.loads(stored_args) == {}, (
+            f"stored arguments must be valid JSON '{{}}', got {stored_args!r}"
+        )
+
+
+# ── TestAgentSystemPromptCache ────────────────────────────────────────────────
+
+
+class TestAgentSystemPromptCache:
+    """The loop always stores system prompt as a plain string.
+
+    Cache-control headers are added by the Anthropic provider internally at
+    call time — not embedded in the loop's message history.
+    """
+
+    def _make_agent(self, tmp_path, model: str, use_prompt_cache: bool):
+        from make_agent.agent_core import Agent
+        from make_agent.memory import Memory
+        from make_agent.skill_backend import MakefileSkillBackend
+        from make_agent.tool_handler import ToolHandler
+
+        memory = Memory(tmp_path / "memory.db")
+        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        config = AgentConfig(
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            use_prompt_cache=use_prompt_cache,
+            provider=MockProvider(),  # no actual API calls
+        )
+        return Agent(config, tool_handler)
+
+    def test_no_cache_stores_plain_string(self, tmp_path):
+        agent = self._make_agent(tmp_path, "anthropic/claude-3-5-haiku-20241022", False)
+        system_msg = agent.messages[0]
+        assert system_msg["role"] == "system"
+        assert system_msg["content"] == "You are a helpful assistant."
+
+    def test_cache_enabled_still_stores_plain_string(self, tmp_path):
+        """Even with use_prompt_cache=True, the loop stores a plain string.
+
+        Cache-control is added by AnthropicProvider.astream() at API call time.
+        """
+        agent = self._make_agent(tmp_path, "anthropic/claude-3-5-haiku-20241022", True)
+        system_msg = agent.messages[0]
+        assert system_msg["role"] == "system"
+        assert system_msg["content"] == "You are a helpful assistant."
+
+    def test_non_anthropic_model_stores_plain_string(self, tmp_path):
+        agent = self._make_agent(tmp_path, "openai/gpt-4o", False)
+        system_msg = agent.messages[0]
+        assert system_msg["role"] == "system"
+        assert system_msg["content"] == "You are a helpful assistant."
+
+

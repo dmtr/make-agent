@@ -1,17 +1,18 @@
 """Persistent conversation memory backed by SQLite with FTS5 full-text search.
 
-The database lives at ``~/.make-agent/<project-slug>/memory.db``.
+The database lives at ``~/.make-agent/<project-slug>/<mode>/memory.db``.
 
 Schema overview:
 - ``messages``      — base table (id, created_at, sender, message)
 - ``messages_fts``  — FTS5 content table over ``messages``
 - ``user_memory``   — view: messages WHERE sender = 'user'
 - ``agent_memory``  — view: messages WHERE sender = 'agent'
-- ``token_usage``   — per-LLM-call token counts (session_id, agent, model, input/output tokens)
+- ``token_usage``   — per-LLM-call token counts (session_id, model, input/output tokens)
 """
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -29,7 +30,6 @@ _SCHEMA_STATEMENTS = [
         id            INTEGER PRIMARY KEY,
         created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
         session_id    TEXT NOT NULL,
-        agent         TEXT NOT NULL,
         model         TEXT NOT NULL,
         input_tokens  INTEGER NOT NULL DEFAULT 0,
         output_tokens INTEGER NOT NULL DEFAULT 0
@@ -88,8 +88,22 @@ class Memory:
             self._conn.row_factory = sqlite3.Row
             for stmt in _SCHEMA_STATEMENTS:
                 self._conn.execute(stmt)
+            self._migrate(self._conn)
             self._conn.commit()
         return self._conn
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Apply in-place schema migrations for existing databases."""
+        col_names = {
+            row[1] for row in conn.execute("PRAGMA table_info(token_usage)").fetchall()
+        }
+        if "agent" in col_names:
+            conn.execute(
+                "CREATE TABLE token_usage_new AS SELECT id, created_at, session_id, model,"
+                " input_tokens, output_tokens FROM token_usage"
+            )
+            conn.execute("DROP TABLE token_usage")
+            conn.execute("ALTER TABLE token_usage_new RENAME TO token_usage")
 
     def store(self, sender: str, message: str) -> None:
         """Store a message from *sender* (``'user'`` or ``'agent'``)."""
@@ -100,6 +114,45 @@ class Memory:
         )
         conn.commit()
 
+    @staticmethod
+    def _sanitize_fts_query(query: str) -> str:
+        """Sanitize an FTS5 MATCH query by removing dangerous syntax.
+
+        This function strips out FTS5-specific operators and special characters
+        that could be used to inject malicious queries. The result is a safe,
+        keyword-only search string.
+
+        :param query: Raw user-supplied FTS5 query string
+        :returns: Sanitized query containing only safe keywords, or empty string if nothing remains
+        """
+        # Step 1: Remove quote characters (prevents phrase injection)
+        sanitized = query.replace('"', "").replace("'", "")
+
+        # Step 2: Remove NEAR() function calls BEFORE removing parentheses
+        sanitized = re.sub(r"NEAR\s*\([^)]*\)", "", sanitized, flags=re.IGNORECASE)
+
+        # Step 3: Remove parentheses (prevents grouping attacks)
+        sanitized = sanitized.replace("(", "").replace(")", "")
+
+        # Step 4: Remove FTS5 boolean operators as standalone words
+        for op in ["AND", "OR", "NOT"]:
+            sanitized = re.sub(r"\b" + op + r"\b", "", sanitized, flags=re.IGNORECASE)
+
+        # Step 5: Remove column filters (e.g., "title:")
+        sanitized = re.sub(r"\w+:", "", sanitized)
+
+        # Step 6: Remove plus and minus signs (prefix operators)
+        sanitized = sanitized.replace("+", "").replace("-", "")
+
+        # Step 7: Remove characters that FTS5 doesn't handle well
+        for ch in "{}[]<>!@#$%^&*+=\\|~`":
+            sanitized = sanitized.replace(ch, "")
+
+        # Step 8: Collapse multiple spaces and strip
+        sanitized = re.sub(r"\s+", " ", sanitized).strip()
+
+        return sanitized
+
     def _search(
         self,
         view: str,
@@ -109,13 +162,26 @@ class Memory:
         to_date: str | None = None,
     ) -> str:
         conn = self._get_conn()
+
+        # Validate view against whitelist (defense in depth)
+        allowed_views = {"user_memory", "agent_memory"}
+        if view not in allowed_views:
+            raise ValueError(f"Invalid view: {view}. Must be one of {allowed_views}")
+
+        # Sanitize the query before passing to FTS5 MATCH
+        safe_query = self._sanitize_fts_query(query)
+
+        # If sanitization removes everything, return early to avoid FTS5 syntax errors
+        if not safe_query:
+            return "No results found."
+
         sql = f"""
             SELECT v.created_at, v.message
             FROM {view} v
             JOIN messages_fts ON v.id = messages_fts.rowid
             WHERE messages_fts MATCH ?
         """
-        params: list = [query]
+        params: list = [safe_query]
         if from_date:
             sql += " AND v.created_at >= ?"
             params.append(from_date)
@@ -173,12 +239,13 @@ class Memory:
         if not rows:
             return "No messages found."
         rows = list(reversed(rows))
-        return "\n".join(f"[{row['created_at']}] {row['sender']}: {row['message']}" for row in rows)
+        return "\n".join(
+            f"[{row['created_at']}] {row['sender']}: {row['message']}" for row in rows
+        )
 
     def record_token_usage(
         self,
         session_id: str,
-        agent: str,
         model: str,
         input_tokens: int,
         output_tokens: int,
@@ -186,9 +253,9 @@ class Memory:
         """Insert one row into ``token_usage`` for a single LLM API call."""
         conn = self._get_conn()
         conn.execute(
-            "INSERT INTO token_usage (session_id, agent, model, input_tokens, output_tokens)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (session_id, agent, model, input_tokens, output_tokens),
+            "INSERT INTO token_usage (session_id, model, input_tokens, output_tokens)"
+            " VALUES (?, ?, ?, ?)",
+            (session_id, model, input_tokens, output_tokens),
         )
         conn.commit()
 
@@ -196,8 +263,7 @@ class Memory:
         """Return aggregated token usage totals for *session_id*.
 
         Returns a dict with keys ``input_tokens``, ``output_tokens``,
-        ``total_tokens``, ``models`` (list of distinct model names used),
-        and ``agents`` (dict mapping agent name to per-agent stats),
+        ``total_tokens``, and ``models`` (list of distinct model names used),
         or an empty dict when no rows exist for that session.
         """
         conn = self._get_conn()
@@ -215,31 +281,12 @@ class Memory:
                 (session_id,),
             ).fetchall()
         ]
-        
-        # Per-agent breakdown
-        agent_rows = conn.execute(
-            "SELECT agent, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens"
-            " FROM token_usage WHERE session_id = ? GROUP BY agent ORDER BY agent",
-            (session_id,),
-        ).fetchall()
-        
-        agents = {}
-        for arow in agent_rows:
-            agent_name = arow["agent"]
-            input_tok = arow["input_tokens"] or 0
-            output_tok = arow["output_tokens"] or 0
-            agents[agent_name] = {
-                "input_tokens": input_tok,
-                "output_tokens": output_tok,
-                "total_tokens": input_tok + output_tok,
-            }
-        
+
         return {
             "input_tokens": row["input_tokens"],
             "output_tokens": row["output_tokens"],
             "total_tokens": row["input_tokens"] + row["output_tokens"],
             "models": models,
-            "agents": agents,
         }
 
     def close(self) -> None:

@@ -1,8 +1,10 @@
-"""Memory search tools: search_user_memory, search_agent_memory, get_recent_messages."""
+"""Memory tool schemas and executor factories."""
 
 from __future__ import annotations
 
 from typing import Any
+
+from .memory import Memory
 
 _MEMORY_SEARCH_PARAMS = {
     "type": "object",
@@ -92,6 +94,16 @@ MEMORY_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
-def get_memory_schemas() -> list[dict[str, Any]]:
-    """Return the tool schemas for memory search tools."""
-    return MEMORY_SCHEMAS
+def get_memory_executors(memory: Memory) -> dict[str, Any]:
+    """Return a name → callable executor map for memory tools bound to *memory*."""
+    return {
+        "search_user_memory": lambda query, limit=10, from_date=None, to_date=None, **_kw: (
+            memory.search_user(query, limit, from_date, to_date)
+        ),
+        "search_agent_memory": lambda query, limit=10, from_date=None, to_date=None, **_kw: (
+            memory.search_agent(query, limit, from_date, to_date)
+        ),
+        "get_recent_messages": lambda limit=10, from_date=None, to_date=None, **_kw: (
+            memory.recent(limit, from_date, to_date)
+        ),
+    }
