@@ -22,14 +22,14 @@ from make_agent.app_dirs import (
 )
 from make_agent.builtin_tools import builtin_tool_names
 from make_agent.memory import Memory
-from make_agent.skill_backend import MakefileSkillBackend, PythonSkillBackend
+from make_agent.skill_backend import MakefileSkillBackend
 from make_agent.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SYSTEM_PROMPT_FILE = "SYSTEM.md"
 _REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh")
-_SKILL_MODES = ("makefile", "python")
+_SKILL_MODES = ("makefile",)
 
 
 def _init_logging(loglevel: str) -> None:
@@ -90,9 +90,7 @@ def _parse_trusted_skills(value: str | None) -> frozenset[str]:
 
 
 def _build_backend(skill_mode: str, skills_dir: str, tool_timeout: int):
-    if skill_mode == "makefile":
-        return MakefileSkillBackend(skills_dir, tool_timeout, Path.cwd())
-    return PythonSkillBackend(skills_dir, tool_timeout)
+    return MakefileSkillBackend(skills_dir, tool_timeout, Path.cwd())
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -196,9 +194,9 @@ def main() -> None:
     run_p.add_argument(
         "--skill-mode",
         choices=_SKILL_MODES,
-        default="python",
+        default="makefile",
         metavar="MODE",
-        help="Skill backend mode to use (default: python)",
+        help="Skill backend mode to use (default: makefile)",
     )
     run_p.add_argument(
         "--skills-dir",

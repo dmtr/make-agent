@@ -442,11 +442,11 @@ class TestAgentSystemPromptCache:
     def _make_agent(self, tmp_path, model: str, use_prompt_cache: bool):
         from make_agent.agent_core import Agent
         from make_agent.memory import Memory
-        from make_agent.skill_backend import PythonSkillBackend
+        from make_agent.skill_backend import MakefileSkillBackend
         from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(PythonSkillBackend(str(tmp_path), 60), memory)
+        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
         config = AgentConfig(
             system_prompt="You are a helpful assistant.",
             model=model,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from unittest.mock import MagicMock, patch
 
@@ -18,7 +17,7 @@ from make_agent.builtin_tools.skill_tools import (
     read_skill,
     validate_skill,
 )
-from make_agent.skill_backend import MakefileSkillBackend, PythonSkillBackend
+from make_agent.skill_backend import MakefileSkillBackend
 
 _SKILL_MK = """\
 define DESCRIPTION
@@ -32,18 +31,6 @@ read-file:
 
 write-file:
 @printf '%s' "$$CONTENT" > "$$FILE"
-"""
-
-_VALID_PY = """\
-from make_agent import target
-
-@target
-def read_file(path: str) -> str:
-    \"\"\"Read the contents of a file.
-
-    :param path: The file path
-    \"\"\"
-    return open(path).read()
 """
 
 
@@ -299,18 +286,24 @@ def test_file_schemas_structure():
     assert set(by_name["edit_file"]["parameters"]["required"]) == {"path", "old_text", "new_text"}
 
 
-def test_builtin_tool_names_are_mode_aware():
-    assert builtin_tool_names("python") == {
+def test_builtin_tool_names_makefile():
+    assert builtin_tool_names("makefile") == {
         "list_skills",
         "read_skill",
         "execute_skill",
         "create_skill",
         "validate_skill",
+        "write_file",
+        "edit_file",
         "search_user_memory",
         "search_agent_memory",
         "get_recent_messages",
     }
-    assert builtin_tool_names("makefile") == builtin_tool_names("python") | {"write_file", "edit_file"}
+
+
+def test_builtin_tool_names_unsupported_mode():
+    with pytest.raises(ValueError, match="unsupported skill mode"):
+        builtin_tool_names("python")
 
 
 def test_makefile_backend_returns_expected_tools(tmp_path):
@@ -407,106 +400,3 @@ def test_makefile_backend_edit_file_callable(tmp_path):
     result = backend.executors["edit_file"](path="src.py", old_text="x = 1", new_text="x = 2")
     assert "Successfully replaced" in result
     assert (tmp_path / "src.py").read_text() == "x = 2"
-
-
-def test_python_backend_schema_names():
-    backend = PythonSkillBackend("skills")
-    names = {schema["function"]["name"] for schema in backend.schemas}
-    assert names == {"list_skills", "read_skill", "execute_skill", "create_skill", "validate_skill"}
-
-
-@pytest.mark.asyncio
-async def test_python_backend_execute_skill_callable(tmp_path):
-    skill_dir = tmp_path / "full"
-    skill_dir.mkdir()
-    (skill_dir / "skill.md").write_text("Instructions.\n")
-    (skill_dir / "skill.py").write_text(_VALID_PY)
-
-    backend = PythonSkillBackend(str(tmp_path))
-    await backend.setup("test-model")
-
-    test_file = tmp_path / "hello.txt"
-    test_file.write_text("hello world")
-    result = await backend.executors["execute_skill"](
-        name="full",
-        target="read_file",
-        kwargs={"path": str(test_file)},
-    )
-    assert "hello world" in result
-
-
-@pytest.mark.asyncio
-async def test_python_backend_create_and_validate_callable(tmp_path):
-    backend = PythonSkillBackend(str(tmp_path))
-    await backend.setup("test-model")
-    result = await backend.executors["create_skill"](
-        name="full",
-        description="A full skill.",
-        md_content="Instructions.",
-        py_content=_VALID_PY,
-    )
-    validation = await backend.executors["validate_skill"](name="full")
-
-    assert result.startswith("Created skill 'full'")
-    assert validation.startswith("OK")
-
-
-@pytest.mark.asyncio
-async def test_python_backend_create_skill_rejects_symlinked_skill_dir(tmp_path):
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    os.symlink(outside, tmp_path / "full")
-
-    backend = PythonSkillBackend(str(tmp_path))
-    await backend.setup("test-model")
-    result = await backend.executors["create_skill"](
-        name="full",
-        description="A full skill.",
-        md_content="Instructions.",
-        py_content=_VALID_PY,
-    )
-
-    assert result.startswith("Error")
-    assert not (outside / "skill.md").exists()
-    assert not (outside / "skill.py").exists()
-
-
-@pytest.mark.asyncio
-async def test_python_backend_execute_skill_timeout_kills_process(tmp_path):
-    skill_dir = tmp_path / "slow"
-    skill_dir.mkdir()
-    (skill_dir / "skill.md").write_text("Instructions.\n")
-    (skill_dir / "skill.py").write_text(
-        """\
-from pathlib import Path
-import time
-from make_agent import target
-
-@target
-def slow_write(path: str, delay: float = 3.0) -> str:
-    time.sleep(delay)
-    Path(path).write_text("done")
-    return "done"
-"""
-    )
-
-    backend = PythonSkillBackend(str(tmp_path), tool_timeout=1)
-    await backend.setup("test-model")
-    marker = tmp_path / "marker.txt"
-    result = await backend.executors["execute_skill"](
-        name="slow",
-        target="slow_write",
-        kwargs={"path": str(marker), "delay": 3.0},
-    )
-    await asyncio.sleep(1.5)
-    assert "exceeded 1s timeout" in result
-    assert not marker.exists()
-
-
-def test_python_backend_list_skills_marks_has_tools(tmp_path):
-    (tmp_path / "rich").mkdir()
-    (tmp_path / "rich" / "skill.md").write_text('---\ndescription: "Has tools."\n---\n')
-    (tmp_path / "rich" / "skill.py").write_text(_VALID_PY)
-    backend = PythonSkillBackend(str(tmp_path))
-    result = backend.executors["list_skills"]()
-    assert "[has tools]" in result

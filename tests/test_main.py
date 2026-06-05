@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import make_agent.main as main_module
 from make_agent.builtin_tools import builtin_tool_names
-from make_agent.skill_backend import MakefileSkillBackend, PythonSkillBackend
+from make_agent.skill_backend import MakefileSkillBackend
 
 
 def _run(*args: str, **kwargs) -> subprocess.CompletedProcess:
@@ -42,7 +42,7 @@ def _run_args(**kwargs) -> argparse.Namespace:
         skills_dir=None,
         disable_builtin_tools=None,
         reasoning_effort="auto",
-        skill_mode="python",
+        skill_mode="makefile",
         prompt_cache=False,
         compact_mode="drop",
     )
@@ -63,26 +63,26 @@ class TestRunPromptInput:
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
             patch.object(
-                main_module, "mode_dir", return_value=tmp_path / "python-mode"
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
             ),
             patch.object(
                 main_module,
                 "mode_memory_path",
-                return_value=tmp_path / "python-memory.db",
+                return_value=tmp_path / "makefile-memory.db",
             ),
             patch.object(
                 main_module,
                 "default_skills_dir",
-                return_value=tmp_path / "python-skills",
+                return_value=tmp_path / "makefile-skills",
             ),
         ):
             main_module._cmd_run(args)
 
         assert captured["prompt"] == "hello from file"
         assert captured["system_prompt"] == ""
-        assert isinstance(captured["tool_handler"]._backend, PythonSkillBackend)  # noqa: SLF001
-        assert captured["tool_handler"].tool_names == builtin_tool_names("python")
-        assert captured["memory"]._db_path == tmp_path / "python-memory.db"  # noqa: SLF001
+        assert isinstance(captured["tool_handler"]._backend, MakefileSkillBackend)  # noqa: SLF001
+        assert captured["tool_handler"].tool_names == builtin_tool_names("makefile")
+        assert captured["memory"]._db_path == tmp_path / "makefile-memory.db"  # noqa: SLF001
 
     def test_makefile_mode_builds_makefile_backend(self, tmp_path):
         args = _run_args(prompt="do something", skill_mode="makefile")
@@ -115,34 +115,6 @@ class TestRunPromptInput:
         assert isinstance(captured["tool_handler"]._backend, MakefileSkillBackend)  # noqa: SLF001
         assert captured["tool_handler"].tool_names == builtin_tool_names("makefile")
         assert captured["memory"]._db_path == tmp_path / "makefile-memory.db"  # noqa: SLF001
-
-    def test_custom_skills_dir_gets_mode_subfolder(self, tmp_path):
-        custom_dir = tmp_path / "custom"
-        args = _run_args(
-            prompt="do something", skill_mode="python", skills_dir=str(custom_dir)
-        )
-        captured: dict = {}
-
-        async def _fake_run(**kwargs):
-            captured.update(kwargs)
-
-        with (
-            patch.object(main_module, "run", _fake_run),
-            patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(
-                main_module, "mode_dir", return_value=tmp_path / "python-mode"
-            ),
-            patch.object(
-                main_module,
-                "mode_memory_path",
-                return_value=tmp_path / "python-memory.db",
-            ),
-        ):
-            main_module._cmd_run(args)
-
-        backend = captured["tool_handler"]._backend  # noqa: SLF001
-        assert isinstance(backend, PythonSkillBackend)
-        assert backend._skills_dir == str(custom_dir / "python")  # noqa: SLF001
 
     def test_custom_skills_dir_makefile_mode_gets_mode_subfolder(self, tmp_path):
         custom_dir = tmp_path / "custom"
@@ -182,9 +154,9 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "python-mode"),
-            patch.object(main_module, "mode_memory_path", return_value=tmp_path / "python-memory.db"),
-            patch.object(main_module, "default_skills_dir", return_value=tmp_path / "python-skills"),
+            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
+            patch.object(main_module, "mode_memory_path", return_value=tmp_path / "makefile-memory.db"),
+            patch.object(main_module, "default_skills_dir", return_value=tmp_path / "makefile-skills"),
         ):
             main_module._cmd_run(args)
 
@@ -239,10 +211,10 @@ class TestResolveSystemPrompt:
 
     def test_mode_system_md_is_discovered(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        mode_path = tmp_path / "python"
+        mode_path = tmp_path / "makefile"
         mode_path.mkdir()
         (mode_path / "SYSTEM.md").write_text("From mode dir.")
-        args = _run_args(system=None, system_file=None, skill_mode="python")
+        args = _run_args(system=None, system_file=None, skill_mode="makefile")
         with patch.object(main_module, "mode_dir", return_value=mode_path):
             result = main_module._resolve_system_prompt(args)
         assert result == "From mode dir."
@@ -265,15 +237,10 @@ class TestResolveSystemPrompt:
 
 
 class TestParseDisabledTools:
-    def test_all_returns_mode_specific_names(self):
-        assert main_module._parse_disabled_tools("all", "python") == builtin_tool_names(
-            "python"
-        )
-        assert main_module._parse_disabled_tools(
-            "all", "makefile"
-        ) == builtin_tool_names("makefile")
+    def test_all_returns_makefile_names(self):
+        assert main_module._parse_disabled_tools("all", "makefile") == builtin_tool_names("makefile")
 
-    def test_unknown_name_exits_for_mode(self):
+    def test_unknown_name_exits(self):
         with patch.object(sys, "exit", side_effect=SystemExit) as mock_exit:
             with patch.object(
                 main_module,
@@ -281,7 +248,7 @@ class TestParseDisabledTools:
                 return_value=frozenset({"list_skills"}),
             ):
                 try:
-                    main_module._parse_disabled_tools("write_file", "python")
+                    main_module._parse_disabled_tools("write_file", "makefile")
                 except SystemExit:
                     pass
         mock_exit.assert_called_once()

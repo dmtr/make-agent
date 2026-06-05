@@ -1,7 +1,7 @@
 [project]
 name = "makefile-agent"
 version = "0.3.6"
-description = "AI‑assistant‑as‑Makefile: a tool to create and manage AI agents using a Makefile."
+description = "An AI agent powered by Makefile skills."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -25,7 +25,6 @@ dependencies = [
     "anthropic>=0.105.2",
     "openai>=1.0",
     "prompt-toolkit==3.0.52",
-    "pyyaml>=6",
 ]
 
 [dependency-groups]
@@ -49,7 +48,7 @@ Repository = "https://github.com/dmtr/make-agent"
 Issues = "https://github.com/dmtr/make-agent/issues"
 
 [tool.setuptools.package-data]
-make_agent = ["templates/*.mk", "templates/*/*.md"]
+make_agent = ["templates/makefile/SYSTEM.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
