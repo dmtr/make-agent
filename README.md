@@ -147,7 +147,6 @@ Up to 3 compaction attempts are made before the request is aborted.
 
 ```
 uv run pytest
-uv run pytest --e2e
 uv run ruff check make_agent/
 uv run ruff format make_agent/
 ```
