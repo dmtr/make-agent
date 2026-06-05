@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from make_agent.agent_core import (
     AgentManager,
@@ -13,7 +12,6 @@ from make_agent.agent_core import (
     ApprovalRequested,
     ApproveSkill,
     CancelTurn,
-    ConfirmEvent,
     DenySkill,
     ManagerError,
     MessageCallback,
@@ -27,7 +25,6 @@ from make_agent.agent_core import (
     TokenEmitted,
     TurnCancelled,
     TurnFinished,
-    TurnStarted,
     ToolCallback,
     TokenCallback,
 )

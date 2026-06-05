@@ -396,7 +396,7 @@ class _DeletedTestAgentManagerCompact:
         assert not any(isinstance(e, CompactEvent) for e in events)
 
     async def test_compact_session_prunes_in_place_and_returns_count(self):
-        from make_agent.agent_core.loop import AgentConfig, AgenticLoop
+        from make_agent.agent_core.loop import AgentConfig
         from unittest.mock import AsyncMock, patch
 
         th = _make_tool_handler()
@@ -433,9 +433,7 @@ class _DeletedTestAgentManagerCompact:
     async def test_compact_triggered_on_context_exceeded_error(self):
         """When the API raises a context-window error, compact_fn prunes messages and the turn retries."""
         import litellm
-        import pytest
         from unittest.mock import AsyncMock, patch
-        from make_agent.agent_core import CompactEvent
         from make_agent.agent_core.loop import AgentConfig
 
         th = _make_tool_handler()
@@ -481,7 +479,6 @@ class _DeletedTestAgentManagerCompact:
         """Context-exceeded raised during stream iteration (not at call time) is also handled."""
         import litellm
         from unittest.mock import AsyncMock, patch
-        from make_agent.agent_core import CompactEvent
         from make_agent.agent_core.loop import AgentConfig
 
         th = _make_tool_handler()
@@ -550,9 +547,7 @@ class _DeletedTestAgentManagerCompact:
 
     async def test_compact_triggered_on_custom_provider_error(self):
         """A non-litellm exception with status_code=400 from a custom provider triggers compact."""
-        import pytest
         from unittest.mock import AsyncMock, patch
-        from make_agent.agent_core import CompactEvent
         from make_agent.agent_core.loop import AgentConfig
 
         th = _make_tool_handler()
