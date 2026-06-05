@@ -341,7 +341,7 @@ class TestSmartCompact:
     async def test_summaries_fetched_in_parallel(self):
         """All summarization calls should happen concurrently (gathered)."""
         call_order: list[int] = []
-        gates = [asyncio.Event(), asyncio.Event()]
+        [asyncio.Event(), asyncio.Event()]
 
         class _OrderingProvider:
             def __init__(self):

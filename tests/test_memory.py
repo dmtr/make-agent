@@ -553,7 +553,7 @@ class TestFTSSanitization:
         assert 'root' in sanitized
 
     def test_removes_prefix_operators(self, mem):
-        sanitized = Memory._sanitize_fts_query('+hello -world')
+        Memory._sanitize_fts_query('+hello -world')
 
 
 # ── FTS5 Injection Reproduction Tests ─────────────────────────────────────────
