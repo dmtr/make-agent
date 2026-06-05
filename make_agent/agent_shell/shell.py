@@ -767,6 +767,8 @@ class MakeAgentShell:
                     f"context limit — dropped {event.messages_dropped} messages"
                     f" (retry {event.attempt}/{3})",
                 )
+                # Keep the streaming status active when context is compacted during a turn
+                self._state.status = AgentStatus.STREAMING
                 self._refresh()
 
             elif isinstance(event, ManagerError):
@@ -775,8 +777,14 @@ class MakeAgentShell:
                 self._refresh()
                 break
 
-            elif isinstance(event, (TurnStarted, StatusChanged)):
-                pass  # informational; state managed locally
+            elif isinstance(event, TurnStarted):
+                self._state.status = AgentStatus.STREAMING
+                self._refresh()
+
+            elif isinstance(event, StatusChanged):
+                if event.is_busy:
+                    self._state.status = AgentStatus.STREAMING
+                    self._refresh()
 
     # ── agent turn ───────────────────────────────────────────────────────────────
 
