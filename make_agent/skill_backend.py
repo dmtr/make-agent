@@ -11,7 +11,9 @@ from make_agent.builtin_tools.skill_tools import create_skill as create_makefile
 from make_agent.builtin_tools.skill_tools import execute_skill as execute_makefile_skill
 from make_agent.builtin_tools.skill_tools import list_skills as list_makefile_skills
 from make_agent.builtin_tools.skill_tools import read_skill as read_makefile_skill
-from make_agent.builtin_tools.skill_tools import validate_skill as validate_makefile_skill
+from make_agent.builtin_tools.skill_tools import (
+    validate_skill as validate_makefile_skill,
+)
 
 
 class SkillBackend(Protocol):

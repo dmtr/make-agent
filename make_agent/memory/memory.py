@@ -126,30 +126,30 @@ class Memory:
         :returns: Sanitized query containing only safe keywords, or empty string if nothing remains
         """
         # Step 1: Remove quote characters (prevents phrase injection)
-        sanitized = query.replace('"', '').replace("'", '')
+        sanitized = query.replace('"', "").replace("'", "")
 
         # Step 2: Remove NEAR() function calls BEFORE removing parentheses
-        sanitized = re.sub(r'NEAR\s*\([^)]*\)', '', sanitized, flags=re.IGNORECASE)
+        sanitized = re.sub(r"NEAR\s*\([^)]*\)", "", sanitized, flags=re.IGNORECASE)
 
         # Step 3: Remove parentheses (prevents grouping attacks)
-        sanitized = sanitized.replace('(', '').replace(')', '')
+        sanitized = sanitized.replace("(", "").replace(")", "")
 
         # Step 4: Remove FTS5 boolean operators as standalone words
-        for op in ['AND', 'OR', 'NOT']:
-            sanitized = re.sub(r'\b' + op + r'\b', '', sanitized, flags=re.IGNORECASE)
+        for op in ["AND", "OR", "NOT"]:
+            sanitized = re.sub(r"\b" + op + r"\b", "", sanitized, flags=re.IGNORECASE)
 
         # Step 5: Remove column filters (e.g., "title:")
-        sanitized = re.sub(r'\w+:', '', sanitized)
+        sanitized = re.sub(r"\w+:", "", sanitized)
 
         # Step 6: Remove plus and minus signs (prefix operators)
-        sanitized = sanitized.replace('+', '').replace('-', '')
+        sanitized = sanitized.replace("+", "").replace("-", "")
 
         # Step 7: Remove characters that FTS5 doesn't handle well
-        for ch in '{}[]<>!@#$%^&*+=\\|~`':
-            sanitized = sanitized.replace(ch, '')
+        for ch in "{}[]<>!@#$%^&*+=\\|~`":
+            sanitized = sanitized.replace(ch, "")
 
         # Step 8: Collapse multiple spaces and strip
-        sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+        sanitized = re.sub(r"\s+", " ", sanitized).strip()
 
         return sanitized
 

@@ -13,7 +13,15 @@ from typing import Any, AsyncIterator
 
 import anthropic
 
-from .base import ContextExceededChunk, StreamChunk, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta, is_context_exceeded
+from .base import (
+    ContextExceededChunk,
+    StreamChunk,
+    TextDelta,
+    ToolCallDelta,
+    ToolCallStart,
+    UsageDelta,
+    is_context_exceeded,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +53,9 @@ def _openai_tools_to_anthropic(tools: list[dict]) -> list[dict]:
             {
                 "name": fn["name"],
                 "description": fn.get("description", ""),
-                "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+                "input_schema": fn.get(
+                    "parameters", {"type": "object", "properties": {}}
+                ),
             }
         )
     return result
@@ -108,7 +118,11 @@ def _openai_messages_to_anthropic(messages: list[dict]) -> tuple[str, list[dict]
                 "content": content,
             }
             # Group consecutive tool results into a single user message.
-            if result and result[-1]["role"] == "user" and isinstance(result[-1]["content"], list):
+            if (
+                result
+                and result[-1]["role"] == "user"
+                and isinstance(result[-1]["content"], list)
+            ):
                 result[-1]["content"].append(tool_result_block)
             else:
                 result.append({"role": "user", "content": [tool_result_block]})
@@ -119,7 +133,7 @@ def _openai_messages_to_anthropic(messages: list[dict]) -> tuple[str, list[dict]
 def _normalize_model(model: str) -> str:
     """Strip the ``anthropic/`` provider prefix if present."""
     if model.startswith("anthropic/"):
-        return model[len("anthropic/"):]
+        return model[len("anthropic/") :]
     return model
 
 
@@ -148,7 +162,11 @@ class AnthropicProvider:
         system_content: str | list[dict]
         if use_prompt_cache and system_text:
             system_content = [
-                {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}
+                {
+                    "type": "text",
+                    "text": system_text,
+                    "cache_control": {"type": "ephemeral"},
+                }
             ]
         else:
             system_content = system_text
@@ -175,15 +193,21 @@ class AnthropicProvider:
                 elif event.type == "content_block_start":
                     block = event.content_block
                     if block.type == "tool_use":
-                        yield ToolCallStart(index=event.index, id=block.id, name=block.name)
+                        yield ToolCallStart(
+                            index=event.index, id=block.id, name=block.name
+                        )
                 elif event.type == "content_block_delta":
                     delta = event.delta
                     if delta.type == "text_delta":
                         yield TextDelta(text=delta.text)
                     elif delta.type == "input_json_delta":
-                        yield ToolCallDelta(index=event.index, args_delta=delta.partial_json)
+                        yield ToolCallDelta(
+                            index=event.index, args_delta=delta.partial_json
+                        )
                 elif event.type == "message_delta":
-                    yield UsageDelta(input_tokens=0, output_tokens=event.usage.output_tokens)
+                    yield UsageDelta(
+                        input_tokens=0, output_tokens=event.usage.output_tokens
+                    )
         except Exception as e:
             if is_context_exceeded(e):
                 yield ContextExceededChunk()
@@ -205,5 +229,3 @@ class AnthropicProvider:
                     flush=True,
                 )
                 await asyncio.sleep(wait)
-
-

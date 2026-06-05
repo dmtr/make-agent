@@ -12,7 +12,15 @@ from typing import Any, AsyncIterator
 
 import openai
 
-from .base import ContextExceededChunk, StreamChunk, TextDelta, ToolCallDelta, ToolCallStart, UsageDelta, is_context_exceeded
+from .base import (
+    ContextExceededChunk,
+    StreamChunk,
+    TextDelta,
+    ToolCallDelta,
+    ToolCallStart,
+    UsageDelta,
+    is_context_exceeded,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +44,7 @@ def _parse_retry_after(exc: openai.RateLimitError) -> float | None:
 def _normalize_model(model: str) -> str:
     """Strip the ``openai/`` provider prefix if present."""
     if model.startswith("openai/"):
-        return model[len("openai/"):]
+        return model[len("openai/") :]
     return model
 
 

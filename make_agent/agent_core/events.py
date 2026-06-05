@@ -83,4 +83,12 @@ class CompactEvent:
     messages_dropped: int
 
 
-AgentEvent = TokenEvent | ToolStartEvent | ToolDoneEvent | DoneEvent | ConfirmEvent | UsageEvent | CompactEvent
+AgentEvent = (
+    TokenEvent
+    | ToolStartEvent
+    | ToolDoneEvent
+    | DoneEvent
+    | ConfirmEvent
+    | UsageEvent
+    | CompactEvent
+)

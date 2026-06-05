@@ -43,7 +43,9 @@ class ContextExceededChunk:
     """Provider signals context-window overflow via the stream instead of raising."""
 
 
-StreamChunk = Union[TextDelta, ToolCallStart, ToolCallDelta, UsageDelta, ContextExceededChunk]
+StreamChunk = Union[
+    TextDelta, ToolCallStart, ToolCallDelta, UsageDelta, ContextExceededChunk
+]
 
 
 class Provider(Protocol):
@@ -64,7 +66,9 @@ def is_context_exceeded(exc: Exception) -> bool:
     """Return True when *exc* signals a context-window overflow."""
     if getattr(exc, "status_code", None) == 400:
         msg = str(exc).lower()
-        return "context" in msg and any(w in msg for w in ("exceed", "window", "length", "limit", "size"))
+        return "context" in msg and any(
+            w in msg for w in ("exceed", "window", "length", "limit", "size")
+        )
     return False
 
 

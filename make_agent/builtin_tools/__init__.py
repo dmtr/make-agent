@@ -21,7 +21,9 @@ _BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
 def builtin_tool_names(mode: str) -> frozenset[str]:
     """Return built-in tool names. Only makefile mode is supported."""
     if mode != "makefile":
-        raise ValueError(f"unsupported skill mode: {mode!r}. Only 'makefile' is supported.")
+        raise ValueError(
+            f"unsupported skill mode: {mode!r}. Only 'makefile' is supported."
+        )
     return _BUILTIN_TOOL_NAMES
 
 

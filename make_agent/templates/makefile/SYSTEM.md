@@ -48,7 +48,4 @@ target-name:
 
 Rules for skill.mk:
 - Must contain a `define DESCRIPTION … endef` block with a short description.
-- Must NOT contain a `define SYSTEM_PROMPT` block.
-- Targets and variables are free-form — no `# <tool>` annotations required.
 - Call `validate_skill` after creating a skill to confirm it is valid.
-

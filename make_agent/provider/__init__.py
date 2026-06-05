@@ -32,7 +32,9 @@ def provider_for(model: str) -> Provider:
     - otherwise → :exc:`NotImplementedError`
     """
     lower = model.lower()
-    if lower.startswith("openai/") or any(kw in lower for kw in ("gpt", "o1", "o3", "o4")):
+    if lower.startswith("openai/") or any(
+        kw in lower for kw in ("gpt", "o1", "o3", "o4")
+    ):
         return OpenAIProvider()
     if lower.startswith("anthropic/") or "claude" in lower:
         return AnthropicProvider()

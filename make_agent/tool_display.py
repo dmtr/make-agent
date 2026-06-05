@@ -70,7 +70,9 @@ class ToolDisplayFormatter:
                 time_str = f"{duration_ms / 1000:.1f}s"
 
         # Build output
-        lines = [f"{status_color}{ANSI_BOLD}{status_icon} {tool_name} (completed in {time_str}){ANSI_RESET}"]
+        lines = [
+            f"{status_color}{ANSI_BOLD}{status_icon} {tool_name} (completed in {time_str}){ANSI_RESET}"
+        ]
 
         # Output preview (truncated if needed)
         if output:
@@ -84,7 +86,12 @@ class ToolDisplayFormatter:
         return "\n".join(lines)
 
     def format_collapsible(
-        self, tool_name: str, args: dict[str, Any], output: str, is_error: bool, duration_ms: float | None = None
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        output: str,
+        is_error: bool,
+        duration_ms: float | None = None,
     ) -> str:
         """Format a collapsible tool call panel.
 
@@ -108,7 +115,9 @@ class ToolDisplayFormatter:
         # Output preview (if any)
         if output:
             preview = self._truncate(output, 100)
-            start_lines.append(f"\n{ANSI_DIM}Output: {self._truncate(preview, 80)}...{ANSI_RESET}")
+            start_lines.append(
+                f"\n{ANSI_DIM}Output: {self._truncate(preview, 80)}...{ANSI_RESET}"
+            )
 
         return "\n".join(start_lines)
 
@@ -116,7 +125,7 @@ class ToolDisplayFormatter:
         """Truncate text to max_len with ellipsis if needed."""
         if len(text) <= max_len:
             return text
-        return text[:max_len - 3] + "..."
+        return text[: max_len - 3] + "..."
 
     def format_error_suggestion(self, error_msg: str) -> str | None:
         """Generate helpful suggestions based on common error patterns.

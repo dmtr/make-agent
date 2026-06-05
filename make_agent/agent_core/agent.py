@@ -31,9 +31,26 @@ from .bridge import (
     TurnFinished,
     TurnStarted,
 )
-from .events import AgentEvent, CompactEvent, ConfirmEvent, DoneEvent, TokenEvent, ToolDoneEvent, ToolStartEvent, UsageEvent
+from .events import (
+    AgentEvent,
+    CompactEvent,
+    ConfirmEvent,
+    DoneEvent,
+    TokenEvent,
+    ToolDoneEvent,
+    ToolStartEvent,
+    UsageEvent,
+)
 from .export import export_conversation
-from .loop import AgentConfig, AgenticLoop, CompactCallback, MessageCallback, TokenCallback, ToolCallback, UsageCallback
+from .loop import (
+    AgentConfig,
+    AgenticLoop,
+    CompactCallback,
+    MessageCallback,
+    TokenCallback,
+    ToolCallback,
+    UsageCallback,
+)
 from .middleware import MiddlewareBase, Request, Response, SessionMiddleware
 
 logger = logging.getLogger(__name__)
@@ -54,7 +71,9 @@ class AgentManager:
         middlewares: list[MiddlewareBase] | None = None,
     ) -> None:
         self._tool_handler = tool_handler
-        self._middlewares: list[MiddlewareBase] = middlewares if middlewares is not None else []
+        self._middlewares: list[MiddlewareBase] = (
+            middlewares if middlewares is not None else []
+        )
         self._sessions: dict[str, AgenticLoop] = {}
 
     @staticmethod
@@ -90,11 +109,15 @@ class AgentManager:
         async for event in self._run_loop(loop, request.message):
             yield event
 
-    async def _run_loop(self, loop: AgenticLoop, message: str) -> AsyncIterator[AgentEvent]:
+    async def _run_loop(
+        self, loop: AgenticLoop, message: str
+    ) -> AsyncIterator[AgentEvent]:
         """Iterate one agent turn, translating callbacks to AgentEvents."""
         async for cb in loop.astream(message):
             if isinstance(cb, CompactCallback):
-                yield CompactEvent(attempt=cb.attempt, messages_dropped=cb.messages_dropped)
+                yield CompactEvent(
+                    attempt=cb.attempt, messages_dropped=cb.messages_dropped
+                )
             elif isinstance(cb, TokenCallback):
                 yield TokenEvent(text=cb.message)
             elif isinstance(cb, MessageCallback):
@@ -108,10 +131,14 @@ class AgentManager:
             elif isinstance(cb, ToolCallback):
                 if cb.tool_name == "execute_skill":
                     skill_name = cb.tool_args.get("name", "")
-                    target = cb.tool_args.get("target") or cb.tool_args.get("command", "")
+                    target = cb.tool_args.get("target") or cb.tool_args.get(
+                        "command", ""
+                    )
                     if not self._tool_handler.is_skill_trusted(skill_name, target):
                         kwargs = cb.tool_args.get("kwargs") or {}
-                        confirm = ConfirmEvent(skill_name=skill_name, target=target, kwargs=kwargs)
+                        confirm = ConfirmEvent(
+                            skill_name=skill_name, target=target, kwargs=kwargs
+                        )
                         yield confirm
                         allowed = await confirm.wait()
                         if not allowed:
@@ -139,12 +166,15 @@ class AgentManager:
 
     def _build_chain(self) -> Callable[[Request], AsyncIterator[AgentEvent]]:
         """Build the middleware chain; first middleware in the list is innermost."""
-        current: Callable[[Request], AsyncIterator[AgentEvent]] = self._stream_events_core
+        current: Callable[[Request], AsyncIterator[AgentEvent]] = (
+            self._stream_events_core
+        )
         for mw in self._middlewares:
             prev = current
 
             def make_wrapper(
-                _mw: MiddlewareBase, _prev: Callable[[Request], AsyncIterator[AgentEvent]]
+                _mw: MiddlewareBase,
+                _prev: Callable[[Request], AsyncIterator[AgentEvent]],
             ) -> Callable[[Request], AsyncIterator[AgentEvent]]:
                 return lambda req: _mw(req, _prev)
 
@@ -256,7 +286,9 @@ class AgentManager:
                 if active_turn_task and not active_turn_task.done():
                     active_turn_task.cancel()
                 else:
-                    await event_queue.put(ManagerError(message="No active turn to cancel"))
+                    await event_queue.put(
+                        ManagerError(message="No active turn to cancel")
+                    )
 
             elif isinstance(cmd, (ApproveSkill, DenySkill)):
                 future = pending_approvals.pop(cmd.request_id, None)
@@ -264,7 +296,9 @@ class AgentManager:
                     future.set_result(isinstance(cmd, ApproveSkill))
                 else:
                     await event_queue.put(
-                        ManagerError(message=f"Unknown approval request: {cmd.request_id}")
+                        ManagerError(
+                            message=f"Unknown approval request: {cmd.request_id}"
+                        )
                     )
 
     async def _execute_bridge_turn(
@@ -283,7 +317,9 @@ class AgentManager:
         try:
             async for event in self.astream_events(session_id, message):
                 if isinstance(event, TokenEvent):
-                    await event_queue.put(TokenEmitted(turn_id=turn_id, text=event.text))
+                    await event_queue.put(
+                        TokenEmitted(turn_id=turn_id, text=event.text)
+                    )
                 elif isinstance(event, ToolStartEvent):
                     current_tool_id = str(uuid4())
                     await event_queue.put(

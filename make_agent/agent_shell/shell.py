@@ -133,13 +133,15 @@ class ApprovalCard:
         args_repr = ", ".join(f"{k}={v!r}" for k, v in kwargs_dict.items())[:38]
         width = 44
         pad = width - 2
-        return "\n".join([
-            "  ┌─ ⚠ Approval required " + "─" * (width - 22) + "┐",
-            f"  │  {(self.skill_name + '/' + self.target + '(' + args_repr + ')')[:pad]:<{pad}}│",
-            "  │" + " " * (width) + "│",
-            f"  │  [Y] approve   [N] deny{' ' * (pad - 24)}│",
-            "  └" + "─" * width + "┘",
-        ])
+        return "\n".join(
+            [
+                "  ┌─ ⚠ Approval required " + "─" * (width - 22) + "┐",
+                f"  │  {(self.skill_name + '/' + self.target + '(' + args_repr + ')')[:pad]:<{pad}}│",
+                "  │" + " " * (width) + "│",
+                f"  │  [Y] approve   [N] deny{' ' * (pad - 24)}│",
+                "  └" + "─" * width + "┘",
+            ]
+        )
 
 
 _ALERT_ICONS: dict[str, str] = {"INFO": "ℹ", "HINT": "ℹ", "WARNING": "⚠", "ERROR": "✗"}
@@ -186,7 +188,9 @@ class TurnBlock:
         if self.state != "streaming":
             elapsed = self.elapsed or (time.time() - self.start_time)
             state_label = "" if self.state == "done" else f" {self.state.upper()}"
-            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
+            sep = (
+                f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
+            )
             parts.append("")
             parts.append(sep)
 
@@ -226,7 +230,9 @@ class TurnBlock:
         if self.state != "streaming":
             elapsed = self.elapsed or (time.time() - self.start_time)
             state_label = "" if self.state == "done" else f" {self.state.upper()}"
-            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
+            sep = (
+                f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
+            )
             parts.append("")
             parts.append(sep)
 
@@ -360,7 +366,10 @@ class MakeAgentShell:
             text = self._render_response()
             self._response_area.text = text
             # Auto-scroll only when following the live latest turn
-            if not self._state.transcript_focused and self._state.viewed_turn_index is None:
+            if (
+                not self._state.transcript_focused
+                and self._state.viewed_turn_index is None
+            ):
                 self._response_area.buffer.cursor_position = len(text)
                 self._response_area.window.vertical_scroll = 999999
         if self._tools_area is not None:
@@ -416,9 +425,14 @@ class MakeAgentShell:
 
         # Contextual hint line below the composer
         approval_active = Condition(
-            lambda: state._approval_future is not None
-            and not (state._approval_future.done() if state._approval_future else True)
+            lambda: (
+                state._approval_future is not None
+                and not (
+                    state._approval_future.done() if state._approval_future else True
+                )
+            )
         )
+
         def _approval_hint() -> list[tuple[str, str]]:
             card = state.pending_approval
             if card is None:
@@ -440,7 +454,12 @@ class MakeAgentShell:
                 position = f"Turn {n}"
             else:
                 position = f"Turn {idx + 1}/{n}"
-            return [("class:hint.transcript", f"  ► {position}  Ctrl+P prev  Ctrl+N next  ↑↓ scroll  Ctrl+T exit")]
+            return [
+                (
+                    "class:hint.transcript",
+                    f"  ► {position}  Ctrl+P prev  Ctrl+N next  ↑↓ scroll  Ctrl+T exit",
+                )
+            ]
 
         hint_control = FormattedTextControl(
             lambda: (
@@ -452,7 +471,12 @@ class MakeAgentShell:
                     else (
                         [("class:hint.busy", "  ● working…  Ctrl-C cancel turn")]
                         if state.status != AgentStatus.IDLE
-                        else [("class:hint", "  /help /stats /export /exit   Alt+Enter newline   Ctrl+T transcript")]
+                        else [
+                            (
+                                "class:hint",
+                                "  /help /stats /export /exit   Alt+Enter newline   Ctrl+T transcript",
+                            )
+                        ]
                     )
                 )
             )
@@ -476,14 +500,18 @@ class MakeAgentShell:
         # Tools separator line
         tools_sep = Window(
             height=1,
-            content=FormattedTextControl(lambda: [("class:tools.sep", "  ──── tools ────")]),
+            content=FormattedTextControl(
+                lambda: [("class:tools.sep", "  ──── tools ────")]
+            ),
         )
 
         # Footer — session start time
         start_str = self._session_start.strftime("%H:%M:%S")
         footer_window = Window(
             height=1,
-            content=FormattedTextControl(lambda: [("class:footer", f"  Session started {start_str}")]),
+            content=FormattedTextControl(
+                lambda: [("class:footer", f"  Session started {start_str}")]
+            ),
         )
 
         # Turn N frame: response area (top) + separator + tools area (bottom)
@@ -502,12 +530,14 @@ class MakeAgentShell:
         )
 
         # Five-region root layout
-        root = HSplit([
-            header_window,
-            Frame(body=HSplit([composer_input, hint_window]), title=""),
-            turn_frame,
-            footer_window,
-        ])
+        root = HSplit(
+            [
+                header_window,
+                Frame(body=HSplit([composer_input, hint_window]), title=""),
+                turn_frame,
+                footer_window,
+            ]
+        )
 
         layout = Layout(root, focused_element=composer_input)
 
@@ -610,31 +640,33 @@ class MakeAgentShell:
             if fut and not fut.done():
                 fut.set_result(False)
 
-        app_style = Style.from_dict({
-            # Header bar — IDEA Darcula toolbar
-            "header": "bg:#3c3f41 #a9b7c6",
-            "header.sep": "bg:#3c3f41 #515151",
-            "header.alert": "bg:#3c3f41 #cc7832",
-            # Status indicators
-            "status.idle": "bg:#3c3f41 #808080",
-            "status.streaming": "bg:#3c3f41 #6a8759 bold",
-            "status.tool": "bg:#3c3f41 #6897bb bold",
-            "status.approval": "bg:#3c3f41 #ffc66d bold",
-            "status.error": "bg:#3c3f41 #ff6b68 bold",
-            # Frame borders
-            "frame.border": "#4e5254",
-            # Hint bar
-            "hint": "#606366 italic",
-            "hint.busy": "#6897bb italic",
-            "hint.approval": "#ffc66d bold",
-            "hint.approval.sep": "#515151",
-            "hint.approval.call": "#cc7832",
-            "hint.transcript": "#6897bb bold",
-            # Tools separator
-            "tools.sep": "#4e5254",
-            # Footer
-            "footer": "#606366 italic",
-        })
+        app_style = Style.from_dict(
+            {
+                # Header bar — IDEA Darcula toolbar
+                "header": "bg:#3c3f41 #a9b7c6",
+                "header.sep": "bg:#3c3f41 #515151",
+                "header.alert": "bg:#3c3f41 #cc7832",
+                # Status indicators
+                "status.idle": "bg:#3c3f41 #808080",
+                "status.streaming": "bg:#3c3f41 #6a8759 bold",
+                "status.tool": "bg:#3c3f41 #6897bb bold",
+                "status.approval": "bg:#3c3f41 #ffc66d bold",
+                "status.error": "bg:#3c3f41 #ff6b68 bold",
+                # Frame borders
+                "frame.border": "#4e5254",
+                # Hint bar
+                "hint": "#606366 italic",
+                "hint.busy": "#6897bb italic",
+                "hint.approval": "#ffc66d bold",
+                "hint.approval.sep": "#515151",
+                "hint.approval.call": "#cc7832",
+                "hint.transcript": "#6897bb bold",
+                # Tools separator
+                "tools.sep": "#4e5254",
+                # Footer
+                "footer": "#606366 italic",
+            }
+        )
 
         return Application(
             layout=layout,
@@ -661,7 +693,8 @@ class MakeAgentShell:
         stats = self._agent_manager.get_token_stats(self._session_id)
         if not stats:
             self._state.add_alert(
-                "INFO", "No token usage stats available (memory not enabled or no LLM calls yet)."
+                "INFO",
+                "No token usage stats available (memory not enabled or no LLM calls yet).",
             )
         else:
             self._state.add_alert(
@@ -685,7 +718,9 @@ class MakeAgentShell:
         name, *_ = line.strip().split(None, 1)
         handler = self._commands.get(name)
         if handler is None:
-            self._state.add_alert("WARNING", f"Unknown command: /{name}  (type /help for a list)")
+            self._state.add_alert(
+                "WARNING", f"Unknown command: /{name}  (type /help for a list)"
+            )
             return False
         return handler()
 
@@ -698,7 +733,9 @@ class MakeAgentShell:
 
             if isinstance(event, TokenEmitted):
                 # Accumulate tokens into the last response line, splitting on newlines
-                combined = ("\n".join(turn.response_lines) if turn.response_lines else "") + event.text
+                combined = (
+                    "\n".join(turn.response_lines) if turn.response_lines else ""
+                ) + event.text
                 turn.response_lines = combined.split("\n")
                 self._refresh()
 
@@ -729,7 +766,9 @@ class MakeAgentShell:
                 turn.approval = card
                 self._state.pending_approval = card
                 self._state.status = AgentStatus.AWAITING_APPROVAL
-                future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+                future: asyncio.Future[bool] = (
+                    asyncio.get_running_loop().create_future()
+                )
                 self._state._approval_future = future
                 self._refresh()
 
@@ -740,9 +779,13 @@ class MakeAgentShell:
                 self._state._approval_future = None
                 self._state.status = AgentStatus.STREAMING
                 if approved:
-                    await self._command_queue.put(ApproveSkill(request_id=event.request_id))
+                    await self._command_queue.put(
+                        ApproveSkill(request_id=event.request_id)
+                    )
                 else:
-                    await self._command_queue.put(DenySkill(request_id=event.request_id))
+                    await self._command_queue.put(
+                        DenySkill(request_id=event.request_id)
+                    )
                 self._refresh()
 
             elif isinstance(event, TurnFinished):
@@ -751,7 +794,10 @@ class MakeAgentShell:
                     turn.tokens = stats["total_tokens"] - self._state.total_tokens
                     self._state.total_tokens = stats["total_tokens"]
                 self._state.finish_turn(turn)
-                if self._state.current_alert and self._state.current_alert.level == "COMPACT":
+                if (
+                    self._state.current_alert
+                    and self._state.current_alert.level == "COMPACT"
+                ):
                     self._state.current_alert = None
                 self._refresh()
                 break
