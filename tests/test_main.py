@@ -41,7 +41,7 @@ def _run_args(**kwargs) -> argparse.Namespace:
         skills_dir=None,
         disable_builtin_tools=None,
         reasoning_effort="auto",
-        skill_mode="makefile",
+        skill_mode="makefile",  # noqa: S106 - kept for test compatibility
         prompt_cache=False,
         compact_mode="drop",
     )
