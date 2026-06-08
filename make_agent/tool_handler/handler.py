@@ -26,28 +26,12 @@ class ToolHandler:
         disabled: frozenset[str] = frozenset(),
         trusted_skills: frozenset[str] = frozenset(),
     ) -> None:
-        active_backend_schemas = [
-            schema
-            for schema in backend.schemas
-            if schema["function"]["name"] not in disabled
-        ]
-        active_memory_schemas = [
-            schema
-            for schema in MEMORY_SCHEMAS
-            if schema["function"]["name"] not in disabled
-        ]
+        active_backend_schemas = [schema for schema in backend.schemas if schema["function"]["name"] not in disabled]
+        active_memory_schemas = [schema for schema in MEMORY_SCHEMAS if schema["function"]["name"] not in disabled]
         self._schemas: list[dict] = active_backend_schemas + active_memory_schemas
         self._executors: dict[str, Any] = {
-            **{
-                name: executor
-                for name, executor in backend.executors.items()
-                if name not in disabled
-            },
-            **{
-                name: executor
-                for name, executor in get_memory_executors(memory).items()
-                if name not in disabled
-            },
+            **{name: executor for name, executor in backend.executors.items() if name not in disabled},
+            **{name: executor for name, executor in get_memory_executors(memory).items() if name not in disabled},
         }
         self._backend = backend
         self._trusted_skills = trusted_skills
@@ -81,9 +65,6 @@ class ToolHandler:
         if self._schemas:
             return {"tools": self._schemas, "tool_choice": "auto"}
         return {}
-
-    async def setup(self, model: str) -> None:
-        await self._backend.setup(model)
 
     async def execute(
         self,

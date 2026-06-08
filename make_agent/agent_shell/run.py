@@ -41,7 +41,6 @@ async def run(
     compact_mode: str = DEFAULT_COMPACT_MODE,
 ) -> None:
     """Start the interactive shell (or send a single prompt and return)."""
-    await tool_handler.setup(model)
     agent_config = AgentConfig(
         system_prompt=system_prompt,
         model=model,
