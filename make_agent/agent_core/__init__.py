@@ -1,4 +1,4 @@
-from .agent import Agent, AgentManager, SessionNotFoundError
+from .agent import AgentManager, SessionNotFoundError
 from .bridge import (
     ApprovalRequested,
     ApproveSkill,
@@ -11,9 +11,9 @@ from .bridge import (
     Shutdown,
     StartTurn,
     StatusChanged,
+    TokenEmitted,
     ToolFinished,
     ToolStarted,
-    TokenEmitted,
     TurnCancelled,
     TurnFinished,
     TurnStarted,
@@ -58,7 +58,6 @@ __all__ = [
     "DEFAULT_REASONING_EFFORT",
     "DEFAULT_TOOL_TIMEOUT",
     "DEFAULT_USE_PROMPT_CACHE",
-    "Agent",
     "AgentConfig",
     "AgentEvent",
     "AgenticLoop",

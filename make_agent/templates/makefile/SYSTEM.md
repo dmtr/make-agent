@@ -37,7 +37,7 @@ A skill is a directory containing a single file: **skill.mk**.
 
 ```makefile
 define DESCRIPTION
-One-line description shown in list_skills.
+Description shown in list_skills.
 endef
 
 .PHONY: target-name
@@ -49,3 +49,16 @@ target-name:
 Rules for skill.mk:
 - Must contain a `define DESCRIPTION … endef` block with a short description.
 - Call `validate_skill` after creating a skill to confirm it is valid.
+
+### Overwriting a skilll
+
+To overwrite an existing skill, simply call `create_skill` with the same name. This will replace the existing `skill.mk` file with the new content you provide.
+
+
+## Your workflow
+1. Clarify the user's request
+2. Create a plan to fulfill the request, which may include using skills
+3. Identify which skills to use and in what order
+4. If there are no existing skills that can fulfill the request, create a new skill
+5. Implement the plan by executing the necessary skills
+6. Observe the results and iterate as needed until the user's request is fulfilled

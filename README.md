@@ -65,8 +65,7 @@ Priority order (first match wins):
 
 1. `--system PROMPT` flag
 2. `--system-file FILE` flag
-3. `SYSTEM.md` in the current working directory
-4. `~/.make-agent/<project>/makefile/SYSTEM.md` (created from a bundled template on first run)
+3. `~/.make-agent/<project>/makefile/SYSTEM.md` (created from a bundled template on first run)
 
 ## Skills
 
