@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_SYSTEM_PROMPT_FILE = "SYSTEM.md"
 _REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh")
-_SKILL_MODES = ("makefile",)
+_SKILL_MODE = "makefile"
 
 
 def _init_logging(loglevel: str) -> None:
@@ -62,7 +62,7 @@ def _resolve_system_prompt(args: argparse.Namespace) -> str:
         return cwd_system.read_text(encoding="utf-8")
 
     project_system = (
-        mode_dir(getattr(args, "skill_mode", "python")) / _DEFAULT_SYSTEM_PROMPT_FILE
+        mode_dir(_SKILL_MODE) / _DEFAULT_SYSTEM_PROMPT_FILE
     )
     if project_system.exists():
         return project_system.read_text(encoding="utf-8")
@@ -111,16 +111,16 @@ def _cmd_run(args: argparse.Namespace) -> None:
         except OSError as e:
             sys.exit(f"make-agent run: {e}")
 
-    ensure_mode_system_prompt(args.skill_mode)
+    ensure_mode_system_prompt(_SKILL_MODE)
     system_prompt = _resolve_system_prompt(args)
-    disabled = _parse_disabled_tools(args.disable_builtin_tools, args.skill_mode)
+    disabled = _parse_disabled_tools(args.disable_builtin_tools, _SKILL_MODE)
     if args.skills_dir:
-        skills_dir = str(Path(args.skills_dir) / args.skill_mode)
+        skills_dir = str(Path(args.skills_dir) / _SKILL_MODE)
     else:
-        skills_dir = str(default_skills_dir(args.skill_mode))
+        skills_dir = str(default_skills_dir(_SKILL_MODE))
 
-    memory = Memory(mode_memory_path(args.skill_mode))
-    backend = _build_backend(args.skill_mode, skills_dir, args.tool_timeout)
+    memory = Memory(mode_memory_path(_SKILL_MODE))
+    backend = _build_backend(_SKILL_MODE, skills_dir, args.tool_timeout)
     trusted_skills = _parse_trusted_skills(getattr(args, "trusted_skills", None))
     tool_handler = ToolHandler(backend, memory, disabled, trusted_skills)
 
@@ -199,13 +199,6 @@ def main() -> None:
         default=600,
         metavar="SECONDS",
         help="Timeout in seconds for each tool call (default: 600)",
-    )
-    run_p.add_argument(
-        "--skill-mode",
-        choices=_SKILL_MODES,
-        default="makefile",
-        metavar="MODE",
-        help="Skill backend mode to use (default: makefile)",
     )
     run_p.add_argument(
         "--skills-dir",
