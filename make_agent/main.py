@@ -102,6 +102,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
     ensure_mode_system_prompt(args.skill_mode)
     system_prompt = _resolve_system_prompt(args)
+
     disabled = _parse_disabled_tools(args.disable_builtin_tools, args.skill_mode)
     if args.skills_dir:
         skills_dir = str(Path(args.skills_dir) / args.skill_mode)
