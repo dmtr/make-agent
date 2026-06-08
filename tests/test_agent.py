@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import anthropic
 import pytest
-from make_agent.agent_core import AgentConfig
+from make_agent.agent_core import AgentConfig, AgenticLoop
+from make_agent.memory import Memory
 from make_agent.provider import TextDelta, ToolCallDelta, ToolCallStart, UsageDelta
 from make_agent.provider.anthropic import MAX_RETRIES, _parse_retry_after
-
-
-# ── MockProvider ──────────────────────────────────────────────────────────────
+from make_agent.skill_backend import MakefileSkillBackend
+from make_agent.tool_handler import ToolHandler
 
 
 class MockProvider:
@@ -26,9 +26,6 @@ class MockProvider:
         self._call_count += 1
         for chunk in seq:
             yield chunk
-
-
-# ── Stream helpers ────────────────────────────────────────────────────────────
 
 
 def _text_chunks(content: str, input_tokens: int = 0, output_tokens: int = 0) -> list:
@@ -46,9 +43,6 @@ def _tool_call_chunks(tool_id: str, tool_name: str, arguments: str, index: int =
     if arguments:
         chunks.append(ToolCallDelta(index=index, args_delta=arguments))
     return chunks
-
-
-# ── TestParseRetryAfter ───────────────────────────────────────────────────────
 
 
 def _make_rate_limit_error(
@@ -92,12 +86,10 @@ class TestParseRetryAfter:
         assert _parse_retry_after(err) is None
 
 
-# ── TestAnthropicProviderRetry ────────────────────────────────────────────────
-
-
 class TestAnthropicProviderRetry:
     def _make_provider(self):
         from make_agent.provider.anthropic import AnthropicProvider
+
         return AnthropicProvider()
 
     async def test_succeeds_on_first_attempt(self):
@@ -156,21 +148,12 @@ class TestAnthropicProviderRetry:
         mock_sleep.assert_not_called()
 
 
-# ── Agent safety guards ───────────────────────────────────────────────────────
-
-
 class TestAgentSafetyGuards:
     def _make_agent(self, tmp_path, provider):
-        from make_agent.agent_core import Agent, AgentConfig
-        from make_agent.memory import Memory
-        from make_agent.skill_backend import MakefileSkillBackend
-        from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
-        agent = Agent(
+        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        agent = AgenticLoop(
             AgentConfig(
                 system_prompt="You are a helper.",
                 model="claude-3-5-haiku-20241022",
@@ -219,20 +202,13 @@ class TestAssistantMessageContent:
 
     async def test_tool_call_without_text_has_empty_string_content(self, tmp_path):
         """When the LLM streams a tool call with no text, the assistant message content must be ''."""
-        from make_agent.agent_core import Agent, AgentConfig
-        from make_agent.memory import Memory
-        from make_agent.skill_backend import MakefileSkillBackend
-        from make_agent.tool_handler import ToolHandler
-
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
+        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
         provider = MockProvider(
             _tool_call_chunks("tc1", "say_hi", "{}"),
             _text_chunks("all done"),
         )
-        agent = Agent(
+        agent = AgenticLoop(
             AgentConfig(
                 system_prompt="You are a helper.",
                 model="claude-3-5-haiku-20241022",
@@ -257,16 +233,10 @@ class TestAssistantMessageContent:
         result = await agent.arun("call say_hi")
 
         assert result == "all done"
-        assistant_msgs = [
-            m
-            for m in agent.messages
-            if m.get("role") == "assistant" and "tool_calls" in m
-        ]
+        assistant_msgs = [m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m]
         assert assistant_msgs, "expected at least one assistant message with tool_calls"
         for msg in assistant_msgs:
-            assert msg["content"] is not None, (
-                "assistant message content must not be None"
-            )
+            assert msg["content"] is not None, "assistant message content must not be None"
             assert isinstance(msg["content"], str)
 
 
@@ -274,16 +244,9 @@ class TestAnthropicParallelToolCalls:
     """Native Anthropic SDK assigns correct sequential indices for parallel tool calls."""
 
     def _make_agent(self, tmp_path, provider):
-        from make_agent.agent_core import Agent, AgentConfig
-        from make_agent.memory import Memory
-        from make_agent.skill_backend import MakefileSkillBackend
-        from make_agent.tool_handler import ToolHandler
-
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
-        agent = Agent(
+        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        agent = AgenticLoop(
             AgentConfig(
                 system_prompt="You are a helper.",
                 model="anthropic/claude-3-5-sonnet-20241022",
@@ -312,10 +275,7 @@ class TestAnthropicParallelToolCalls:
 
     async def test_parallel_tool_calls_are_kept_separate(self, tmp_path):
         """Two parallel tool calls with sequential indices must each be executed."""
-        parallel_chunks = (
-            _tool_call_chunks("toolu_A", "tool_a", '{"x": 1}', index=0)
-            + _tool_call_chunks("toolu_B", "tool_b", '{"x": 2}', index=1)
-        )
+        parallel_chunks = _tool_call_chunks("toolu_A", "tool_a", '{"x": 1}', index=0) + _tool_call_chunks("toolu_B", "tool_b", '{"x": 2}', index=1)
         provider = MockProvider(parallel_chunks, _text_chunks("done"))
         agent = self._make_agent(tmp_path, provider)
 
@@ -323,19 +283,14 @@ class TestAnthropicParallelToolCalls:
 
         assert result == "done"
         tool_msgs = [m for m in agent.messages if m.get("role") == "tool"]
-        assert len(tool_msgs) == 2, (
-            f"expected 2 tool results, got {len(tool_msgs)}: {tool_msgs}"
-        )
+        assert len(tool_msgs) == 2, f"expected 2 tool results, got {len(tool_msgs)}: {tool_msgs}"
         tool_call_ids = {m["tool_call_id"] for m in tool_msgs}
         assert "toolu_A" in tool_call_ids
         assert "toolu_B" in tool_call_ids
 
     async def test_parallel_tool_calls_have_correct_arguments(self, tmp_path):
         """Arguments must not be concatenated across parallel tool calls."""
-        parallel_chunks = (
-            _tool_call_chunks("toolu_A", "tool_a", '{"x": 42}', index=0)
-            + _tool_call_chunks("toolu_B", "tool_b", '{"x": 99}', index=1)
-        )
+        parallel_chunks = _tool_call_chunks("toolu_A", "tool_a", '{"x": 42}', index=0) + _tool_call_chunks("toolu_B", "tool_b", '{"x": 99}', index=1)
         provider = MockProvider(parallel_chunks, _text_chunks("done"))
         agent = self._make_agent(tmp_path, provider)
 
@@ -354,12 +309,8 @@ class TestAnthropicParallelToolCalls:
 
         await agent.arun("run both tools")
 
-        assert received.get("tool_a") == {"x": 42}, (
-            f"tool_a got wrong args: {received.get('tool_a')}"
-        )
-        assert received.get("tool_b") == {"x": 99}, (
-            f"tool_b got wrong args: {received.get('tool_b')}"
-        )
+        assert received.get("tool_a") == {"x": 42}, f"tool_a got wrong args: {received.get('tool_a')}"
+        assert received.get("tool_b") == {"x": 99}, f"tool_b got wrong args: {received.get('tool_b')}"
 
 
 class TestAnthropicEmptyArguments:
@@ -369,16 +320,10 @@ class TestAnthropicEmptyArguments:
     """
 
     def _make_agent(self, tmp_path, provider):
-        from make_agent.agent_core import Agent, AgentConfig
-        from make_agent.memory import Memory
-        from make_agent.skill_backend import MakefileSkillBackend
-        from make_agent.tool_handler import ToolHandler
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
-        agent = Agent(
+        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        agent = AgenticLoop(
             AgentConfig(
                 system_prompt="You are a helper.",
                 model="anthropic/claude-3-5-haiku-20241022",
@@ -415,21 +360,12 @@ class TestAnthropicEmptyArguments:
         assert "malformed" not in tool_msgs[0]["content"]
 
         # The stored assistant message must have valid JSON arguments.
-        assistant_msgs = [
-            m
-            for m in agent.messages
-            if m.get("role") == "assistant" and "tool_calls" in m
-        ]
+        assistant_msgs = [m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m]
         assert assistant_msgs
         stored_args = assistant_msgs[0]["tool_calls"][0]["function"]["arguments"]
         import json
 
-        assert json.loads(stored_args) == {}, (
-            f"stored arguments must be valid JSON '{{}}', got {stored_args!r}"
-        )
-
-
-# ── TestAgentSystemPromptCache ────────────────────────────────────────────────
+        assert json.loads(stored_args) == {}, f"stored arguments must be valid JSON '{{}}', got {stored_args!r}"
 
 
 class TestAgentSystemPromptCache:
@@ -440,11 +376,6 @@ class TestAgentSystemPromptCache:
     """
 
     def _make_agent(self, tmp_path, model: str, use_prompt_cache: bool):
-        from make_agent.agent_core import Agent
-        from make_agent.memory import Memory
-        from make_agent.skill_backend import MakefileSkillBackend
-        from make_agent.tool_handler import ToolHandler
-
         memory = Memory(tmp_path / "memory.db")
         tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
         config = AgentConfig(
@@ -453,7 +384,7 @@ class TestAgentSystemPromptCache:
             use_prompt_cache=use_prompt_cache,
             provider=MockProvider(),  # no actual API calls
         )
-        return Agent(config, tool_handler)
+        return AgenticLoop(config, tool_handler)
 
     def test_no_cache_stores_plain_string(self, tmp_path):
         agent = self._make_agent(tmp_path, "anthropic/claude-3-5-haiku-20241022", False)
@@ -476,5 +407,3 @@ class TestAgentSystemPromptCache:
         system_msg = agent.messages[0]
         assert system_msg["role"] == "system"
         assert system_msg["content"] == "You are a helpful assistant."
-
-

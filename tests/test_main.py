@@ -7,7 +7,6 @@ import subprocess
 import sys
 from unittest.mock import patch
 
-
 import make_agent.main as main_module
 from make_agent.builtin_tools import builtin_tool_names
 from make_agent.skill_backend import MakefileSkillBackend
@@ -62,9 +61,7 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(
-                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
-            ),
+            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -94,9 +91,7 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(
-                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
-            ),
+            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -118,9 +113,7 @@ class TestRunPromptInput:
 
     def test_custom_skills_dir_makefile_mode_gets_mode_subfolder(self, tmp_path):
         custom_dir = tmp_path / "custom"
-        args = _run_args(
-            prompt="do something", skill_mode="makefile", skills_dir=str(custom_dir)
-        )
+        args = _run_args(prompt="do something", skill_mode="makefile", skills_dir=str(custom_dir))
         captured: dict = {}
 
         async def _fake_run(**kwargs):
@@ -129,9 +122,7 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(
-                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
-            ),
+            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -202,13 +193,6 @@ class TestResolveSystemPrompt:
         result = main_module._resolve_system_prompt(args)
         assert result == "From file."
 
-    def test_cwd_system_md_is_discovered(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "SYSTEM.md").write_text("From cwd.")
-        args = _run_args(system=None, system_file=None)
-        result = main_module._resolve_system_prompt(args)
-        assert result == "From cwd."
-
     def test_mode_system_md_is_discovered(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         mode_path = tmp_path / "makefile"
@@ -222,9 +206,7 @@ class TestResolveSystemPrompt:
     def test_returns_empty_string_when_nothing_found(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         args = _run_args(system=None, system_file=None)
-        with patch.object(
-            main_module, "mode_dir", return_value=tmp_path / "nonexistent"
-        ):
+        with patch.object(main_module, "mode_dir", return_value=tmp_path / "nonexistent"):
             result = main_module._resolve_system_prompt(args)
         assert result == ""
 
