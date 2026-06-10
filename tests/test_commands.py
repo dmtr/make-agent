@@ -4,6 +4,6 @@ from make_agent.agent_core import _render_html
 
 
 def test_render_html_escapes_model_name():
-    html = _render_html([], '<img src=x onerror=alert(1)>')
-    assert '<img src=x onerror=alert(1)>' not in html
+    html = _render_html([], "<img src=x onerror=alert(1)>")
+    assert "<img src=x onerror=alert(1)>" not in html
     assert "&lt;img src=x onerror=alert(1)&gt;" in html

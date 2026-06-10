@@ -49,17 +49,26 @@ class TestMemorySchema:
 
     def test_fts_table_exists(self, mem):
         conn = mem._get_conn()
-        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
         assert "messages_fts" in tables
 
     def test_user_memory_view_exists(self, mem):
         conn = mem._get_conn()
-        views = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='view'")}
+        views = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='view'")
+        }
         assert "user_memory" in views
 
     def test_agent_memory_view_exists(self, mem):
         conn = mem._get_conn()
-        views = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='view'")}
+        views = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='view'")
+        }
         assert "agent_memory" in views
 
     def test_idempotent_init(self, tmp_path):
@@ -165,10 +174,16 @@ class TestFTSTriggers:
         mem.store("user", "old phrase aaa")
         conn = mem._get_conn()
         row_id = conn.execute("SELECT id FROM messages").fetchone()[0]
-        conn.execute("UPDATE messages SET message = 'new phrase bbb' WHERE id = ?", (row_id,))
+        conn.execute(
+            "UPDATE messages SET message = 'new phrase bbb' WHERE id = ?", (row_id,)
+        )
         conn.commit()
-        old_hits = conn.execute("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("aaa",)).fetchall()
-        new_hits = conn.execute("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("bbb",)).fetchall()
+        old_hits = conn.execute(
+            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("aaa",)
+        ).fetchall()
+        new_hits = conn.execute(
+            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?", ("bbb",)
+        ).fetchall()
         assert len(old_hits) == 0
         assert len(new_hits) == 1
 
@@ -255,7 +270,9 @@ class TestMemorySearch:
                 (date, "user", msg),
             )
         conn.commit()
-        result = mem.search_user("message", from_date="2026-02-01", to_date="2026-03-01")
+        result = mem.search_user(
+            "message", from_date="2026-02-01", to_date="2026-03-01"
+        )
         assert "february message" in result
         assert "january message" not in result
         assert "march message" not in result
@@ -379,14 +396,20 @@ class TestMemoryBuiltinTools:
         schemas = MEMORY_SCHEMAS
         for schema in schemas:
             params = schema["function"]["parameters"]
-            if schema["function"]["name"] in ("search_user_memory", "search_agent_memory"):
+            if schema["function"]["name"] in (
+                "search_user_memory",
+                "search_agent_memory",
+            ):
                 assert "query" in params["required"]
 
     def test_memory_schemas_have_optional_params(self):
         schemas = MEMORY_SCHEMAS
         for schema in schemas:
             props = schema["function"]["parameters"]["properties"]
-            if schema["function"]["name"] in ("search_user_memory", "search_agent_memory"):
+            if schema["function"]["name"] in (
+                "search_user_memory",
+                "search_agent_memory",
+            ):
                 assert "limit" in props
                 assert "from_date" in props
                 assert "to_date" in props
@@ -427,7 +450,9 @@ class TestMemoryBuiltinTools:
 
     def test_get_recent_messages_schema_has_date_params(self):
         schemas = MEMORY_SCHEMAS
-        schema = next(s for s in schemas if s["function"]["name"] == "get_recent_messages")
+        schema = next(
+            s for s in schemas if s["function"]["name"] == "get_recent_messages"
+        )
         props = schema["function"]["parameters"]["properties"]
         assert "limit" in props
         assert "from_date" in props
@@ -447,8 +472,15 @@ class TestAgentAutoStorage:
         from tests.test_agent import MockProvider
 
         provider = MockProvider([TextDelta(text="the reply")])
-        config = AgentConfig(system_prompt="You are a helper.", model="claude-3-5-haiku-latest", skills_dir=str(tmp_path), provider=provider)
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), mem)
+        config = AgentConfig(
+            system_prompt="You are a helper.",
+            model="claude-3-5-haiku-latest",
+            skills_dir=str(tmp_path),
+            provider=provider,
+        )
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), mem
+        )
         manager = AgentManager(tool_handler, middlewares=[SessionMiddleware(mem)])
         session_id = manager.create_session(config)
         return manager, session_id
@@ -459,7 +491,9 @@ class TestAgentAutoStorage:
         await manager.arun_agent(session_id, "hello from user")
 
         conn = mem._get_conn()
-        row = conn.execute("SELECT sender, message FROM messages WHERE sender='user'").fetchone()
+        row = conn.execute(
+            "SELECT sender, message FROM messages WHERE sender='user'"
+        ).fetchone()
         assert row is not None
         assert row["message"] == "hello from user"
 
@@ -469,7 +503,9 @@ class TestAgentAutoStorage:
         await manager.arun_agent(session_id, "hello from user")
 
         conn = mem._get_conn()
-        row = conn.execute("SELECT sender, message FROM messages WHERE sender='agent'").fetchone()
+        row = conn.execute(
+            "SELECT sender, message FROM messages WHERE sender='agent'"
+        ).fetchone()
         assert row is not None
         assert row["message"] == "the reply"
 
@@ -489,12 +525,23 @@ class TestMemoryAlwaysActive:
 
         memory = Memory(tmp_path / "memory.db")
         provider = MockProvider([TextDelta(text="hi")])
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
         manager = AgentManager(tool_handler, middlewares=[SessionMiddleware(memory)])
-        config = AgentConfig(system_prompt="", model="claude-3-5-haiku-latest", skills_dir=str(tmp_path), project_dir=tmp_path, provider=provider)
+        config = AgentConfig(
+            system_prompt="",
+            model="claude-3-5-haiku-latest",
+            skills_dir=str(tmp_path),
+            project_dir=tmp_path,
+            provider=provider,
+        )
         manager.create_session(config)
 
-        assert any(isinstance(mw, SessionMiddleware) and mw._memory is memory for mw in manager._middlewares)
+        assert any(
+            isinstance(mw, SessionMiddleware) and mw._memory is memory
+            for mw in manager._middlewares
+        )
 
 
 # ── Token usage ───────────────────────────────────────────────────────────────
@@ -522,42 +569,41 @@ class TestFTSSanitization:
 
     def test_removes_parentheses(self, mem):
         # Parentheses removed, but OR still present (will be removed in next step)
-        result = Memory._sanitize_fts_query('(foo OR bar)')
-        assert 'OR' not in result  # OR is stripped by the boolean operator removal
-        assert '(' not in result
-        assert ')' not in result
+        result = Memory._sanitize_fts_query("(foo OR bar)")
+        assert "OR" not in result  # OR is stripped by the boolean operator removal
+        assert "(" not in result
+        assert ")" not in result
 
     def test_removes_boolean_operators(self, mem):
-        sanitized = Memory._sanitize_fts_query('hello AND world OR foo')
-        assert 'AND' not in sanitized
-        assert 'OR' not in sanitized
-        assert 'NOT' not in sanitized
+        sanitized = Memory._sanitize_fts_query("hello AND world OR foo")
+        assert "AND" not in sanitized
+        assert "OR" not in sanitized
+        assert "NOT" not in sanitized
         # Should still contain the keywords
-        assert 'hello' in sanitized
-        assert 'world' in sanitized
-        assert 'foo' in sanitized
+        assert "hello" in sanitized
+        assert "world" in sanitized
+        assert "foo" in sanitized
 
     def test_removes_near_function(self, mem):
-        sanitized = Memory._sanitize_fts_query('NEAR(foo bar 5)')
+        sanitized = Memory._sanitize_fts_query("NEAR(foo bar 5)")
         # The entire NEAR() call including its arguments is removed
-        assert 'NEAR' not in sanitized
-        assert 'foo' not in sanitized
-        assert 'bar' not in sanitized
-        assert '5' not in sanitized
-        assert sanitized == ''
+        assert "NEAR" not in sanitized
+        assert "foo" not in sanitized
+        assert "bar" not in sanitized
+        assert "5" not in sanitized
+        assert sanitized == ""
 
     def test_removes_column_filters(self, mem):
-        sanitized = Memory._sanitize_fts_query('title:admin message:root')
-        assert ':' not in sanitized
-        assert 'admin' in sanitized
-        assert 'root' in sanitized
+        sanitized = Memory._sanitize_fts_query("title:admin message:root")
+        assert ":" not in sanitized
+        assert "admin" in sanitized
+        assert "root" in sanitized
 
     def test_removes_prefix_operators(self, mem):
-        Memory._sanitize_fts_query('+hello -world')
+        Memory._sanitize_fts_query("+hello -world")
 
 
 # ── FTS5 Injection Reproduction Tests ─────────────────────────────────────────
-
 
 
 # ── FTS5 Injection Reproduction Tests ─────────────────────────────────────────
@@ -581,7 +627,7 @@ class TestFTS5InjectionReproduction:
         mem.store("agent", "public agent message here")
 
         # Attacker tries to use column filter to search across all senders
-        result = mem.search_user('sender:user secret')
+        result = mem.search_user("sender:user secret")
         # After sanitization, query becomes "user secret"
         # Should only return user messages (via view filter), not agent messages
         assert "secret user message here" in result
@@ -603,7 +649,7 @@ class TestFTS5InjectionReproduction:
         mem.store("user", "password public info")
 
         # Attacker tries to use + to require a term
-        result = mem.search_user('+password -secret')
+        result = mem.search_user("+password -secret")
         # After sanitization, should match both messages (no +/- operators)
         assert isinstance(result, str)
 
@@ -612,7 +658,7 @@ class TestFTS5InjectionReproduction:
         mem.store("user", "login credentials stolen")
 
         # Attacker tries to use NEAR to find words in proximity
-        result = mem.search_user('NEAR(login credentials 2)')
+        result = mem.search_user("NEAR(login credentials 2)")
         # Should be sanitized - either finds it or returns no results safely
         assert isinstance(result, str)
 
@@ -623,7 +669,7 @@ class TestFTS5InjectionReproduction:
         mem.store("user", "third message")
 
         # Attacker tries to use AND/OR to manipulate which results are returned
-        result = mem.search_user('first OR second OR third')
+        result = mem.search_user("first OR second OR third")
         # Should work as simple keyword search after sanitization
         assert isinstance(result, str)
 
@@ -632,7 +678,7 @@ class TestFTS5InjectionReproduction:
         mem.store("user", "foo bar baz qux")
 
         # Attacker tries to use parentheses for complex grouping
-        result = mem.search_user('(foo OR bar) AND (baz OR qux)')
+        result = mem.search_user("(foo OR bar) AND (baz OR qux)")
         # Should be sanitized to simple keyword search
         assert isinstance(result, str)
 
@@ -641,9 +687,30 @@ class TestFTS5InjectionReproduction:
         mem.store("user", "test message")
 
         # Various special characters that might be used in injection
-        special_chars = ['{', '}', '[', ']', '<', '>', '!', '@', '#', '$', '%', '^', '&', '*', '=', '+', '\\', '|', '~', '`']
+        special_chars = [
+            "{",
+            "}",
+            "[",
+            "]",
+            "<",
+            ">",
+            "!",
+            "@",
+            "#",
+            "$",
+            "%",
+            "^",
+            "&",
+            "*",
+            "=",
+            "+",
+            "\\",
+            "|",
+            "~",
+            "`",
+        ]
         for ch in special_chars:
-            result = mem.search_user(f'test {ch} injection {ch}')
+            result = mem.search_user(f"test {ch} injection {ch}")
             assert isinstance(result, str), f"Failed with character: {repr(ch)}"
 
     def test_injection_attempt_mixed_attack_vector(self, mem):
@@ -661,7 +728,7 @@ class TestFTS5InjectionReproduction:
         """Test that unicode characters don't bypass sanitization."""
         mem.store("user", "test message")
 
-        unicode_attack = 'test \u2019injection\u2019 \u201cquote\u201d'
+        unicode_attack = "test \u2019injection\u2019 \u201cquote\u201d"
         result = mem.search_user(unicode_attack)
         # Should handle gracefully without crashing
         assert isinstance(result, str)
@@ -670,7 +737,7 @@ class TestFTS5InjectionReproduction:
         """Test that null bytes don't bypass sanitization."""
         mem.store("user", "test message")
 
-        null_attack = 'test\x00injection\x00attack'
+        null_attack = "test\x00injection\x00attack"
         result = mem.search_user(null_attack)
         # Should handle gracefully
         assert isinstance(result, str)
@@ -678,48 +745,59 @@ class TestFTS5InjectionReproduction:
     def test_sanitize_fts_query_removes_column_prefixes(self, mem):
         """Verify column prefix patterns are stripped."""
         test_cases = [
-            ('sender:user', 'user'),
-            ('message:test', 'test'),
-            ('created_at:2024', '2024'),
-            ('any_column:value', 'value'),
+            ("sender:user", "user"),
+            ("message:test", "test"),
+            ("created_at:2024", "2024"),
+            ("any_column:value", "value"),
         ]
         for input_str, expected_keyword in test_cases:
             sanitized = Memory._sanitize_fts_query(input_str)
-            assert ':' not in sanitized, f"Column filter not removed from: {input_str}"
-            assert expected_keyword in sanitized, f"Keyword missing from sanitized: {sanitized}"
+            assert ":" not in sanitized, f"Column filter not removed from: {input_str}"
+            assert expected_keyword in sanitized, (
+                f"Keyword missing from sanitized: {sanitized}"
+            )
 
     def test_sanitize_fts_query_removes_all_boolean_operators(self, mem):
         """Verify all boolean operators are stripped regardless of case."""
         test_cases = [
-            ('hello AND world', 'hello world'),
-            ('hello or world', 'hello world'),
-            ('hello Or World', 'hello world'),
-            ('hello NOT world', 'hello world'),
-            ('hello not WORLD', 'hello world'),
+            ("hello AND world", "hello world"),
+            ("hello or world", "hello world"),
+            ("hello Or World", "hello world"),
+            ("hello NOT world", "hello world"),
+            ("hello not WORLD", "hello world"),
         ]
         for input_str, expected in test_cases:
             sanitized = Memory._sanitize_fts_query(input_str)
             # Check that boolean operators are not present as standalone words
             # (not as substrings of other words like 'WORLD' containing 'OR')
             sanitized_upper = sanitized.upper()
-            assert ' AND ' not in sanitized_upper, f"AND found in: {sanitized}"
-            assert ' OR ' not in sanitized_upper, f"OR found in: {sanitized}"
-            assert ' NOT ' not in sanitized_upper, f"NOT found in: {sanitized}"
+            assert " AND " not in sanitized_upper, f"AND found in: {sanitized}"
+            assert " OR " not in sanitized_upper, f"OR found in: {sanitized}"
+            assert " NOT " not in sanitized_upper, f"NOT found in: {sanitized}"
             # Also check at boundaries
-            assert not sanitized_upper.startswith('AND ') and not sanitized_upper.endswith(' AND'), \
+            assert not sanitized_upper.startswith(
+                "AND "
+            ) and not sanitized_upper.endswith(" AND"), (
                 f"AND at boundary found in: {sanitized}"
-            assert not sanitized_upper.startswith('OR ') and not sanitized_upper.endswith(' OR'), \
+            )
+            assert not sanitized_upper.startswith(
+                "OR "
+            ) and not sanitized_upper.endswith(" OR"), (
                 f"OR at boundary found in: {sanitized}"
-            assert not sanitized_upper.startswith('NOT ') and not sanitized_upper.endswith(' NOT'), \
+            )
+            assert not sanitized_upper.startswith(
+                "NOT "
+            ) and not sanitized_upper.endswith(" NOT"), (
                 f"NOT at boundary found in: {sanitized}"
+            )
 
     def test_sanitize_fts_query_preserves_safe_text(self, mem):
         """Verify that safe, simple queries pass through unchanged."""
         safe_queries = [
-            'hello world',
-            'python programming',
-            'test message here',
-            'foo bar baz',
+            "hello world",
+            "python programming",
+            "test message here",
+            "foo bar baz",
         ]
         for query in safe_queries:
             sanitized = Memory._sanitize_fts_query(query)
@@ -727,52 +805,54 @@ class TestFTS5InjectionReproduction:
 
     def test_sanitize_fts_query_handles_empty_string(self, mem):
         """Verify empty input returns empty string."""
-        sanitized = Memory._sanitize_fts_query('')
-        assert sanitized == ''
+        sanitized = Memory._sanitize_fts_query("")
+        assert sanitized == ""
 
     def test_sanitize_fts_query_handles_only_operators(self, mem):
         """Verify queries with only operators return empty string or safe keyword."""
         # These should be fully cleaned
-        for op_str in ['AND OR NOT', '+ -', '(){}[]', '""', 'NEAR()']:
+        for op_str in ["AND OR NOT", "+ -", "(){}[]", '""', "NEAR()"]:
             sanitized = Memory._sanitize_fts_query(op_str)
-            assert sanitized.strip() == '', \
+            assert sanitized.strip() == "", (
                 f"Operators not fully removed from: {op_str} -> {repr(sanitized)}"
+            )
 
         # AND(OR(NOT())) becomes ANDORNOT after paren removal
         # This is treated as a single keyword, not exploitable
-        sanitized = Memory._sanitize_fts_query('AND(OR(NOT()))')
-        assert sanitized == 'ANDORNOT'  # Single keyword, not FTS5 operators
+        sanitized = Memory._sanitize_fts_query("AND(OR(NOT()))")
+        assert sanitized == "ANDORNOT"  # Single keyword, not FTS5 operators
 
     def test_sanitize_fts_query_handles_mixed_content(self, mem):
         """Verify mixed safe text and operators are handled correctly."""
         test_cases = [
-            ('hello AND world', 'hello world'),
-            ('foo bar +baz', 'foo bar baz'),
-            ('test -message', 'test message'),
-            ('(hello world)', 'hello world'),
-            ('NEAR(foo bar)', ''),
-            ('title:admin user:test', 'admin test'),
+            ("hello AND world", "hello world"),
+            ("foo bar +baz", "foo bar baz"),
+            ("test -message", "test message"),
+            ("(hello world)", "hello world"),
+            ("NEAR(foo bar)", ""),
+            ("title:admin user:test", "admin test"),
         ]
         for input_str, expected in test_cases:
             sanitized = Memory._sanitize_fts_query(input_str)
-            assert sanitized == expected, \
+            assert sanitized == expected, (
                 f"Expected {repr(expected)}, got {repr(sanitized)} for input {repr(input_str)}"
+            )
 
     def test_search_does_not_return_cross_sender_data(self, mem):
         """Verify that search_user() only returns user messages."""
         mem.store("user", "secret user data")
         mem.store("agent", "secret agent data")
 
-        result = mem.search_user('secret')
-        assert 'secret user data' in result
-        assert 'secret agent data' not in result
+        result = mem.search_user("secret")
+        assert "secret user data" in result
+        assert "secret agent data" not in result
 
     def test_search_does_not_crash_on_very_long_query(self, mem):
         """Verify that very long queries don't cause crashes."""
         mem.store("user", "test")
 
         # Create a very long query string
-        long_query = ' '.join(['keyword'] * 1000)
+        long_query = " ".join(["keyword"] * 1000)
         result = mem.search_user(long_query)
         assert isinstance(result, str)
 
@@ -781,36 +861,38 @@ class TestFTS5InjectionReproduction:
         mem.store("user", "test")
 
         # Create a very long malicious query
-        injection_parts = ['AND', 'OR', 'NOT', '+', '-', '()', '{}', '[]']
-        long_injection = ' '.join([part * 10 for part in injection_parts] * 100)
+        injection_parts = ["AND", "OR", "NOT", "+", "-", "()", "{}", "[]"]
+        long_injection = " ".join([part * 10 for part in injection_parts] * 100)
         result = mem.search_user(long_injection)
         assert isinstance(result, str)
 
     def test_sanitize_fts_query_handles_nested_functions(self, mem):
         """Verify nested function calls are handled."""
         test_cases = [
-            'NEAR(NEAR(foo bar) baz)',
-            'NEAR(foo NEAR(bar baz))',
-            '(NEAR(foo bar) AND NEAR(baz qux))',
+            "NEAR(NEAR(foo bar) baz)",
+            "NEAR(foo NEAR(bar baz))",
+            "(NEAR(foo bar) AND NEAR(baz qux))",
         ]
         for input_str in test_cases:
             sanitized = Memory._sanitize_fts_query(input_str)
             # NEAR and its contents should be removed
-            assert 'NEAR' not in sanitized.upper(), \
+            assert "NEAR" not in sanitized.upper(), (
                 f"NEAR found in sanitized: {sanitized} for input {repr(input_str)}"
+            )
 
     def test_sanitize_fts_query_handles_column_filter_variations(self, mem):
         """Verify various column filter patterns are stripped."""
         test_cases = [
-            'column:',
-            'column:value',
-            'my_column:my_value',
-            'a:b c:d e:f',
+            "column:",
+            "column:value",
+            "my_column:my_value",
+            "a:b c:d e:f",
         ]
         for input_str in test_cases:
             sanitized = Memory._sanitize_fts_query(input_str)
-            assert ':' not in sanitized, \
+            assert ":" not in sanitized, (
                 f"Colon found in sanitized: {repr(sanitized)} for input {repr(input_str)}"
+            )
 
     def test_search_integration_with_real_data(self, mem):
         """Integration test with realistic data and attack attempts."""
@@ -821,22 +903,24 @@ class TestFTS5InjectionReproduction:
         mem.store("agent", "Please use strong passwords")
 
         # Normal search should work
-        result = mem.search_user('password')
-        assert 'password' in result.lower()
+        result = mem.search_user("password")
+        assert "password" in result.lower()
 
         # Attack attempts should not expose agent messages
         attack_attempts = [
-            'password AND sender:agent',
-            'password OR (sender:user)',
-            '(password OR secret) NOT agent',
-            '+password -secret',
-            'NEAR(password secret 1)',
+            "password AND sender:agent",
+            "password OR (sender:user)",
+            "(password OR secret) NOT agent",
+            "+password -secret",
+            "NEAR(password secret 1)",
         ]
         for attack in attack_attempts:
             result = mem.search_user(attack)
             # Should only contain user messages
-            assert 'I can help you with that' not in result
-            assert 'Please use strong passwords' not in result
+            assert "I can help you with that" not in result
+            assert "Please use strong passwords" not in result
+
+
 class TestSearchSecurity:
     """Integration tests for FTS5 injection prevention."""
 
@@ -849,19 +933,19 @@ class TestSearchSecurity:
 
     def test_search_handles_boolean_operators_safely(self, mem):
         mem.store("user", "hello world")
-        result = mem.search_user('hello AND world')
+        result = mem.search_user("hello AND world")
         # Should work as keyword search (both keywords present)
         assert "hello world" in result
 
     def test_search_handles_near_function_safely(self, mem):
         mem.store("user", "hello world")
-        result = mem.search_user('NEAR(hello world)')
+        result = mem.search_user("NEAR(hello world)")
         # Should be sanitized to keyword-only search
         assert "hello world" in result or "No results found" in result
 
     def test_search_handles_column_filter_safely(self, mem):
         mem.store("user", "admin message")
-        result = mem.search_user('message:admin')
+        result = mem.search_user("message:admin")
         # Should sanitize to keyword-only search
         assert "admin message" in result or "No results found" in result
 
@@ -874,7 +958,7 @@ class TestSearchSecurity:
 
     def test_search_with_parentheses_safe(self, mem):
         mem.store("user", "foo bar baz")
-        result = mem.search_user('(foo OR bar)')
+        result = mem.search_user("(foo OR bar)")
         # After sanitization, should search for "foo bar"
         assert "foo bar baz" in result or "No results found" in result
 
@@ -886,7 +970,7 @@ class TestSearchSecurity:
 
     def test_search_with_prefix_operators_safe(self, mem):
         mem.store("user", "hello world test")
-        result = mem.search_user('+hello -world')
+        result = mem.search_user("+hello -world")
         # After sanitization, should search for "hello world"
         assert "hello world" in result or "No results found" in result
 
@@ -904,7 +988,7 @@ class TestSearchSecurity:
     def test_search_does_not_crash_on_empty_query(self, mem):
         mem.store("user", "some message")
         # Empty query after sanitization should not crash
-        result = mem.search_user('AND OR NOT')
+        result = mem.search_user("AND OR NOT")
         assert "No results found" in result
 
     def test_search_does_not_crash_on_special_chars_only(self, mem):
@@ -930,7 +1014,9 @@ class TestSearchSecurity:
         mem.record_token_usage("sess-1", "model-a", 10, 5)
         mem.record_token_usage("sess-1", "model-a", 20, 10)
         conn = mem._get_conn()
-        count = conn.execute("SELECT COUNT(*) FROM token_usage WHERE session_id='sess-1'").fetchone()[0]
+        count = conn.execute(
+            "SELECT COUNT(*) FROM token_usage WHERE session_id='sess-1'"
+        ).fetchone()[0]
         assert count == 2
 
     def test_get_session_stats_empty_when_no_rows(self, mem):

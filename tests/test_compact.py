@@ -45,7 +45,9 @@ def _make_loop(messages: list[dict]) -> AgenticLoop:
             if False:
                 yield  # make it an async generator
 
-    config = AgentConfig(system_prompt="", model="claude-3-5-haiku-20241022", provider=_FakeProvider())
+    config = AgentConfig(
+        system_prompt="", model="claude-3-5-haiku-20241022", provider=_FakeProvider()
+    )
     loop = AgenticLoop(config, tool_handler)
     loop._messages = list(messages)
     return loop
@@ -85,10 +87,14 @@ def _make_manager_with_error(success_text: str) -> tuple[AgentManager, str]:
     manager = AgentManager(_make_tool_handler())
     session_id = manager.create_session(config)
     loop = manager.get_agent(session_id)
-    loop._messages.extend([
-        _user("a"), _assistant("b"),
-        _user("c"), _assistant("d"),
-    ])
+    loop._messages.extend(
+        [
+            _user("a"),
+            _assistant("b"),
+            _user("c"),
+            _assistant("d"),
+        ]
+    )
     return manager, session_id
 
 
@@ -103,11 +109,15 @@ def _context_exceeded_error() -> Exception:
 
 class TestCompactHistory:
     def test_system_messages_preserved(self):
-        loop = _make_loop([
-            _sys("system prompt"),
-            _user("hello"), _assistant("hi"),
-            _user("bye"), _assistant("see ya"),
-        ])
+        loop = _make_loop(
+            [
+                _sys("system prompt"),
+                _user("hello"),
+                _assistant("hi"),
+                _user("bye"),
+                _assistant("see ya"),
+            ]
+        )
         loop.compact_history()
         assert loop._messages[0] == _sys("system prompt")
 
@@ -123,13 +133,19 @@ class TestCompactHistory:
 
     def test_drops_oldest_turns_keeping_last_two(self):
         # 4 turns → keep last 2 most recent (policy: keep 2 when turns > 2)
-        loop = _make_loop([
-            _sys("sys"),
-            _user("t1"), _assistant("r1"),
-            _user("t2"), _assistant("r2"),
-            _user("t3"), _assistant("r3"),
-            _user("t4"), _assistant("r4"),
-        ])
+        loop = _make_loop(
+            [
+                _sys("sys"),
+                _user("t1"),
+                _assistant("r1"),
+                _user("t2"),
+                _assistant("r2"),
+                _user("t3"),
+                _assistant("r3"),
+                _user("t4"),
+                _assistant("r4"),
+            ]
+        )
         dropped, kept = loop.compact_history()
         assert dropped == 4  # t1+r1 and t2+r2 removed
         assert kept == 2
@@ -138,11 +154,15 @@ class TestCompactHistory:
         assert non_sys[-1] == _assistant("r4")
 
     def test_two_turns_drops_oldest_one(self):
-        loop = _make_loop([
-            _sys("sys"),
-            _user("first"), _assistant("first reply"),
-            _user("second"), _assistant("second reply"),
-        ])
+        loop = _make_loop(
+            [
+                _sys("sys"),
+                _user("first"),
+                _assistant("first reply"),
+                _user("second"),
+                _assistant("second reply"),
+            ]
+        )
         dropped, kept = loop.compact_history()
         assert dropped == 2
         assert kept == 1
@@ -151,12 +171,17 @@ class TestCompactHistory:
 
     def test_three_turns_keeps_last_two(self):
         # 3 turns > 2 → keep last 2
-        loop = _make_loop([
-            _sys("sys"),
-            _user("1"), _assistant("a"),
-            _user("2"), _assistant("b"),
-            _user("3"), _assistant("c"),
-        ])
+        loop = _make_loop(
+            [
+                _sys("sys"),
+                _user("1"),
+                _assistant("a"),
+                _user("2"),
+                _assistant("b"),
+                _user("3"),
+                _assistant("c"),
+            ]
+        )
         dropped, kept = loop.compact_history()
         assert dropped == 2
         assert kept == 2
@@ -164,22 +189,30 @@ class TestCompactHistory:
         assert non_sys[0] == _user("2")
 
     def test_returns_messages_removed_count(self):
-        loop = _make_loop([
-            _sys("sys"),
-            _user("a"), _assistant("b"),
-            _user("c"), _assistant("d"),
-        ])
+        loop = _make_loop(
+            [
+                _sys("sys"),
+                _user("a"),
+                _assistant("b"),
+                _user("c"),
+                _assistant("d"),
+            ]
+        )
         before = len(loop._messages)
         dropped, _kept = loop.compact_history()
         assert dropped == before - len(loop._messages)
 
     def test_multiple_system_messages_all_preserved(self):
-        loop = _make_loop([
-            _sys("sys1"),
-            _sys("sys2"),
-            _user("a"), _assistant("b"),
-            _user("c"), _assistant("d"),
-        ])
+        loop = _make_loop(
+            [
+                _sys("sys1"),
+                _sys("sys2"),
+                _user("a"),
+                _assistant("b"),
+                _user("c"),
+                _assistant("d"),
+            ]
+        )
         loop.compact_history()
         sys_msgs = [m for m in loop._messages if m.get("role") == "system"]
         assert len(sys_msgs) == 2
@@ -293,16 +326,22 @@ class TestSmartCompact:
     @pytest.mark.asyncio
     async def test_complete_turns_replaced_by_summary(self):
         loop = self._make_summarizing_loop("did stuff")
-        loop._messages.extend([
-            _user("t1"), _assistant("r1"),
-            _user("t2"), _assistant("r2"),
-            _user("current"),
-        ])
+        loop._messages.extend(
+            [
+                _user("t1"),
+                _assistant("r1"),
+                _user("t2"),
+                _assistant("r2"),
+                _user("current"),
+            ]
+        )
         dropped, summarized = await loop._smart_compact()
         assert summarized == 2
         assert dropped > 0
         sys_msgs = [m for m in loop._messages if m.get("role") == "system"]
-        summary_msgs = [m for m in sys_msgs if "Prior conversation summary" in m.get("content", "")]
+        summary_msgs = [
+            m for m in sys_msgs if "Prior conversation summary" in m.get("content", "")
+        ]
         assert len(summary_msgs) == 1
         assert "Turn 1" in summary_msgs[0]["content"]
         assert "Turn 2" in summary_msgs[0]["content"]
@@ -310,10 +349,13 @@ class TestSmartCompact:
     @pytest.mark.asyncio
     async def test_current_user_turn_preserved(self):
         loop = self._make_summarizing_loop()
-        loop._messages.extend([
-            _user("old"), _assistant("old reply"),
-            _user("current question"),
-        ])
+        loop._messages.extend(
+            [
+                _user("old"),
+                _assistant("old reply"),
+                _user("current question"),
+            ]
+        )
         await loop._smart_compact()
         non_sys = [m for m in loop._messages if m.get("role") != "system"]
         assert non_sys[-1] == _user("current question")
@@ -321,10 +363,13 @@ class TestSmartCompact:
     @pytest.mark.asyncio
     async def test_system_messages_preserved(self):
         loop = self._make_summarizing_loop()
-        loop._messages.extend([
-            _user("a"), _assistant("b"),
-            _user("c"),
-        ])
+        loop._messages.extend(
+            [
+                _user("a"),
+                _assistant("b"),
+                _user("c"),
+            ]
+        )
         await loop._smart_compact()
         sys_msgs = [m for m in loop._messages if m.get("content") == "sys"]
         assert len(sys_msgs) == 1
@@ -360,12 +405,17 @@ class TestSmartCompact:
             compact_mode="summarize",
         )
         loop = AgenticLoop(config, _make_tool_handler())
-        loop._messages.extend([
-            _user("t1"), _assistant("r1"),
-            _user("t2"), _assistant("r2"),
-            _user("t3"), _assistant("r3"),
-            _user("current"),
-        ])
+        loop._messages.extend(
+            [
+                _user("t1"),
+                _assistant("r1"),
+                _user("t2"),
+                _assistant("r2"),
+                _user("t3"),
+                _assistant("r3"),
+                _user("current"),
+            ]
+        )
         dropped, summarized = await loop._smart_compact()
         assert summarized == 3
         assert len(call_order) == 3
@@ -376,10 +426,24 @@ class TestSmartCompact:
         from the user message so the agent can retry with context."""
         loop = self._make_summarizing_loop("did stuff")
         tool_msg = {"role": "tool", "tool_call_id": "c1", "content": "result"}
-        assistant_tool = {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "run", "arguments": "{}"}}]}
-        loop._messages.extend([
-            _user("do the thing"), assistant_tool, tool_msg,
-        ])
+        assistant_tool = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "run", "arguments": "{}"},
+                }
+            ],
+        }
+        loop._messages.extend(
+            [
+                _user("do the thing"),
+                assistant_tool,
+                tool_msg,
+            ]
+        )
         dropped, summarized = await loop._smart_compact()
         assert summarized == 1
         assert dropped > 0
@@ -404,18 +468,24 @@ class TestSmartCompact:
     async def test_previous_summaries_not_accumulated(self):
         """Calling _smart_compact twice should replace the old summary, not stack them."""
         loop = self._make_summarizing_loop("summary")
-        loop._messages.extend([
-            _user("t1"), _assistant("r1"),
-            _user("current"),
-        ])
+        loop._messages.extend(
+            [
+                _user("t1"),
+                _assistant("r1"),
+                _user("current"),
+            ]
+        )
         await loop._smart_compact()
         # Simulate another round: add more turns and compact again.
-        loop._messages.extend([_assistant("r2"), _user("t3"), _assistant("r3"), _user("next")])
+        loop._messages.extend(
+            [_assistant("r2"), _user("t3"), _assistant("r3"), _user("next")]
+        )
         await loop._smart_compact()
 
         sys_msgs = [m for m in loop._messages if m.get("role") == "system"]
         summary_count = sum(
-            1 for m in sys_msgs
+            1
+            for m in sys_msgs
             if "Prior conversation summary" in m.get("content", "")
             or "Prior work summary" in m.get("content", "")
         )
@@ -426,11 +496,26 @@ class TestSmartCompact:
         """Current turn containing tool calls is preserved wholesale, not summarized."""
         loop = self._make_summarizing_loop("summary")
         tool_msg = {"role": "tool", "tool_call_id": "c1", "content": "result"}
-        assistant_tool = {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "run", "arguments": "{}"}}]}
-        loop._messages.extend([
-            _user("old"), _assistant("old reply"),
-            _user("current"), assistant_tool, tool_msg,
-        ])
+        assistant_tool = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "run", "arguments": "{}"},
+                }
+            ],
+        }
+        loop._messages.extend(
+            [
+                _user("old"),
+                _assistant("old reply"),
+                _user("current"),
+                assistant_tool,
+                tool_msg,
+            ]
+        )
         dropped, summarized = await loop._smart_compact()
         # Only the prior "old" turn should be summarized.
         assert summarized == 1
@@ -475,4 +560,3 @@ class TestSmartCompact:
         assert len(compact_events) == 1
         assert len(done_events) == 1
         assert done_events[0].content == "recovered"
-

@@ -38,7 +38,9 @@ def _text_chunks(content: str, input_tokens: int = 0, output_tokens: int = 0) ->
     return chunks
 
 
-def _tool_call_chunks(tool_id: str, tool_name: str, arguments: str, index: int = 0) -> list:
+def _tool_call_chunks(
+    tool_id: str, tool_name: str, arguments: str, index: int = 0
+) -> list:
     chunks = [ToolCallStart(index=index, id=tool_id, name=tool_name)]
     if arguments:
         chunks.append(ToolCallDelta(index=index, args_delta=arguments))
@@ -95,7 +97,9 @@ class TestAnthropicProviderRetry:
     async def test_succeeds_on_first_attempt(self):
         provider = self._make_provider()
         mock_stream = MagicMock()
-        with patch.object(provider._client.messages, "create", AsyncMock(return_value=mock_stream)) as mock_c:
+        with patch.object(
+            provider._client.messages, "create", AsyncMock(return_value=mock_stream)
+        ) as mock_c:
             result = await provider._create_with_retry({})
         assert result is mock_stream
         mock_c.assert_called_once()
@@ -104,7 +108,11 @@ class TestAnthropicProviderRetry:
         provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=10)
         mock_stream = MagicMock()
-        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=[err, err, mock_stream])):
+        with patch.object(
+            provider._client.messages,
+            "create",
+            AsyncMock(side_effect=[err, err, mock_stream]),
+        ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
                 result = await provider._create_with_retry({})
         assert result is mock_stream
@@ -115,7 +123,11 @@ class TestAnthropicProviderRetry:
         provider = self._make_provider()
         err = _make_rate_limit_error()
         mock_stream = MagicMock()
-        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=[err, err, mock_stream])):
+        with patch.object(
+            provider._client.messages,
+            "create",
+            AsyncMock(side_effect=[err, err, mock_stream]),
+        ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
                 await provider._create_with_retry({})
         assert mock_sleep.call_args_list == [call(1), call(2)]
@@ -123,7 +135,9 @@ class TestAnthropicProviderRetry:
     async def test_raises_after_max_retries_exhausted(self):
         provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=1)
-        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=err)):
+        with patch.object(
+            provider._client.messages, "create", AsyncMock(side_effect=err)
+        ):
             with patch("asyncio.sleep", AsyncMock()):
                 with pytest.raises(anthropic.RateLimitError):
                     await provider._create_with_retry({})
@@ -131,7 +145,9 @@ class TestAnthropicProviderRetry:
     async def test_total_calls_equals_max_retries_plus_one(self):
         provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=1)
-        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=err)) as mock_c:
+        with patch.object(
+            provider._client.messages, "create", AsyncMock(side_effect=err)
+        ) as mock_c:
             with patch("asyncio.sleep", AsyncMock()):
                 with pytest.raises(anthropic.RateLimitError):
                     await provider._create_with_retry({})
@@ -140,7 +156,9 @@ class TestAnthropicProviderRetry:
     async def test_zero_max_retries_raises_immediately(self):
         provider = self._make_provider()
         err = _make_rate_limit_error(retry_after=1)
-        with patch.object(provider._client.messages, "create", AsyncMock(side_effect=err)):
+        with patch.object(
+            provider._client.messages, "create", AsyncMock(side_effect=err)
+        ):
             with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
                 with patch("make_agent.provider.anthropic.MAX_RETRIES", 0):
                     with pytest.raises(anthropic.RateLimitError):
@@ -152,7 +170,9 @@ class TestAgentSafetyGuards:
     def _make_agent(self, tmp_path, provider):
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
         agent = AgenticLoop(
             AgentConfig(
                 system_prompt="You are a helper.",
@@ -203,7 +223,9 @@ class TestAssistantMessageContent:
     async def test_tool_call_without_text_has_empty_string_content(self, tmp_path):
         """When the LLM streams a tool call with no text, the assistant message content must be ''."""
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
         provider = MockProvider(
             _tool_call_chunks("tc1", "say_hi", "{}"),
             _text_chunks("all done"),
@@ -233,10 +255,16 @@ class TestAssistantMessageContent:
         result = await agent.arun("call say_hi")
 
         assert result == "all done"
-        assistant_msgs = [m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m]
+        assistant_msgs = [
+            m
+            for m in agent.messages
+            if m.get("role") == "assistant" and "tool_calls" in m
+        ]
         assert assistant_msgs, "expected at least one assistant message with tool_calls"
         for msg in assistant_msgs:
-            assert msg["content"] is not None, "assistant message content must not be None"
+            assert msg["content"] is not None, (
+                "assistant message content must not be None"
+            )
             assert isinstance(msg["content"], str)
 
 
@@ -245,7 +273,9 @@ class TestAnthropicParallelToolCalls:
 
     def _make_agent(self, tmp_path, provider):
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
         agent = AgenticLoop(
             AgentConfig(
                 system_prompt="You are a helper.",
@@ -275,7 +305,9 @@ class TestAnthropicParallelToolCalls:
 
     async def test_parallel_tool_calls_are_kept_separate(self, tmp_path):
         """Two parallel tool calls with sequential indices must each be executed."""
-        parallel_chunks = _tool_call_chunks("toolu_A", "tool_a", '{"x": 1}', index=0) + _tool_call_chunks("toolu_B", "tool_b", '{"x": 2}', index=1)
+        parallel_chunks = _tool_call_chunks(
+            "toolu_A", "tool_a", '{"x": 1}', index=0
+        ) + _tool_call_chunks("toolu_B", "tool_b", '{"x": 2}', index=1)
         provider = MockProvider(parallel_chunks, _text_chunks("done"))
         agent = self._make_agent(tmp_path, provider)
 
@@ -283,14 +315,18 @@ class TestAnthropicParallelToolCalls:
 
         assert result == "done"
         tool_msgs = [m for m in agent.messages if m.get("role") == "tool"]
-        assert len(tool_msgs) == 2, f"expected 2 tool results, got {len(tool_msgs)}: {tool_msgs}"
+        assert len(tool_msgs) == 2, (
+            f"expected 2 tool results, got {len(tool_msgs)}: {tool_msgs}"
+        )
         tool_call_ids = {m["tool_call_id"] for m in tool_msgs}
         assert "toolu_A" in tool_call_ids
         assert "toolu_B" in tool_call_ids
 
     async def test_parallel_tool_calls_have_correct_arguments(self, tmp_path):
         """Arguments must not be concatenated across parallel tool calls."""
-        parallel_chunks = _tool_call_chunks("toolu_A", "tool_a", '{"x": 42}', index=0) + _tool_call_chunks("toolu_B", "tool_b", '{"x": 99}', index=1)
+        parallel_chunks = _tool_call_chunks(
+            "toolu_A", "tool_a", '{"x": 42}', index=0
+        ) + _tool_call_chunks("toolu_B", "tool_b", '{"x": 99}', index=1)
         provider = MockProvider(parallel_chunks, _text_chunks("done"))
         agent = self._make_agent(tmp_path, provider)
 
@@ -309,8 +345,12 @@ class TestAnthropicParallelToolCalls:
 
         await agent.arun("run both tools")
 
-        assert received.get("tool_a") == {"x": 42}, f"tool_a got wrong args: {received.get('tool_a')}"
-        assert received.get("tool_b") == {"x": 99}, f"tool_b got wrong args: {received.get('tool_b')}"
+        assert received.get("tool_a") == {"x": 42}, (
+            f"tool_a got wrong args: {received.get('tool_a')}"
+        )
+        assert received.get("tool_b") == {"x": 99}, (
+            f"tool_b got wrong args: {received.get('tool_b')}"
+        )
 
 
 class TestAnthropicEmptyArguments:
@@ -322,7 +362,9 @@ class TestAnthropicEmptyArguments:
     def _make_agent(self, tmp_path, provider):
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
         agent = AgenticLoop(
             AgentConfig(
                 system_prompt="You are a helper.",
@@ -360,12 +402,18 @@ class TestAnthropicEmptyArguments:
         assert "malformed" not in tool_msgs[0]["content"]
 
         # The stored assistant message must have valid JSON arguments.
-        assistant_msgs = [m for m in agent.messages if m.get("role") == "assistant" and "tool_calls" in m]
+        assistant_msgs = [
+            m
+            for m in agent.messages
+            if m.get("role") == "assistant" and "tool_calls" in m
+        ]
         assert assistant_msgs
         stored_args = assistant_msgs[0]["tool_calls"][0]["function"]["arguments"]
         import json
 
-        assert json.loads(stored_args) == {}, f"stored arguments must be valid JSON '{{}}', got {stored_args!r}"
+        assert json.loads(stored_args) == {}, (
+            f"stored arguments must be valid JSON '{{}}', got {stored_args!r}"
+        )
 
 
 class TestAgentSystemPromptCache:
@@ -377,7 +425,9 @@ class TestAgentSystemPromptCache:
 
     def _make_agent(self, tmp_path, model: str, use_prompt_cache: bool):
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory)
+        tool_handler = ToolHandler(
+            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
+        )
         config = AgentConfig(
             system_prompt="You are a helpful assistant.",
             model=model,

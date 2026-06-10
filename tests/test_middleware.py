@@ -59,7 +59,9 @@ class TestMiddlewareBase:
     async def test_after_response_is_noop(self):
         mw = MiddlewareBase()
         req = Request(session_id="s", message="hi")
-        resp = Response(session_id="s", content="ok", input_tokens=0, output_tokens=0, model="")
+        resp = Response(
+            session_id="s", content="ok", input_tokens=0, output_tokens=0, model=""
+        )
         # Should not raise
         await mw.after_response(req, resp)
 
@@ -90,7 +92,13 @@ class TestSessionMiddleware:
         mem = self._make_memory()
         mw = SessionMiddleware(mem)
         req = Request(session_id="s1", message="hello")
-        resp = Response(session_id="s1", content="reply", input_tokens=10, output_tokens=5, model="gpt-4")
+        resp = Response(
+            session_id="s1",
+            content="reply",
+            input_tokens=10,
+            output_tokens=5,
+            model="gpt-4",
+        )
         await mw.after_response(req, resp)
         mem.store.assert_any_call("user", "hello")
         mem.store.assert_any_call("agent", "reply")
@@ -99,7 +107,13 @@ class TestSessionMiddleware:
         mem = self._make_memory()
         mw = SessionMiddleware(mem)
         req = Request(session_id="s1", message="hi")
-        resp = Response(session_id="s1", content="reply", input_tokens=10, output_tokens=5, model="gpt-4")
+        resp = Response(
+            session_id="s1",
+            content="reply",
+            input_tokens=10,
+            output_tokens=5,
+            model="gpt-4",
+        )
         await mw.after_response(req, resp)
         mem.record_token_usage.assert_called_once_with("s1", "gpt-4", 10, 5)
 
@@ -107,7 +121,9 @@ class TestSessionMiddleware:
         mem = self._make_memory()
         mw = SessionMiddleware(mem)
         req = Request(session_id="s1", message="hi")
-        resp = Response(session_id="s1", content="reply", input_tokens=0, output_tokens=0, model="")
+        resp = Response(
+            session_id="s1", content="reply", input_tokens=0, output_tokens=0, model=""
+        )
         await mw.after_response(req, resp)
         mem.record_token_usage.assert_not_called()
 
@@ -239,7 +255,9 @@ class TestAgentManagerMiddlewareChain:
 
         # Verify all 4 middlewares executed (not just D)
         start_events = [e for e in executed if e.startswith("start:")]
-        assert len(start_events) == 4, f"Expected 4 start events, got {len(start_events)}: {start_events}"
+        assert len(start_events) == 4, (
+            f"Expected 4 start events, got {len(start_events)}: {start_events}"
+        )
         # Verify correct nesting order: D→C→B→A enter, A→B→C→D exit
         assert start_events[0] == "start:D"
         assert start_events[1] == "start:C"
@@ -263,7 +281,9 @@ class TestAgentManagerMiddlewareChain:
             async def after_response(self, request, response):
                 after_calls.append("healthy")
 
-        manager = AgentManager(th, middlewares=[HealthyMiddleware(), FailingMiddleware()])
+        manager = AgentManager(
+            th, middlewares=[HealthyMiddleware(), FailingMiddleware()]
+        )
         session_id = manager.get_session_id()
         _mock_loop_with_cbs(manager, session_id, [MessageCallback("done")])
 
@@ -393,7 +413,9 @@ class TestIsContextExceeded:
         class CustomBadRequestError(Exception):
             status_code = 400
 
-        exc = CustomBadRequestError("request (11313 tokens) exceeds the available context size (8192 tokens)")
+        exc = CustomBadRequestError(
+            "request (11313 tokens) exceeds the available context size (8192 tokens)"
+        )
         assert is_context_exceeded(exc)
 
     def test_non_anthropic_bad_request_unrelated_message(self):

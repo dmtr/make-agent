@@ -7,7 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from make_agent.agent_core import HistoryCompacted, StatusChanged, TurnCancelled, TurnStarted
+from make_agent.agent_core import (
+    HistoryCompacted,
+    StatusChanged,
+    TurnCancelled,
+    TurnStarted,
+)
 from make_agent.agent_shell.shell import AgentStatus, MakeAgentShell
 
 
@@ -29,7 +34,9 @@ async def test_compact_event_keeps_shell_streaming_when_turn_active():
     seen_statuses: list[AgentStatus] = []
     shell._refresh = lambda: seen_statuses.append(shell._state.status)
 
-    await shell._event_queue.put(HistoryCompacted(turn_id="t1", attempt=1, messages_dropped=2))
+    await shell._event_queue.put(
+        HistoryCompacted(turn_id="t1", attempt=1, messages_dropped=2)
+    )
     await shell._event_queue.put(TurnCancelled(turn_id="t1"))
     await shell._consume_turn_events(turn, "t1")
 
