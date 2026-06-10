@@ -17,6 +17,7 @@ def _make_shell() -> MakeAgentShell:
         session_id="sid",
         model="claude-sonnet-4-5",
         history_path=Path("/tmp/make-agent-history"),
+        memory=None,
     )
 
 

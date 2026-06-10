@@ -19,16 +19,6 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
-from prompt_toolkit.application import Application
-from prompt_toolkit.completion import WordCompleter
-from prompt_toolkit.filters import Condition
-from prompt_toolkit.history import FileHistory
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Frame, TextArea
-
 from make_agent.agent_core import (
     AgentManager,
     ApprovalRequested,
@@ -42,14 +32,24 @@ from make_agent.agent_core import (
     Shutdown,
     StartTurn,
     StatusChanged,
+    TokenEmitted,
     ToolFinished,
     ToolStarted,
-    TokenEmitted,
     TurnCancelled,
     TurnFinished,
     TurnStarted,
 )
+from make_agent.memory import Memory
+from prompt_toolkit.application import Application
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.styles import Style
+from prompt_toolkit.widgets import Frame, TextArea
 
+from .user_messages import UserMessagesManager
 
 # ── status / enums ──────────────────────────────────────────────────────────────
 
@@ -188,9 +188,7 @@ class TurnBlock:
         if self.state != "streaming":
             elapsed = self.elapsed or (time.time() - self.start_time)
             state_label = "" if self.state == "done" else f" {self.state.upper()}"
-            sep = (
-                f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
-            )
+            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
             parts.append("")
             parts.append(sep)
 
@@ -230,9 +228,7 @@ class TurnBlock:
         if self.state != "streaming":
             elapsed = self.elapsed or (time.time() - self.start_time)
             state_label = "" if self.state == "done" else f" {self.state.upper()}"
-            sep = (
-                f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
-            )
+            sep = f"  {'─' * 8} {elapsed:.0f}s │ {self.tokens} tok{state_label} {'─' * 8}"
             parts.append("")
             parts.append(sep)
 
@@ -299,6 +295,7 @@ class MakeAgentShell:
         session_id: str,
         model: str,
         history_path: Path,
+        memory: Optional[Memory] = None,
     ) -> None:
         self._agent_manager = agent_manager
         self._session_id = session_id
@@ -310,6 +307,7 @@ class MakeAgentShell:
         self._app: Optional[Application] = None
         self._response_area: Optional[TextArea] = None
         self._tools_area: Optional[TextArea] = None
+        self._history_manager = UserMessagesManager(memory) if memory else None
         self._commands: dict[str, Any] = {
             "exit": self._cmd_exit,
             "quit": self._cmd_exit,
@@ -366,10 +364,7 @@ class MakeAgentShell:
             text = self._render_response()
             self._response_area.text = text
             # Auto-scroll only when following the live latest turn
-            if (
-                not self._state.transcript_focused
-                and self._state.viewed_turn_index is None
-            ):
+            if not self._state.transcript_focused and self._state.viewed_turn_index is None:
                 self._response_area.buffer.cursor_position = len(text)
                 self._response_area.window.vertical_scroll = 999999
         if self._tools_area is not None:
@@ -418,20 +413,12 @@ class MakeAgentShell:
             prompt="> ",
             multiline=True,
             completer=completer,
-            history=FileHistory(str(self._history_path)),
             wrap_lines=False,
         )
         self._composer_input = composer_input
 
         # Contextual hint line below the composer
-        approval_active = Condition(
-            lambda: (
-                state._approval_future is not None
-                and not (
-                    state._approval_future.done() if state._approval_future else True
-                )
-            )
-        )
+        approval_active = Condition(lambda: (state._approval_future is not None and not (state._approval_future.done() if state._approval_future else True)))
 
         def _approval_hint() -> list[tuple[str, str]]:
             card = state.pending_approval
@@ -474,7 +461,7 @@ class MakeAgentShell:
                         else [
                             (
                                 "class:hint",
-                                "  /help /stats /export /exit   Alt+Enter newline   Ctrl+T transcript",
+                                "  /help /stats /export /exit   ↑↓ history   Alt+Enter newline   Ctrl+T transcript",
                             )
                         ]
                     )
@@ -500,18 +487,14 @@ class MakeAgentShell:
         # Tools separator line
         tools_sep = Window(
             height=1,
-            content=FormattedTextControl(
-                lambda: [("class:tools.sep", "  ──── tools ────")]
-            ),
+            content=FormattedTextControl(lambda: [("class:tools.sep", "  ──── tools ────")]),
         )
 
         # Footer — session start time
         start_str = self._session_start.strftime("%H:%M:%S")
         footer_window = Window(
             height=1,
-            content=FormattedTextControl(
-                lambda: [("class:footer", f"  Session started {start_str}")]
-            ),
+            content=FormattedTextControl(lambda: [("class:footer", f"  Session started {start_str}")]),
         )
 
         # Turn N frame: response area (top) + separator + tools area (bottom)
@@ -557,10 +540,15 @@ class MakeAgentShell:
         def _on_enter(event) -> None:
             if state.status != AgentStatus.IDLE or state.transcript_focused:
                 return
+
             text = composer_input.text.strip()
             if not text:
                 return
+
             composer_input.text = ""
+            if self._history_manager is not None:
+                self._history_manager.submit()  # Reset nav state after sending
+
             if text.startswith("/"):
                 should_exit = self._dispatch_command(text[1:])
                 if should_exit:
@@ -569,6 +557,29 @@ class MakeAgentShell:
                     self._refresh()
             else:
                 asyncio.ensure_future(self._run_turn(text))
+
+        # Only bind up/down for history navigation when composer is focused,
+        # idle, and memory is available — so arrow keys still scroll the
+        # transcript area when it's focused.
+        composer_history_filter = Condition(
+            lambda: not state.transcript_focused
+            and state.status == AgentStatus.IDLE
+            and self._history_manager is not None
+        )
+
+        @kb.add("up", filter=composer_history_filter)
+        def _on_up(event) -> None:
+            msg = self._history_manager.previous(composer_input.text)
+            if msg is not None:
+                composer_input.text = msg
+                self._refresh()
+
+        @kb.add("down", filter=composer_history_filter)
+        def _on_down(event) -> None:
+            msg = self._history_manager.next()
+            if msg is not None:
+                composer_input.text = msg
+                self._refresh()
 
         @kb.add("escape", "enter")
         def _on_alt_enter(event) -> None:
@@ -708,9 +719,7 @@ class MakeAgentShell:
     def _cmd_help(self) -> bool:
         cmds = "  ".join(f"/{name}" for name in self._commands)
         self._state.add_alert("INFO", f"Commands: {cmds}")
-        self._state.add_alert(
-            "INFO", "Any other input is sent to the agent. Alt+Enter inserts a newline."
-        )
+        self._state.add_alert("INFO", "Any other input is sent to the agent. Alt+Enter inserts a newline.")
         return False
 
     def _dispatch_command(self, line: str) -> bool:
@@ -718,9 +727,7 @@ class MakeAgentShell:
         name, *_ = line.strip().split(None, 1)
         handler = self._commands.get(name)
         if handler is None:
-            self._state.add_alert(
-                "WARNING", f"Unknown command: /{name}  (type /help for a list)"
-            )
+            self._state.add_alert("WARNING", f"Unknown command: /{name}  (type /help for a list)")
             return False
         return handler()
 
@@ -733,9 +740,7 @@ class MakeAgentShell:
 
             if isinstance(event, TokenEmitted):
                 # Accumulate tokens into the last response line, splitting on newlines
-                combined = (
-                    "\n".join(turn.response_lines) if turn.response_lines else ""
-                ) + event.text
+                combined = ("\n".join(turn.response_lines) if turn.response_lines else "") + event.text
                 turn.response_lines = combined.split("\n")
                 self._refresh()
 
@@ -766,9 +771,7 @@ class MakeAgentShell:
                 turn.approval = card
                 self._state.pending_approval = card
                 self._state.status = AgentStatus.AWAITING_APPROVAL
-                future: asyncio.Future[bool] = (
-                    asyncio.get_running_loop().create_future()
-                )
+                future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
                 self._state._approval_future = future
                 self._refresh()
 
@@ -779,13 +782,9 @@ class MakeAgentShell:
                 self._state._approval_future = None
                 self._state.status = AgentStatus.STREAMING
                 if approved:
-                    await self._command_queue.put(
-                        ApproveSkill(request_id=event.request_id)
-                    )
+                    await self._command_queue.put(ApproveSkill(request_id=event.request_id))
                 else:
-                    await self._command_queue.put(
-                        DenySkill(request_id=event.request_id)
-                    )
+                    await self._command_queue.put(DenySkill(request_id=event.request_id))
                 self._refresh()
 
             elif isinstance(event, TurnFinished):
@@ -794,10 +793,7 @@ class MakeAgentShell:
                     turn.tokens = stats["total_tokens"] - self._state.total_tokens
                     self._state.total_tokens = stats["total_tokens"]
                 self._state.finish_turn(turn)
-                if (
-                    self._state.current_alert
-                    and self._state.current_alert.level == "COMPACT"
-                ):
+                if self._state.current_alert and self._state.current_alert.level == "COMPACT":
                     self._state.current_alert = None
                 self._refresh()
                 break
@@ -810,8 +806,7 @@ class MakeAgentShell:
             elif isinstance(event, HistoryCompacted):
                 self._state.add_alert(
                     "COMPACT",
-                    f"context limit — dropped {event.messages_dropped} messages"
-                    f" (retry {event.attempt}/{3})",
+                    f"context limit — dropped {event.messages_dropped} messages" f" (retry {event.attempt}/{3})",
                 )
                 # Keep the streaming status active when context is compacted during a turn
                 self._state.status = AgentStatus.STREAMING
@@ -851,11 +846,7 @@ class MakeAgentShell:
 
     async def run(self) -> None:
         """Start the interactive full-screen shell."""
-        bridge_task = asyncio.create_task(
-            self._agent_manager.run_shell_bridge(
-                self._session_id, self._command_queue, self._event_queue
-            )
-        )
+        bridge_task = asyncio.create_task(self._agent_manager.run_shell_bridge(self._session_id, self._command_queue, self._event_queue))
         self._app = self._build_app()
         self._refresh()
         try:

@@ -216,6 +216,21 @@ class Memory:
         """Search past agent replies using FTS5 via the ``agent_memory`` view."""
         return self._search("agent_memory", query, limit, from_date, to_date)
 
+    def recent_user(
+        self,
+        limit: int = 10,
+    ) -> list[str]:
+        """Return the *limit* most recent user messages as plain strings, newest first.
+
+        Used by the shell for UP/DOWN arrow navigation through past user messages.
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT message FROM messages WHERE sender = 'user' ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [row["message"] for row in rows]
+
     def recent(
         self,
         limit: int = 10,
