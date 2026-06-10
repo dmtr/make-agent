@@ -61,7 +61,9 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -91,7 +93,9 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -113,7 +117,9 @@ class TestRunPromptInput:
 
     def test_custom_skills_dir_makefile_mode_gets_mode_subfolder(self, tmp_path):
         custom_dir = tmp_path / "custom"
-        args = _run_args(prompt="do something", skill_mode="makefile", skills_dir=str(custom_dir))
+        args = _run_args(
+            prompt="do something", skill_mode="makefile", skills_dir=str(custom_dir)
+        )
         captured: dict = {}
 
         async def _fake_run(**kwargs):
@@ -122,7 +128,9 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -145,9 +153,19 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
-            patch.object(main_module, "mode_memory_path", return_value=tmp_path / "makefile-memory.db"),
-            patch.object(main_module, "default_skills_dir", return_value=tmp_path / "makefile-skills"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
+            patch.object(
+                main_module,
+                "mode_memory_path",
+                return_value=tmp_path / "makefile-memory.db",
+            ),
+            patch.object(
+                main_module,
+                "default_skills_dir",
+                return_value=tmp_path / "makefile-skills",
+            ),
         ):
             main_module._cmd_run(args)
 
@@ -206,7 +224,9 @@ class TestResolveSystemPrompt:
     def test_returns_empty_string_when_nothing_found(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         args = _run_args(system=None, system_file=None)
-        with patch.object(main_module, "mode_dir", return_value=tmp_path / "nonexistent"):
+        with patch.object(
+            main_module, "mode_dir", return_value=tmp_path / "nonexistent"
+        ):
             result = main_module._resolve_system_prompt(args)
         assert result == ""
 
@@ -220,7 +240,9 @@ class TestResolveSystemPrompt:
 
 class TestParseDisabledTools:
     def test_all_returns_makefile_names(self):
-        assert main_module._parse_disabled_tools("all", "makefile") == builtin_tool_names("makefile")
+        assert main_module._parse_disabled_tools(
+            "all", "makefile"
+        ) == builtin_tool_names("makefile")
 
     def test_unknown_name_exits(self):
         with patch.object(sys, "exit", side_effect=SystemExit) as mock_exit:

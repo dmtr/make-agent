@@ -46,13 +46,19 @@ def _make_tool_callback(
     )
 
 
-def _make_manager(cbs: list, trusted_skills: frozenset[str] = frozenset()) -> tuple[AgentManager, str]:
+def _make_manager(
+    cbs: list, trusted_skills: frozenset[str] = frozenset()
+) -> tuple[AgentManager, str]:
     """Return an AgentManager backed by a fake AgenticLoop that yields *cbs*."""
     tool_handler = MagicMock()
     tool_handler.is_skill_trusted = MagicMock(
-        side_effect=lambda skill, target: "*" in trusted_skills or skill in trusted_skills
+        side_effect=lambda skill, target: (
+            "*" in trusted_skills or skill in trusted_skills
+        )
     )
-    tool_handler.execute = AsyncMock(return_value=get_tool_result("result-output", "", 0))
+    tool_handler.execute = AsyncMock(
+        return_value=get_tool_result("result-output", "", 0)
+    )
 
     manager = AgentManager(tool_handler)
     session_id = manager.get_session_id()
@@ -177,9 +183,15 @@ async def _collect_events(
 
 async def test_bridge_simple_turn_event_sequence():
     """StartTurn -> TurnStarted, tokens, TurnFinished, StatusChanged."""
-    cbs = [TokenCallback("hello "), TokenCallback("world"), MessageCallback("hello world")]
+    cbs = [
+        TokenCallback("hello "),
+        TokenCallback("world"),
+        MessageCallback("hello world"),
+    ]
     manager, sid = _make_manager(cbs)
-    events = await _collect_events(manager, sid, [StartTurn(message="hi", turn_id="t1")])
+    events = await _collect_events(
+        manager, sid, [StartTurn(message="hi", turn_id="t1")]
+    )
 
     types = [type(e).__name__ for e in events]
     assert "TurnStarted" in types
@@ -198,7 +210,9 @@ async def test_bridge_status_busy_idle_sequence():
     """StatusChanged(is_busy=True) comes before TurnStarted; is_busy=False comes last."""
     cbs = [MessageCallback("ok")]
     manager, sid = _make_manager(cbs)
-    events = await _collect_events(manager, sid, [StartTurn(message="hi", turn_id="t1")])
+    events = await _collect_events(
+        manager, sid, [StartTurn(message="hi", turn_id="t1")]
+    )
 
     status_events = [e for e in events if isinstance(e, StatusChanged)]
     assert status_events[0].is_busy is True
@@ -209,7 +223,9 @@ async def test_bridge_turn_ids_are_propagated():
     """All turn-scoped events carry the turn_id supplied in StartTurn."""
     cbs = [TokenCallback("x"), MessageCallback("x")]
     manager, sid = _make_manager(cbs)
-    events = await _collect_events(manager, sid, [StartTurn(message="hi", turn_id="my-turn")])
+    events = await _collect_events(
+        manager, sid, [StartTurn(message="hi", turn_id="my-turn")]
+    )
 
     for event in events:
         if hasattr(event, "turn_id"):
@@ -224,7 +240,9 @@ async def test_bridge_tool_events():
     cb = _make_tool_callback("list_files", {"path": "."})
     cbs = [cb, MessageCallback("done")]
     manager, sid = _make_manager(cbs)
-    events = await _collect_events(manager, sid, [StartTurn(message="go", turn_id="t1")])
+    events = await _collect_events(
+        manager, sid, [StartTurn(message="go", turn_id="t1")]
+    )
 
     started = next(e for e in events if isinstance(e, ToolStarted))
     finished = next(e for e in events if isinstance(e, ToolFinished))
@@ -264,7 +282,9 @@ async def test_bridge_rejects_second_start_turn_while_busy():
     cmd_q: asyncio.Queue[ShellCommand] = asyncio.Queue()
     evt_q: asyncio.Queue[ShellEvent] = asyncio.Queue()
 
-    bridge_task = asyncio.create_task(manager.run_shell_bridge(session_id, cmd_q, evt_q))
+    bridge_task = asyncio.create_task(
+        manager.run_shell_bridge(session_id, cmd_q, evt_q)
+    )
 
     await cmd_q.put(StartTurn(message="first", turn_id="t1"))
     # wait for TurnStarted so the first turn is definitely active
@@ -316,7 +336,9 @@ async def test_bridge_cancel_turn_emits_turn_cancelled():
     cmd_q: asyncio.Queue[ShellCommand] = asyncio.Queue()
     evt_q: asyncio.Queue[ShellEvent] = asyncio.Queue()
 
-    bridge_task = asyncio.create_task(manager.run_shell_bridge(session_id, cmd_q, evt_q))
+    bridge_task = asyncio.create_task(
+        manager.run_shell_bridge(session_id, cmd_q, evt_q)
+    )
 
     await cmd_q.put(StartTurn(message="hi", turn_id="t1"))
     # wait for StatusChanged(is_busy=True)
@@ -345,7 +367,9 @@ async def test_bridge_cancel_turn_emits_turn_cancelled():
 
 async def test_bridge_approval_allowed_resumes_turn():
     """ApprovalRequested -> ApproveSkill -> tool executes -> TurnFinished."""
-    cb = _make_tool_callback("execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}})
+    cb = _make_tool_callback(
+        "execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}}
+    )
     cbs = [cb, MessageCallback("done")]
     manager, sid = _make_manager(cbs, trusted_skills=frozenset())
 
@@ -377,7 +401,9 @@ async def test_bridge_approval_allowed_resumes_turn():
 
 async def test_bridge_approval_denied_skips_tool():
     """ApprovalRequested -> DenySkill -> no ToolStarted/ToolFinished -> TurnFinished."""
-    cb = _make_tool_callback("execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}})
+    cb = _make_tool_callback(
+        "execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}}
+    )
     cbs = [cb, MessageCallback("done")]
     manager, sid = _make_manager(cbs, trusted_skills=frozenset())
 

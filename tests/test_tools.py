@@ -28,7 +28,14 @@ def test_build_tools_single_no_params():
 
 
 def test_build_tools_single_with_params():
-    text = "# <tool>\n" "# Greet someone.\n" "# @param NAME string The name\n" "# @param GREETING string The greeting\n" "# </tool>\n" "greet:"
+    text = (
+        "# <tool>\n"
+        "# Greet someone.\n"
+        "# @param NAME string The name\n"
+        "# @param GREETING string The greeting\n"
+        "# </tool>\n"
+        "greet:"
+    )
     mf = parse(text)
     tools = build_tools(mf)
     assert len(tools) == 1
@@ -43,7 +50,11 @@ def test_build_tools_single_with_params():
 
 
 def test_build_tools_multiple_rules():
-    text = "# <tool>\n# Build it.\n# </tool>\nbuild:\n" "# <tool>\n# Test it.\n# </tool>\ntest:\n" "clean:"
+    text = (
+        "# <tool>\n# Build it.\n# </tool>\nbuild:\n"
+        "# <tool>\n# Test it.\n# </tool>\ntest:\n"
+        "clean:"
+    )
     mf = parse(text)
     tools = build_tools(mf)
     names = [t["function"]["name"] for t in tools]

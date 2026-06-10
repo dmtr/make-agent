@@ -73,6 +73,7 @@ async def run(
         session_id,
         model=model,
         history_path=project_dir() / "history",
+        memory=memory,
     )
     try:
         await shell.run()

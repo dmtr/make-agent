@@ -37,7 +37,9 @@ def _init_logging(loglevel: str) -> None:
     # Remove any existing root handlers so basicConfig always adds our file handler.
     for h in logging.root.handlers[:]:
         logging.root.removeHandler(h)
-    logging.basicConfig(filename=log_file(), level=level, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        filename=log_file(), level=level, format="%(asctime)s %(levelname)s %(message)s"
+    )
 
 
 def _resolve_system_prompt(args: argparse.Namespace) -> str:
@@ -76,7 +78,10 @@ def _parse_disabled_tools(value: str | None, mode: str) -> frozenset[str]:
     names = frozenset(name.strip() for name in value.split(",") if name.strip())
     unknown = names - available
     if unknown:
-        sys.exit("make-agent: unknown built-in tool(s): " f"{', '.join(sorted(unknown))}. Valid names for {mode}: {', '.join(sorted(available))}")
+        sys.exit(
+            "make-agent: unknown built-in tool(s): "
+            f"{', '.join(sorted(unknown))}. Valid names for {mode}: {', '.join(sorted(available))}"
+        )
     return names
 
 
@@ -143,7 +148,9 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     run_p = subparsers.add_parser("run", help="Start the interactive agent (default)")
-    run_p.add_argument("--model", default=None, metavar="MODEL", help="litellm model string (required)")
+    run_p.add_argument(
+        "--model", default=None, metavar="MODEL", help="litellm model string (required)"
+    )
     system_g = run_p.add_mutually_exclusive_group()
     system_g.add_argument(
         "--system",

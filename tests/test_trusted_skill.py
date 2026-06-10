@@ -165,13 +165,19 @@ async def _drain_events(manager: AgentManager, session_id: str, message: str) ->
     return events
 
 
-def _make_manager_with_loop(cbs: list[CallBack], trusted_skills: frozenset[str] = frozenset()) -> tuple[AgentManager, str]:
+def _make_manager_with_loop(
+    cbs: list[CallBack], trusted_skills: frozenset[str] = frozenset()
+) -> tuple[AgentManager, str]:
     """Create an AgentManager whose AgenticLoop yields *cbs* in order."""
     tool_handler = MagicMock()
     tool_handler.is_skill_trusted = MagicMock(
-        side_effect=lambda skill, target: "*" in trusted_skills or skill in trusted_skills
+        side_effect=lambda skill, target: (
+            "*" in trusted_skills or skill in trusted_skills
+        )
     )
-    tool_handler.execute = AsyncMock(return_value=get_tool_result("result-output", "", 0))
+    tool_handler.execute = AsyncMock(
+        return_value=get_tool_result("result-output", "", 0)
+    )
 
     manager = AgentManager(tool_handler)
     session_id = manager.get_session_id()
@@ -196,17 +202,27 @@ def _make_manager_with_loop(cbs: list[CallBack], trusted_skills: frozenset[str] 
 
 async def test_astream_events_token_and_done():
     """TokenCallback → TokenEvent; MessageCallback → DoneEvent."""
-    cbs = [TokenCallback("hello "), TokenCallback("world"), MessageCallback("hello world")]
+    cbs = [
+        TokenCallback("hello "),
+        TokenCallback("world"),
+        MessageCallback("hello world"),
+    ]
     manager, sid = _make_manager_with_loop(cbs)
     events = await _drain_events(manager, sid, "hi")
-    assert [type(e).__name__ for e in events] == ["TokenEvent", "TokenEvent", "DoneEvent"]
+    assert [type(e).__name__ for e in events] == [
+        "TokenEvent",
+        "TokenEvent",
+        "DoneEvent",
+    ]
     assert events[0].text == "hello "
     assert events[2].content == "hello world"
 
 
 async def test_astream_events_trusted_skill_no_confirm():
     """Trusted skill executes without emitting ConfirmEvent."""
-    cb = _make_tool_callback("execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}})
+    cb = _make_tool_callback(
+        "execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}}
+    )
     cbs = [cb, MessageCallback("done")]
     manager, sid = _make_manager_with_loop(cbs, trusted_skills=frozenset(["web-fetch"]))
     events = await _drain_events(manager, sid, "go")
@@ -217,7 +233,9 @@ async def test_astream_events_trusted_skill_no_confirm():
 
 async def test_astream_events_untrusted_skill_confirm_allowed():
     """Untrusted skill emits ConfirmEvent; if allowed, tool executes."""
-    cb = _make_tool_callback("execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}})
+    cb = _make_tool_callback(
+        "execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}}
+    )
     cbs = [cb, MessageCallback("done")]
     manager, sid = _make_manager_with_loop(cbs, trusted_skills=frozenset())
 
@@ -235,7 +253,9 @@ async def test_astream_events_untrusted_skill_confirm_allowed():
 
 async def test_astream_events_untrusted_skill_confirm_denied():
     """Untrusted skill denied: tool is skipped, no ToolStartEvent/ToolDoneEvent."""
-    cb = _make_tool_callback("execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}})
+    cb = _make_tool_callback(
+        "execute_skill", {"name": "web-fetch", "target": "fetch", "kwargs": {}}
+    )
     cbs = [cb, MessageCallback("done")]
     manager, sid = _make_manager_with_loop(cbs, trusted_skills=frozenset())
 

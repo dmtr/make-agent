@@ -1,6 +1,6 @@
 [project]
 name = "makefile-agent"
-version = "0.4.1"
+version = "0.4.2"
 description = "An AI agent powered by Makefile skills."
 readme = "README.md"
 license = "MIT"

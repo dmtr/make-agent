@@ -127,7 +127,9 @@ def test_execute_skill_runs_default_target(tmp_path):
     fake_proc.stdout = b"hello world\n"
     fake_proc.stderr = b""
     fake_proc.returncode = 0
-    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc) as mock_run:
+    with patch(
+        "make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc
+    ) as mock_run:
         result = execute_skill("full", "make", str(tmp_path))
     mock_run.assert_called_once()
     call_args = mock_run.call_args.args[0]
@@ -142,7 +144,9 @@ def test_execute_skill_runs_named_target(tmp_path):
     fake_proc.stdout = b"hello world\n"
     fake_proc.stderr = b""
     fake_proc.returncode = 0
-    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc) as mock_run:
+    with patch(
+        "make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc
+    ) as mock_run:
         result = execute_skill("full", "make read-file", str(tmp_path))
     call_args = mock_run.call_args.args[0]
     assert "read-file" in call_args
@@ -156,7 +160,9 @@ def test_execute_skill_leading_env_vars(tmp_path):
     fake_proc.stdout = b"ok\n"
     fake_proc.stderr = b""
     fake_proc.returncode = 0
-    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc) as mock_run:
+    with patch(
+        "make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc
+    ) as mock_run:
         execute_skill("full", "FILE=/safe/f.txt make read-file", str(tmp_path))
     call_kwargs = mock_run.call_args.kwargs
     assert call_kwargs["env"]["FILE"] == "/safe/f.txt"
@@ -170,7 +176,9 @@ def test_execute_skill_failed_target(tmp_path):
     fake_proc.stdout = b""
     fake_proc.stderr = b"make: *** No rule to make target 'bad-target'"
     fake_proc.returncode = 2
-    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc):
+    with patch(
+        "make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc
+    ):
         result = execute_skill("full", "make bad-target", str(tmp_path))
     assert "ERROR" in result
 
@@ -228,7 +236,9 @@ def test_create_skill_missing_description_block(tmp_path):
 
 
 def test_create_skill_invalid_makefile(tmp_path):
-    result = create_skill("bad", "define DESCRIPTION\nOK\nendef\n\n{{not valid make", str(tmp_path))
+    result = create_skill(
+        "bad", "define DESCRIPTION\nOK\nendef\n\n{{not valid make", str(tmp_path)
+    )
     assert isinstance(result, str)
 
 
@@ -265,15 +275,30 @@ def test_validate_skill_missing_description(tmp_path):
 
 def test_makefile_skill_schemas_names():
     names = {schema["function"]["name"] for schema in MAKEFILE_SKILL_SCHEMAS}
-    assert names == {"list_skills", "read_skill", "execute_skill", "create_skill", "validate_skill"}
+    assert names == {
+        "list_skills",
+        "read_skill",
+        "execute_skill",
+        "create_skill",
+        "validate_skill",
+    }
 
 
 def test_makefile_skill_schemas_required_params():
-    by_name = {schema["function"]["name"]: schema["function"] for schema in MAKEFILE_SKILL_SCHEMAS}
+    by_name = {
+        schema["function"]["name"]: schema["function"]
+        for schema in MAKEFILE_SKILL_SCHEMAS
+    }
     assert by_name["list_skills"]["parameters"]["required"] == []
     assert by_name["read_skill"]["parameters"]["required"] == ["name"]
-    assert set(by_name["execute_skill"]["parameters"]["required"]) == {"name", "command"}
-    assert set(by_name["create_skill"]["parameters"]["required"]) == {"name", "mk_content"}
+    assert set(by_name["execute_skill"]["parameters"]["required"]) == {
+        "name",
+        "command",
+    }
+    assert set(by_name["create_skill"]["parameters"]["required"]) == {
+        "name",
+        "mk_content",
+    }
     assert by_name["validate_skill"]["parameters"]["required"] == ["name"]
 
 
@@ -281,9 +306,15 @@ def test_file_schemas_structure():
     assert len(FILE_SCHEMAS) == 2
     names = {schema["function"]["name"] for schema in FILE_SCHEMAS}
     assert names == {"write_file", "edit_file"}
-    by_name = {schema["function"]["name"]: schema["function"] for schema in FILE_SCHEMAS}
+    by_name = {
+        schema["function"]["name"]: schema["function"] for schema in FILE_SCHEMAS
+    }
     assert set(by_name["write_file"]["parameters"]["required"]) == {"path", "content"}
-    assert set(by_name["edit_file"]["parameters"]["required"]) == {"path", "old_text", "new_text"}
+    assert set(by_name["edit_file"]["parameters"]["required"]) == {
+        "path",
+        "old_text",
+        "new_text",
+    }
 
 
 def test_builtin_tool_names_makefile():
@@ -308,8 +339,18 @@ def test_builtin_tool_names_unsupported_mode():
 
 def test_makefile_backend_returns_expected_tools(tmp_path):
     backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
-    assert set(backend.executors) == {"list_skills", "read_skill", "execute_skill", "create_skill", "validate_skill", "write_file", "edit_file"}
-    assert {schema["function"]["name"] for schema in backend.schemas} == set(backend.executors)
+    assert set(backend.executors) == {
+        "list_skills",
+        "read_skill",
+        "execute_skill",
+        "create_skill",
+        "validate_skill",
+        "write_file",
+        "edit_file",
+    }
+    assert {schema["function"]["name"] for schema in backend.schemas} == set(
+        backend.executors
+    )
 
 
 def test_makefile_backend_list_skills_callable(tmp_path):
@@ -334,8 +375,12 @@ def test_makefile_backend_execute_skill_callable(tmp_path):
     fake_proc.stderr = b""
     fake_proc.returncode = 0
     backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
-    with patch("make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc):
-        result = backend.executors["execute_skill"](name="simple", command="make read-file")
+    with patch(
+        "make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc
+    ):
+        result = backend.executors["execute_skill"](
+            name="simple", command="make read-file"
+        )
     assert result == "done"
 
 
@@ -397,6 +442,8 @@ def test_makefile_backend_write_file_callable(tmp_path):
 def test_makefile_backend_edit_file_callable(tmp_path):
     (tmp_path / "src.py").write_text("x = 1")
     backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
-    result = backend.executors["edit_file"](path="src.py", old_text="x = 1", new_text="x = 2")
+    result = backend.executors["edit_file"](
+        path="src.py", old_text="x = 1", new_text="x = 2"
+    )
     assert "Successfully replaced" in result
     assert (tmp_path / "src.py").read_text() == "x = 2"

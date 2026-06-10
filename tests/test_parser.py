@@ -34,7 +34,9 @@ def test_variable_simple_double_colon():
 
 def test_variable_conditional():
     mf = parse("FOO ?= bar")
-    assert mf.variables["FOO"] == Variable(name="FOO", value="bar", flavor="conditional")
+    assert mf.variables["FOO"] == Variable(
+        name="FOO", value="bar", flavor="conditional"
+    )
 
 
 def test_variable_append_new():
@@ -213,7 +215,9 @@ def test_tool_description_single_line():
 
 
 def test_tool_description_multiline():
-    mf = parse("# <tool>\n# Build the project.\n# Run this to compile.\n# </tool>\nbuild:")
+    mf = parse(
+        "# <tool>\n# Build the project.\n# Run this to compile.\n# </tool>\nbuild:"
+    )
     assert mf.rules[0].description == "Build the project.\nRun this to compile."
 
 
@@ -237,7 +241,10 @@ def test_tool_description_only_first_target():
 
 
 def test_tool_description_separate_rules():
-    text = "# <tool>\n# Build it.\n# </tool>\nbuild:\n\tgcc main.c\n" "# <tool>\n# Test it.\n# </tool>\ntest:\n\tpytest"
+    text = (
+        "# <tool>\n# Build it.\n# </tool>\nbuild:\n\tgcc main.c\n"
+        "# <tool>\n# Test it.\n# </tool>\ntest:\n\tpytest"
+    )
     mf = parse(text)
     build = next(r for r in mf.rules if r.target == "build")
     test = next(r for r in mf.rules if r.target == "test")
@@ -295,7 +302,9 @@ clean:
 def test_full_example():
     mf = parse(_FULL_EXAMPLE)
 
-    assert mf.system_prompt == ("You are a build assistant. Help users compile and test the project.")
+    assert mf.system_prompt == (
+        "You are a build assistant. Help users compile and test the project."
+    )
     assert mf.variables["CC"].value == "gcc"
     assert mf.variables["CFLAGS"].value == "-Wall -O2"
     assert mf.default_target == "build"
@@ -304,7 +313,10 @@ def test_full_example():
     assert build.is_phony
     assert build.prerequisites == ["main.c"]
     assert build.recipes == ["$(CC) $(CFLAGS) -o output main.c"]
-    assert build.description == ("Compile the project from source.\n" "Use this when the user wants to build the binary.")
+    assert build.description == (
+        "Compile the project from source.\n"
+        "Use this when the user wants to build the binary."
+    )
 
     test = next(r for r in mf.rules if r.target == "test")
     assert test.is_phony
@@ -318,14 +330,23 @@ def test_full_example():
 
 
 def test_param_single():
-    mf = parse("# <tool>\n# Greet someone.\n# @param NAME string The name\n# </tool>\ngreet:")
+    mf = parse(
+        "# <tool>\n# Greet someone.\n# @param NAME string The name\n# </tool>\ngreet:"
+    )
     rule = mf.rules[0]
     assert rule.description == "Greet someone."
     assert rule.params == [Param(name="NAME", type="string", description="The name")]
 
 
 def test_param_multiple():
-    text = "# <tool>\n" "# Greet someone.\n" "# @param NAME string The name to greet\n" "# @param GREETING string The greeting word\n" "# </tool>\n" "greet:"
+    text = (
+        "# <tool>\n"
+        "# Greet someone.\n"
+        "# @param NAME string The name to greet\n"
+        "# @param GREETING string The greeting word\n"
+        "# </tool>\n"
+        "greet:"
+    )
     mf = parse(text)
     rule = mf.rules[0]
     assert rule.description == "Greet someone."
@@ -336,16 +357,34 @@ def test_param_multiple():
 
 
 def test_param_different_types():
-    text = "# <tool>\n" "# Do something.\n" "# @param COUNT integer How many times\n" "# @param VERBOSE boolean Enable verbose output\n" "# </tool>\n" "run:"
+    text = (
+        "# <tool>\n"
+        "# Do something.\n"
+        "# @param COUNT integer How many times\n"
+        "# @param VERBOSE boolean Enable verbose output\n"
+        "# </tool>\n"
+        "run:"
+    )
     mf = parse(text)
     params = mf.rules[0].params
-    assert params[0] == Param(name="COUNT", type="integer", description="How many times")
-    assert params[1] == Param(name="VERBOSE", type="boolean", description="Enable verbose output")
+    assert params[0] == Param(
+        name="COUNT", type="integer", description="How many times"
+    )
+    assert params[1] == Param(
+        name="VERBOSE", type="boolean", description="Enable verbose output"
+    )
 
 
 def test_param_description_only_non_param_lines():
     """@param lines are excluded from the description text."""
-    text = "# <tool>\n" "# First line.\n" "# @param X string Something\n" "# Second line.\n" "# </tool>\n" "run:"
+    text = (
+        "# <tool>\n"
+        "# First line.\n"
+        "# @param X string Something\n"
+        "# Second line.\n"
+        "# </tool>\n"
+        "run:"
+    )
     mf = parse(text)
     rule = mf.rules[0]
     assert rule.description == "First line.\nSecond line."
@@ -368,6 +407,7 @@ def test_params_only_on_first_target():
 
 
 # ── validate() / validate_or_raise() ─────────────────────────────────────────
+
 
 class TestValidate:
     def _tool(self, param: str, recipe: str) -> str:
@@ -504,13 +544,13 @@ class TestValidate:
             "Use this format:\n"
             "  define SYSTEM_PROMPT\n"
             "  You are ...\n"
-            "  endef\n"          # indented — must be ignored
-            "  # <tool>\n"       # must be ignored (still inside define block)
+            "  endef\n"  # indented — must be ignored
+            "  # <tool>\n"  # must be ignored (still inside define block)
             "  # @param X string desc\n"
             "  # </tool>\n"
             "  tool:\n"
             "\t@echo $(X)\n"
-            "endef\n"            # column-0 — terminates the block
+            "endef\n"  # column-0 — terminates the block
             ".PHONY: real-tool\n"
             "# <tool>\n"
             "# Real tool.\n"

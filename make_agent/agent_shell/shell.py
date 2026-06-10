@@ -19,16 +19,6 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
-from prompt_toolkit.application import Application
-from prompt_toolkit.completion import WordCompleter
-from prompt_toolkit.filters import Condition
-from prompt_toolkit.history import FileHistory
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Frame, TextArea
-
 from make_agent.agent_core import (
     AgentManager,
     ApprovalRequested,
@@ -42,14 +32,24 @@ from make_agent.agent_core import (
     Shutdown,
     StartTurn,
     StatusChanged,
+    TokenEmitted,
     ToolFinished,
     ToolStarted,
-    TokenEmitted,
     TurnCancelled,
     TurnFinished,
     TurnStarted,
 )
+from make_agent.memory import Memory
+from prompt_toolkit.application import Application
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.styles import Style
+from prompt_toolkit.widgets import Frame, TextArea
 
+from .user_messages import UserMessagesManager
 
 # ── status / enums ──────────────────────────────────────────────────────────────
 
@@ -299,6 +299,7 @@ class MakeAgentShell:
         session_id: str,
         model: str,
         history_path: Path,
+        memory: Optional[Memory] = None,
     ) -> None:
         self._agent_manager = agent_manager
         self._session_id = session_id
@@ -310,6 +311,7 @@ class MakeAgentShell:
         self._app: Optional[Application] = None
         self._response_area: Optional[TextArea] = None
         self._tools_area: Optional[TextArea] = None
+        self._history_manager = UserMessagesManager(memory) if memory else None
         self._commands: dict[str, Any] = {
             "exit": self._cmd_exit,
             "quit": self._cmd_exit,
@@ -418,7 +420,6 @@ class MakeAgentShell:
             prompt="> ",
             multiline=True,
             completer=completer,
-            history=FileHistory(str(self._history_path)),
             wrap_lines=False,
         )
         self._composer_input = composer_input
@@ -474,7 +475,7 @@ class MakeAgentShell:
                         else [
                             (
                                 "class:hint",
-                                "  /help /stats /export /exit   Alt+Enter newline   Ctrl+T transcript",
+                                "  /help /stats /export /exit   ↑↓ history   Alt+Enter newline   Ctrl+T transcript",
                             )
                         ]
                     )
@@ -557,10 +558,15 @@ class MakeAgentShell:
         def _on_enter(event) -> None:
             if state.status != AgentStatus.IDLE or state.transcript_focused:
                 return
+
             text = composer_input.text.strip()
             if not text:
                 return
+
             composer_input.text = ""
+            if self._history_manager is not None:
+                self._history_manager.submit()  # Reset nav state after sending
+
             if text.startswith("/"):
                 should_exit = self._dispatch_command(text[1:])
                 if should_exit:
@@ -569,6 +575,31 @@ class MakeAgentShell:
                     self._refresh()
             else:
                 asyncio.ensure_future(self._run_turn(text))
+
+        # Only bind up/down for history navigation when composer is focused,
+        # idle, and memory is available — so arrow keys still scroll the
+        # transcript area when it's focused.
+        composer_history_filter = Condition(
+            lambda: (
+                not state.transcript_focused
+                and state.status == AgentStatus.IDLE
+                and self._history_manager is not None
+            )
+        )
+
+        @kb.add("up", filter=composer_history_filter)
+        def _on_up(event) -> None:
+            msg = self._history_manager.previous(composer_input.text)
+            if msg is not None:
+                composer_input.text = msg
+                self._refresh()
+
+        @kb.add("down", filter=composer_history_filter)
+        def _on_down(event) -> None:
+            msg = self._history_manager.next()
+            if msg is not None:
+                composer_input.text = msg
+                self._refresh()
 
         @kb.add("escape", "enter")
         def _on_alt_enter(event) -> None:

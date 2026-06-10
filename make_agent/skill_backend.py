@@ -11,7 +11,9 @@ from make_agent.builtin_tools.skill_tools import create_skill as create_makefile
 from make_agent.builtin_tools.skill_tools import execute_skill as execute_makefile_skill
 from make_agent.builtin_tools.skill_tools import list_skills as list_makefile_skills
 from make_agent.builtin_tools.skill_tools import read_skill as read_makefile_skill
-from make_agent.builtin_tools.skill_tools import validate_skill as validate_makefile_skill
+from make_agent.builtin_tools.skill_tools import (
+    validate_skill as validate_makefile_skill,
+)
 
 
 class SkillBackend(Protocol):
@@ -37,7 +39,9 @@ class MakefileSkillBackend:
         self._schemas = MAKEFILE_SKILL_SCHEMAS + FILE_SCHEMAS
         self._executors: dict[str, Any] = {
             "list_skills": lambda **_kw: list_makefile_skills(self._skills_dir),
-            "read_skill": lambda name, **_kw: read_makefile_skill(name, self._skills_dir),
+            "read_skill": lambda name, **_kw: read_makefile_skill(
+                name, self._skills_dir
+            ),
             "execute_skill": lambda name, command, **_kw: execute_makefile_skill(
                 name,
                 command,
