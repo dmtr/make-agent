@@ -10,6 +10,7 @@ from make_agent.agent_core import (
     DEFAULT_COMPACT_MODE,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
+    DEFAULT_TOOL_TIMEOUT,
     DEFAULT_USE_PROMPT_CACHE,
 )
 from make_agent.agent_shell import run
@@ -37,9 +38,7 @@ def _init_logging(loglevel: str) -> None:
     # Remove any existing root handlers so basicConfig always adds our file handler.
     for h in logging.root.handlers[:]:
         logging.root.removeHandler(h)
-    logging.basicConfig(
-        filename=log_file(), level=level, format="%(asctime)s %(levelname)s %(message)s"
-    )
+    logging.basicConfig(filename=log_file(), level=level, format="%(asctime)s %(levelname)s %(message)s")
 
 
 def _resolve_system_prompt(args: argparse.Namespace) -> str:
@@ -78,10 +77,7 @@ def _parse_disabled_tools(value: str | None, mode: str) -> frozenset[str]:
     names = frozenset(name.strip() for name in value.split(",") if name.strip())
     unknown = names - available
     if unknown:
-        sys.exit(
-            "make-agent: unknown built-in tool(s): "
-            f"{', '.join(sorted(unknown))}. Valid names for {mode}: {', '.join(sorted(available))}"
-        )
+        sys.exit("make-agent: unknown built-in tool(s): " f"{', '.join(sorted(unknown))}. Valid names for {mode}: {', '.join(sorted(available))}")
     return names
 
 
@@ -94,8 +90,29 @@ def _parse_trusted_skills(value: str | None) -> frozenset[str]:
     return frozenset(name.strip() for name in value.split(",") if name.strip())
 
 
-def _build_backend(skill_mode: str, skills_dir: str, tool_timeout: int):
-    return MakefileSkillBackend(skills_dir, tool_timeout, Path.cwd())
+def _parse_enabled_skills(value: str | None, all_names: frozenset[str]) -> frozenset[str] | None:
+    """Parse --enabled-skills into a frozenset.
+
+    Returns None when the user didn't pass the flag (meaning: use all discovered skills).
+    When the flag is passed, returns the parsed set. 'all' maps to * (keep all).
+    Raises sys.exit on unknown skill names.
+    """
+    if not value:
+        return None
+
+    names = frozenset(name.strip() for name in value.split(",") if name.strip())
+    unknown = names - all_names
+    if unknown:
+        sys.exit("make-agent: unknown skill(s): " f"{', '.join(sorted(unknown))}. Valid names: {', '.join(sorted(all_names))}")
+    return names
+
+
+def _discover_skill_names(skills_dir: str) -> list[str]:
+    """Return a sorted list of all discoverable skill names from *skills_dir*."""
+    path = Path(skills_dir)
+    if not path.exists():
+        return []
+    return sorted(p.name for p in path.iterdir() if p.is_dir() and (p / "skill.mk").exists())
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
@@ -117,8 +134,11 @@ def _cmd_run(args: argparse.Namespace) -> None:
     else:
         skills_dir = str(default_skills_dir(_SKILL_MODE))
 
+    all_names = _discover_skill_names(skills_dir)
+    enabled_skills = _parse_enabled_skills(args.enabled_skills, frozenset(all_names))
+
     memory = Memory(mode_memory_path(_SKILL_MODE))
-    backend = _build_backend(_SKILL_MODE, skills_dir, args.tool_timeout)
+    backend = MakefileSkillBackend(skills_dir, DEFAULT_TOOL_TIMEOUT, Path.cwd(), enabled_skills)
     trusted_skills = _parse_trusted_skills(getattr(args, "trusted_skills", None))
     tool_handler = ToolHandler(backend, memory, disabled, trusted_skills)
 
@@ -148,9 +168,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     run_p = subparsers.add_parser("run", help="Start the interactive agent (default)")
-    run_p.add_argument(
-        "--model", default=None, metavar="MODEL", help="litellm model string (required)"
-    )
+    run_p.add_argument("--model", default=None, metavar="MODEL", help="litellm model string (required)")
     system_g = run_p.add_mutually_exclusive_group()
     system_g.add_argument(
         "--system",
@@ -230,6 +248,12 @@ def main() -> None:
         default="high",
         metavar="EFFORT",
         help=f"Reasoning effort level ({'/'.join(_REASONING_EFFORT_VALUES)}, default: auto)",
+    )
+    run_p.add_argument(
+        "--enabled-skills",
+        default=None,
+        metavar="SKILLS",
+        help="Comma-separated skill names to enable. By default all discovered skills are enabled.",
     )
     run_p.add_argument(
         "--trusted-skills",

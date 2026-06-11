@@ -120,16 +120,29 @@ def _skill_description(mk_path: Path) -> str:
     return "  (no description)"
 
 
-def list_skills(skills_dir: str) -> str:
-    """List all available skills with their names and descriptions."""
+def list_skills(skills_dir: str, enabled_skills: frozenset[str] | None = None) -> str:
+    """List all available skills with their names and descriptions.
+
+    If *enabled_skills* is provided and is not ``{"*"}`` or empty, only those
+    skill names are shown.  When the set contains ``"*"`` or is None, all
+    discovered skills are listed (default: show everything).
+    """
     path = Path(skills_dir)
     if not path.exists():
         return "No skills found (directory does not exist)"
-    skill_dirs = sorted(
-        p for p in path.iterdir() if p.is_dir() and (p / "skill.mk").exists()
-    )
+
+    all_skill_dirs = sorted(p for p in path.iterdir() if p.is_dir() and (p / "skill.mk").exists())
+    if not all_skill_dirs:
+        return "No skills found"
+
+    if enabled_skills is not None:
+        skill_dirs = [sd for sd in all_skill_dirs if sd.name in enabled_skills]
+    else:
+        skill_dirs = all_skill_dirs
+
     if not skill_dirs:
         return "No skills found"
+
     entries = []
     for sd in skill_dirs:
         desc = _skill_description(sd / "skill.mk")
@@ -168,6 +181,7 @@ def execute_skill(
     injected as environment variables; tokens after ``make`` are passed as make
     arguments (targets and/or make-style variable assignments).
     """
+
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
     safe_paths = _resolve_safe_skill_path(skills_dir, name, "skill.mk")
@@ -186,17 +200,13 @@ def execute_skill(
 
     env_vars: dict[str, str] = {}
     idx = 0
-    while (
-        idx < len(tokens) and "=" in tokens[idx] and not tokens[idx].startswith("make")
-    ):
+    while idx < len(tokens) and "=" in tokens[idx] and not tokens[idx].startswith("make"):
         token = tokens[idx]
         k, _, v = token.partition("=")
         if not _is_valid_make_var_name(k):
             return f"Error: {k!r} is not a valid make variable name"
         if k in os.environ:
-            return (
-                f"Error: parameter {k!r} shadows the system environment variable {k!r}"
-            )
+            return f"Error: parameter {k!r} shadows the system environment variable {k!r}"
         env_vars[k] = v
         idx += 1
 
@@ -259,9 +269,7 @@ def create_skill(
     if not parsed_mk.description:
         return "Error: skill.mk must contain a 'define DESCRIPTION … endef' block"
 
-    safe_paths = _resolve_safe_skill_path(
-        skills_dir, name, "skill.mk", create_dirs=True
-    )
+    safe_paths = _resolve_safe_skill_path(skills_dir, name, "skill.mk", create_dirs=True)
     if isinstance(safe_paths, str):
         return safe_paths
     skill_dir, mk = safe_paths
@@ -368,8 +376,7 @@ SKILL_SCHEMAS: list[dict[str, Any]] = [
                     "mk_content": {
                         "type": "string",
                         "description": (
-                            "Full content of skill.mk. Must include a 'define DESCRIPTION … endef' block. "
-                            "Do NOT include a define SYSTEM_PROMPT block."
+                            "Full content of skill.mk. Must include a 'define DESCRIPTION … endef' block. " "Do NOT include a define SYSTEM_PROMPT block."
                         ),
                     },
                 },
