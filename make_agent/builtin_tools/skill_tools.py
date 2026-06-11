@@ -120,16 +120,31 @@ def _skill_description(mk_path: Path) -> str:
     return "  (no description)"
 
 
-def list_skills(skills_dir: str) -> str:
-    """List all available skills with their names and descriptions."""
+def list_skills(skills_dir: str, enabled_skills: frozenset[str] | None = None) -> str:
+    """List all available skills with their names and descriptions.
+
+    If *enabled_skills* is provided and is not ``{"*"}`` or empty, only those
+    skill names are shown.  When the set contains ``"*"`` or is None, all
+    discovered skills are listed (default: show everything).
+    """
     path = Path(skills_dir)
     if not path.exists():
         return "No skills found (directory does not exist)"
-    skill_dirs = sorted(
+
+    all_skill_dirs = sorted(
         p for p in path.iterdir() if p.is_dir() and (p / "skill.mk").exists()
     )
+    if not all_skill_dirs:
+        return "No skills found"
+
+    if enabled_skills is not None:
+        skill_dirs = [sd for sd in all_skill_dirs if sd.name in enabled_skills]
+    else:
+        skill_dirs = all_skill_dirs
+
     if not skill_dirs:
         return "No skills found"
+
     entries = []
     for sd in skill_dirs:
         desc = _skill_description(sd / "skill.mk")
@@ -168,6 +183,7 @@ def execute_skill(
     injected as environment variables; tokens after ``make`` are passed as make
     arguments (targets and/or make-style variable assignments).
     """
+
     if not _valid_skill_name(name):
         return f"Error: invalid skill name {name!r}. Use letters, numbers, hyphens, underscores, and dots only."
     safe_paths = _resolve_safe_skill_path(skills_dir, name, "skill.mk")

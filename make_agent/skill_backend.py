@@ -32,13 +32,17 @@ class MakefileSkillBackend:
         skills_dir: str,
         tool_timeout: int = 600,
         base_dir: Path | None = None,
+        enabled_skills: frozenset[str] | None = None,
     ) -> None:
         self._skills_dir = skills_dir
         self._tool_timeout = tool_timeout
         self._base_dir = base_dir if base_dir is not None else Path.cwd()
+        self._enabled_skills = enabled_skills
         self._schemas = MAKEFILE_SKILL_SCHEMAS + FILE_SCHEMAS
         self._executors: dict[str, Any] = {
-            "list_skills": lambda **_kw: list_makefile_skills(self._skills_dir),
+            "list_skills": lambda **_kw: list_makefile_skills(
+                self._skills_dir, self._enabled_skills
+            ),
             "read_skill": lambda name, **_kw: read_makefile_skill(
                 name, self._skills_dir
             ),
