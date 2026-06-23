@@ -203,7 +203,6 @@ def _run_args(**kwargs) -> argparse.Namespace:
         reasoning_effort="auto",
         skill_mode="makefile",
         prompt_cache=False,
-        compact_mode="drop",
         enabled_skills=None,
     )
     defaults.update(kwargs)

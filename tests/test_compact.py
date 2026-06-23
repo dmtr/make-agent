@@ -6,19 +6,15 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from make_agent.agent_core import (
     AgentConfig,
-    AgentManager,
     AgenticLoop,
+    AgentManager,
     CompactEvent,
     DoneEvent,
 )
 from make_agent.provider import ContextExceededChunk, TextDelta
 from make_agent.tool_handler.runner import get_tool_result
-
-
-# ── helpers ───────────────────────────────────────────────────────────────────
 
 
 def _sys(content: str) -> dict:
@@ -102,9 +98,6 @@ def _context_exceeded_error() -> Exception:
     exc = Exception("context window exceeded the limit")
     exc.status_code = 400  # type: ignore[attr-defined]
     return exc
-
-
-# ── compact_history() unit tests ──────────────────────────────────────────────
 
 
 class TestCompactHistory:
@@ -318,7 +311,6 @@ class TestSmartCompact:
             system_prompt="sys",
             model="claude-3-5-haiku-20241022",
             provider=_FakeProvider(),
-            compact_mode="summarize",
         )
         loop = AgenticLoop(config, _make_tool_handler())
         return loop
@@ -402,7 +394,6 @@ class TestSmartCompact:
             system_prompt="",
             model="test",
             provider=_OrderingProvider(),
-            compact_mode="summarize",
         )
         loop = AgenticLoop(config, _make_tool_handler())
         loop._messages.extend(
@@ -528,7 +519,6 @@ class TestSmartCompact:
 
     @pytest.mark.asyncio
     async def test_smart_compact_triggered_on_context_exceeded(self):
-        """compact_mode='summarize' is dispatched on context overflow."""
         call_count = 0
 
         class _FakeProvider:
@@ -544,7 +534,6 @@ class TestSmartCompact:
             system_prompt="sys",
             model="claude-3-5-haiku-20241022",
             provider=_FakeProvider(),
-            compact_mode="summarize",
         )
         manager = AgentManager(_make_tool_handler())
         sid = manager.create_session(config)

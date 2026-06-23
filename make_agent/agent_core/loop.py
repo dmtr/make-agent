@@ -23,7 +23,6 @@ from make_agent.provider import (
 
 from .constants import (
     COMPACT_SUMMARY_MAX_TOKENS,
-    DEFAULT_COMPACT_MODE,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
@@ -170,7 +169,6 @@ class AgentConfig(NamedTuple):
     project_dir: Path = Path()
     use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE
     provider: Any = None  # Provider | None; resolved via provider_for(model) when None
-    compact_mode: str = DEFAULT_COMPACT_MODE  # "drop" | "summarize"
 
 
 def _parse_item(doc: Any) -> list[_ToolCall] | None:
@@ -226,7 +224,6 @@ class AgenticLoop:
             if config.provider is not None
             else provider_for(config.model)
         )
-        self._compact_mode: str = config.compact_mode
         self._messages: list[dict] = []
         self._turn_count: int = 0
         self._gen: AsyncGenerator[CallBack, None] | None = None
@@ -344,10 +341,7 @@ class AgenticLoop:
                         f"aborted: context window exceeded after {MAX_COMPACT_RETRIES} compact attempts"
                     )
                 self._messages = snapshot
-                if self._compact_mode == "summarize":
-                    dropped, kept = await self._smart_compact()
-                else:
-                    dropped, kept = self.compact_history()
+                dropped, kept = await self._smart_compact()
                 if dropped == 0:
                     raise RuntimeError(
                         "aborted: context window exceeded and no messages can be compacted"
@@ -558,7 +552,9 @@ class AgenticLoop:
         ):
             if isinstance(chunk, TextDelta):
                 parts.append(chunk.text)
-        return "".join(parts).strip()
+        res = "".join(parts).strip()
+        logger.debug("[summarize_turn] %s", res)
+        return res
 
     # Sentinel prefix used to identify injected compact summaries.
     _COMPACT_SUMMARY_PREFIX = ("Prior conversation summary:", "Prior work summary:")

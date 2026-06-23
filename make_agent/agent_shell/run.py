@@ -6,7 +6,6 @@ import logging
 from typing import Optional
 
 from make_agent.agent_core import (
-    DEFAULT_COMPACT_MODE,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
@@ -38,7 +37,6 @@ async def run(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     reasoning_effort: str = DEFAULT_REASONING_EFFORT,
     use_prompt_cache: bool = DEFAULT_USE_PROMPT_CACHE,
-    compact_mode: str = DEFAULT_COMPACT_MODE,
 ) -> None:
     """Start the interactive shell (or send a single prompt and return)."""
     agent_config = AgentConfig(
@@ -51,7 +49,6 @@ async def run(
         reasoning_effort=reasoning_effort,
         project_dir=project_dir(),
         use_prompt_cache=use_prompt_cache,
-        compact_mode=compact_mode,
     )
     agent_manager = AgentManager(
         tool_handler,
