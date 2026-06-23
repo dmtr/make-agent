@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import uuid
 from pathlib import Path
 
 from make_agent.agent_core import (
@@ -21,7 +22,7 @@ from make_agent.app_dirs import (
     mode_memory_path,
 )
 from make_agent.builtin_tools import builtin_tool_names
-from make_agent.memory import Memory
+from make_agent.memory import Memory, UserSessionManager
 from make_agent.skill_backend import MakefileSkillBackend
 from make_agent.tool_handler import ToolHandler
 
@@ -126,9 +127,59 @@ def _discover_skill_names(skills_dir: str) -> list[str]:
     )
 
 
+def _dest_from_option(opt: str) -> str:
+    """Convert a CLI option token (e.g. ``--max-tokens``) to its argparse dest (``max_tokens``).
+
+    Only the flag name itself is inspected; values that follow the flag are
+    ignored.  Handles both ``--flag value`` and ``--flag=value`` forms.
+    """
+    # Strip leading dashes and everything after the first '='
+    name = opt.lstrip("-").split("=")[0]
+    return name.replace("-", "_")
+
+
+def _apply_last_session_defaults(
+    args: argparse.Namespace,
+    last: dict,
+    provided: frozenset[str],
+) -> None:
+    """Overwrite *args* fields with values from *last* when the user did not
+    supply the corresponding CLI argument.
+
+    *provided* is the set of argument dest-names that were explicitly passed on
+    the command line (obtained from ``parse_known_args`` sys.argv inspection).
+    """
+    _DEFAULTS: dict[str, str] = {
+        # args dest  →  key in last-session dict
+        "model": "model",
+        "reasoning_effort": "reasoning_effort",
+        "max_tokens": "max_tokens",
+        "max_tool_output": "max_tool_output",
+        "tool_timeout": "tool_timeout",
+        "prompt_cache": "use_prompt_cache",
+    }
+    for dest, key in _DEFAULTS.items():
+        if dest not in provided and key in last:
+            setattr(args, dest, last[key])
+
+
 def _cmd_run(args: argparse.Namespace) -> None:
+    db_path = mode_memory_path(_SKILL_MODE)
+    session_mgr = UserSessionManager(db_path)
+
+    # ── restore previous session defaults for any flag not supplied by the user ──
+    last = session_mgr.get_last_session_params()
+    if last:
+        # Determine which flags were actually provided on the CLI.
+        provided: frozenset[str] = frozenset(
+            _dest_from_option(opt)
+            for opt in sys.argv[1:]
+            if opt.startswith("-")
+        )
+        _apply_last_session_defaults(args, last, provided)
+
     if args.model is None:
-        sys.exit("make-agent: --model is required")
+        sys.exit("make-agent: --model is required (no previous session found)")
 
     prompt = args.prompt
     if args.prompt_file is not None:
@@ -148,28 +199,48 @@ def _cmd_run(args: argparse.Namespace) -> None:
     all_names = _discover_skill_names(skills_dir)
     enabled_skills = _parse_enabled_skills(args.enabled_skills, frozenset(all_names))
 
-    memory = Memory(mode_memory_path(_SKILL_MODE))
+    memory = Memory(db_path)
     backend = MakefileSkillBackend(
         skills_dir, DEFAULT_TOOL_TIMEOUT, Path.cwd(), enabled_skills
     )
     trusted_skills = _parse_trusted_skills(getattr(args, "trusted_skills", None))
     tool_handler = ToolHandler(backend, memory, disabled, trusted_skills)
 
-    asyncio.run(
-        run(
-            system_prompt=system_prompt,
-            model=args.model,
-            memory=memory,
-            tool_handler=tool_handler,
-            prompt=prompt,
-            max_retries=args.max_retries,
-            tool_timeout=args.tool_timeout,
-            max_tool_output=args.max_tool_output,
-            max_tokens=args.max_tokens,
-            reasoning_effort=args.reasoning_effort,
-            use_prompt_cache=args.prompt_cache,
-        )
+    # ── persist the resolved session parameters ───────────────────────────────
+    session_id = str(uuid.uuid4())
+    session_mgr.save_session_params(
+        session_id=session_id,
+        model=args.model,
+        params={
+            "reasoning_effort": args.reasoning_effort,
+            "max_tokens": args.max_tokens,
+            "max_tool_output": args.max_tool_output,
+            "tool_timeout": args.tool_timeout,
+            "use_prompt_cache": args.prompt_cache,
+        },
     )
+
+    try:
+        asyncio.run(
+            run(
+                system_prompt=system_prompt,
+                model=args.model,
+                memory=memory,
+                tool_handler=tool_handler,
+                prompt=prompt,
+                max_retries=args.max_retries,
+                tool_timeout=args.tool_timeout,
+                max_tool_output=args.max_tool_output,
+                max_tokens=args.max_tokens,
+                reasoning_effort=args.reasoning_effort,
+                use_prompt_cache=args.prompt_cache,
+            )
+        )
+    except KeyboardInterrupt:
+        pass
+    finally:
+        session_mgr.update_session_ended(session_id)
+        session_mgr.close()
 
 
 def main() -> None:
