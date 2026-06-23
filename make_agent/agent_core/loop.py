@@ -219,7 +219,11 @@ class AgenticLoop:
         self._use_prompt_cache = config.use_prompt_cache
         self._tool_handler = tool_handler
         self._config = config
-        self._provider: Provider = config.provider if config.provider is not None else provider_for(config.model)
+        self._provider: Provider = (
+            config.provider
+            if config.provider is not None
+            else provider_for(config.model)
+        )
         self._messages: list[dict] = []
         self._turn_count: int = 0
         self._gen: AsyncGenerator[CallBack, None] | None = None
@@ -286,9 +290,13 @@ class AgenticLoop:
 
         while True:
             if model_turns >= MAX_MODEL_TURNS_PER_REQUEST:
-                raise RuntimeError(f"aborted: exceeded {MAX_MODEL_TURNS_PER_REQUEST} model turns in a single request")
+                raise RuntimeError(
+                    f"aborted: exceeded {MAX_MODEL_TURNS_PER_REQUEST} model turns in a single request"
+                )
             if time.monotonic() - started_at >= MAX_RUN_SECONDS_PER_REQUEST:
-                raise RuntimeError(f"aborted: exceeded {MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request")
+                raise RuntimeError(
+                    f"aborted: exceeded {MAX_RUN_SECONDS_PER_REQUEST}s runtime in a single request"
+                )
 
             # Snapshot before each LLM call so we can restore on context overflow.
             snapshot = list(self._messages)
@@ -329,11 +337,15 @@ class AgenticLoop:
 
             if context_exceeded:
                 if compact_attempts >= MAX_COMPACT_RETRIES:
-                    raise RuntimeError(f"aborted: context window exceeded after {MAX_COMPACT_RETRIES} compact attempts")
+                    raise RuntimeError(
+                        f"aborted: context window exceeded after {MAX_COMPACT_RETRIES} compact attempts"
+                    )
                 self._messages = snapshot
                 dropped, kept = await self._smart_compact()
                 if dropped == 0:
-                    raise RuntimeError("aborted: context window exceeded and no messages can be compacted")
+                    raise RuntimeError(
+                        "aborted: context window exceeded and no messages can be compacted"
+                    )
                 compact_attempts += 1
                 logger.warning(
                     "[compact] context exceeded — dropped %d messages, kept %d turns (attempt %d/%d)",
@@ -342,7 +354,9 @@ class AgenticLoop:
                     compact_attempts,
                     MAX_COMPACT_RETRIES,
                 )
-                yield CompactCallback(attempt=compact_attempts, messages_dropped=dropped, turns_kept=kept)
+                yield CompactCallback(
+                    attempt=compact_attempts, messages_dropped=dropped, turns_kept=kept
+                )
                 continue
 
             content = "".join(content_parts)
@@ -396,13 +410,17 @@ class AgenticLoop:
 
                 for tc in tool_calls_to_run:
                     if tool_calls_executed >= MAX_TOOL_CALLS_PER_REQUEST:
-                        raise RuntimeError(f"aborted: exceeded {MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request")
+                        raise RuntimeError(
+                            f"aborted: exceeded {MAX_TOOL_CALLS_PER_REQUEST} tool calls in a single request"
+                        )
                     tool_calls_executed += 1
                     target = tc.function.name
                     try:
                         arguments = json.loads(tc.function.arguments)
                     except json.JSONDecodeError as e:
-                        error_output = self._tool_handler.get_tool_result("", f"malformed JSON arguments: {e}", None).output
+                        error_output = self._tool_handler.get_tool_result(
+                            "", f"malformed JSON arguments: {e}", None
+                        ).output
                         logger.error(
                             "[tool_result] %s -> %s, arguments %s",
                             target,
@@ -509,7 +527,9 @@ class AgenticLoop:
             elif role == "assistant":
                 tool_calls = msg.get("tool_calls") or []
                 if tool_calls:
-                    names = ", ".join(tc.get("function", {}).get("name", "?") for tc in tool_calls)
+                    names = ", ".join(
+                        tc.get("function", {}).get("name", "?") for tc in tool_calls
+                    )
                     lines.append(f"Assistant called tools: {names}")
                 if content:
                     lines.append(f"Assistant: {content}")
@@ -518,7 +538,8 @@ class AgenticLoop:
 
         prompt = (
             "Summarize the following conversation turn in one concise paragraph. "
-            "Focus on what was asked, what actions were taken, and any key outcomes or decisions.\n\n" + "\n".join(lines)
+            "Focus on what was asked, what actions were taken, and any key outcomes or decisions.\n\n"
+            + "\n".join(lines)
         )
         parts: list[str] = []
         async for chunk in self._provider.astream(
@@ -559,7 +580,11 @@ class AgenticLoop:
             return any(content.startswith(p) for p in self._COMPACT_SUMMARY_PREFIX)
 
         # Keep only original system messages; drop previously injected summaries.
-        system = [m for m in self._messages if m.get("role") == "system" and not _is_injected_summary(m)]
+        system = [
+            m
+            for m in self._messages
+            if m.get("role") == "system" and not _is_injected_summary(m)
+        ]
         non_system = [m for m in self._messages if m.get("role") != "system"]
 
         turns: list[list[dict]] = []
@@ -616,7 +641,9 @@ class AgenticLoop:
         """
         async for cb in self.astream(user_input):
             if isinstance(cb, ToolCallback):
-                result = await self._tool_handler.execute(cb.tool_name, cb.tool_args, self._max_tool_output)
+                result = await self._tool_handler.execute(
+                    cb.tool_name, cb.tool_args, self._max_tool_output
+                )
                 cb.set_response(result.output, is_error=result.is_error)
             elif isinstance(cb, MessageCallback):
                 return cb.message

@@ -41,7 +41,9 @@ def _make_loop(messages: list[dict]) -> AgenticLoop:
             if False:
                 yield  # make it an async generator
 
-    config = AgentConfig(system_prompt="", model="claude-3-5-haiku-20241022", provider=_FakeProvider())
+    config = AgentConfig(
+        system_prompt="", model="claude-3-5-haiku-20241022", provider=_FakeProvider()
+    )
     loop = AgenticLoop(config, tool_handler)
     loop._messages = list(messages)
     return loop
@@ -329,7 +331,9 @@ class TestSmartCompact:
         assert summarized == 2
         assert dropped > 0
         sys_msgs = [m for m in loop._messages if m.get("role") == "system"]
-        summary_msgs = [m for m in sys_msgs if "Prior conversation summary" in m.get("content", "")]
+        summary_msgs = [
+            m for m in sys_msgs if "Prior conversation summary" in m.get("content", "")
+        ]
         assert len(summary_msgs) == 1
         assert "Turn 1" in summary_msgs[0]["content"]
         assert "Turn 2" in summary_msgs[0]["content"]
@@ -464,11 +468,18 @@ class TestSmartCompact:
         )
         await loop._smart_compact()
         # Simulate another round: add more turns and compact again.
-        loop._messages.extend([_assistant("r2"), _user("t3"), _assistant("r3"), _user("next")])
+        loop._messages.extend(
+            [_assistant("r2"), _user("t3"), _assistant("r3"), _user("next")]
+        )
         await loop._smart_compact()
 
         sys_msgs = [m for m in loop._messages if m.get("role") == "system"]
-        summary_count = sum(1 for m in sys_msgs if "Prior conversation summary" in m.get("content", "") or "Prior work summary" in m.get("content", ""))
+        summary_count = sum(
+            1
+            for m in sys_msgs
+            if "Prior conversation summary" in m.get("content", "")
+            or "Prior work summary" in m.get("content", "")
+        )
         assert summary_count == 1, f"Expected 1 summary, got {summary_count}"
 
     @pytest.mark.asyncio
