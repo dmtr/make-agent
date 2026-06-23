@@ -6,19 +6,15 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from make_agent.agent_core import (
     AgentConfig,
-    AgentManager,
     AgenticLoop,
+    AgentManager,
     CompactEvent,
     DoneEvent,
 )
 from make_agent.provider import ContextExceededChunk, TextDelta
 from make_agent.tool_handler.runner import get_tool_result
-
-
-# ── helpers ───────────────────────────────────────────────────────────────────
 
 
 def _sys(content: str) -> dict:
@@ -45,9 +41,7 @@ def _make_loop(messages: list[dict]) -> AgenticLoop:
             if False:
                 yield  # make it an async generator
 
-    config = AgentConfig(
-        system_prompt="", model="claude-3-5-haiku-20241022", provider=_FakeProvider()
-    )
+    config = AgentConfig(system_prompt="", model="claude-3-5-haiku-20241022", provider=_FakeProvider())
     loop = AgenticLoop(config, tool_handler)
     loop._messages = list(messages)
     return loop
@@ -102,9 +96,6 @@ def _context_exceeded_error() -> Exception:
     exc = Exception("context window exceeded the limit")
     exc.status_code = 400  # type: ignore[attr-defined]
     return exc
-
-
-# ── compact_history() unit tests ──────────────────────────────────────────────
 
 
 class TestCompactHistory:
@@ -318,7 +309,6 @@ class TestSmartCompact:
             system_prompt="sys",
             model="claude-3-5-haiku-20241022",
             provider=_FakeProvider(),
-            compact_mode="summarize",
         )
         loop = AgenticLoop(config, _make_tool_handler())
         return loop
@@ -339,9 +329,7 @@ class TestSmartCompact:
         assert summarized == 2
         assert dropped > 0
         sys_msgs = [m for m in loop._messages if m.get("role") == "system"]
-        summary_msgs = [
-            m for m in sys_msgs if "Prior conversation summary" in m.get("content", "")
-        ]
+        summary_msgs = [m for m in sys_msgs if "Prior conversation summary" in m.get("content", "")]
         assert len(summary_msgs) == 1
         assert "Turn 1" in summary_msgs[0]["content"]
         assert "Turn 2" in summary_msgs[0]["content"]
@@ -402,7 +390,6 @@ class TestSmartCompact:
             system_prompt="",
             model="test",
             provider=_OrderingProvider(),
-            compact_mode="summarize",
         )
         loop = AgenticLoop(config, _make_tool_handler())
         loop._messages.extend(
@@ -477,18 +464,11 @@ class TestSmartCompact:
         )
         await loop._smart_compact()
         # Simulate another round: add more turns and compact again.
-        loop._messages.extend(
-            [_assistant("r2"), _user("t3"), _assistant("r3"), _user("next")]
-        )
+        loop._messages.extend([_assistant("r2"), _user("t3"), _assistant("r3"), _user("next")])
         await loop._smart_compact()
 
         sys_msgs = [m for m in loop._messages if m.get("role") == "system"]
-        summary_count = sum(
-            1
-            for m in sys_msgs
-            if "Prior conversation summary" in m.get("content", "")
-            or "Prior work summary" in m.get("content", "")
-        )
+        summary_count = sum(1 for m in sys_msgs if "Prior conversation summary" in m.get("content", "") or "Prior work summary" in m.get("content", ""))
         assert summary_count == 1, f"Expected 1 summary, got {summary_count}"
 
     @pytest.mark.asyncio
@@ -528,7 +508,6 @@ class TestSmartCompact:
 
     @pytest.mark.asyncio
     async def test_smart_compact_triggered_on_context_exceeded(self):
-        """compact_mode='summarize' is dispatched on context overflow."""
         call_count = 0
 
         class _FakeProvider:
@@ -544,7 +523,6 @@ class TestSmartCompact:
             system_prompt="sys",
             model="claude-3-5-haiku-20241022",
             provider=_FakeProvider(),
-            compact_mode="summarize",
         )
         manager = AgentManager(_make_tool_handler())
         sid = manager.create_session(config)

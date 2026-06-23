@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from make_agent.agent_core import (
-    DEFAULT_COMPACT_MODE,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
     DEFAULT_TOOL_TIMEOUT,
@@ -169,7 +168,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
             max_tokens=args.max_tokens,
             reasoning_effort=args.reasoning_effort,
             use_prompt_cache=args.prompt_cache,
-            compact_mode=args.compact_mode,
         )
     )
 
@@ -284,15 +282,6 @@ def main() -> None:
         action="store_true",
         default=DEFAULT_USE_PROMPT_CACHE,
         help="Enable prompt caching for the system prompt (Anthropic models only)",
-    )
-    run_p.add_argument(
-        "--compact-mode",
-        choices=("drop", "summarize"),
-        default=DEFAULT_COMPACT_MODE,
-        dest="compact_mode",
-        help="Context compaction strategy when the context window is exceeded: "
-        "'drop' (default) removes oldest turns; 'summarize' replaces all turns "
-        "with LLM-generated summaries",
     )
     raw = sys.argv[1:]
     if not raw or raw[0] not in ("run", "-h", "--help"):
