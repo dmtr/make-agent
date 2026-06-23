@@ -72,36 +72,50 @@ class TestSaveSessionParams:
     def test_row_is_inserted(self, mgr):
         mgr.save_session_params("sid-1", "claude-3", {"max_tokens": 4096})
         conn = mgr._get_conn()
-        row = conn.execute("SELECT * FROM sessions WHERE session_id = 'sid-1'").fetchone()
+        row = conn.execute(
+            "SELECT * FROM sessions WHERE session_id = 'sid-1'"
+        ).fetchone()
         assert row is not None
         assert row["model"] == "claude-3"
 
     def test_params_json_is_stored(self, mgr):
-        params = {"reasoning_effort": "high", "max_tokens": 8192, "use_prompt_cache": True}
+        params = {
+            "reasoning_effort": "high",
+            "max_tokens": 8192,
+            "use_prompt_cache": True,
+        }
         mgr.save_session_params("sid-2", "gpt-4o", params)
         conn = mgr._get_conn()
-        row = conn.execute("SELECT params_json FROM sessions WHERE session_id = 'sid-2'").fetchone()
+        row = conn.execute(
+            "SELECT params_json FROM sessions WHERE session_id = 'sid-2'"
+        ).fetchone()
         stored = json.loads(row["params_json"])
         assert stored == params
 
     def test_started_at_is_populated(self, mgr):
         mgr.save_session_params("sid-3", "model-x", {})
         conn = mgr._get_conn()
-        row = conn.execute("SELECT started_at FROM sessions WHERE session_id = 'sid-3'").fetchone()
+        row = conn.execute(
+            "SELECT started_at FROM sessions WHERE session_id = 'sid-3'"
+        ).fetchone()
         assert row["started_at"] is not None
         assert "T" in row["started_at"]  # ISO 8601
 
     def test_ended_at_is_null_on_insert(self, mgr):
         mgr.save_session_params("sid-4", "model-x", {})
         conn = mgr._get_conn()
-        row = conn.execute("SELECT ended_at FROM sessions WHERE session_id = 'sid-4'").fetchone()
+        row = conn.execute(
+            "SELECT ended_at FROM sessions WHERE session_id = 'sid-4'"
+        ).fetchone()
         assert row["ended_at"] is None
 
     def test_duplicate_session_id_is_replaced(self, mgr):
         mgr.save_session_params("sid-dup", "model-a", {"max_tokens": 1024})
         mgr.save_session_params("sid-dup", "model-b", {"max_tokens": 2048})
         conn = mgr._get_conn()
-        rows = conn.execute("SELECT * FROM sessions WHERE session_id = 'sid-dup'").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM sessions WHERE session_id = 'sid-dup'"
+        ).fetchall()
         assert len(rows) == 1
         assert rows[0]["model"] == "model-b"
         assert json.loads(rows[0]["params_json"])["max_tokens"] == 2048
@@ -112,13 +126,17 @@ class TestSaveSessionParams:
         # Re-save same session_id (e.g. restart scenario)
         mgr.save_session_params("sid-re", "model-a", {})
         conn = mgr._get_conn()
-        row = conn.execute("SELECT ended_at FROM sessions WHERE session_id = 'sid-re'").fetchone()
+        row = conn.execute(
+            "SELECT ended_at FROM sessions WHERE session_id = 'sid-re'"
+        ).fetchone()
         assert row["ended_at"] is None
 
     def test_empty_params_stored_as_empty_object(self, mgr):
         mgr.save_session_params("sid-empty", "model-x", {})
         conn = mgr._get_conn()
-        row = conn.execute("SELECT params_json FROM sessions WHERE session_id = 'sid-empty'").fetchone()
+        row = conn.execute(
+            "SELECT params_json FROM sessions WHERE session_id = 'sid-empty'"
+        ).fetchone()
         assert json.loads(row["params_json"]) == {}
 
     def test_multiple_sessions_stored_independently(self, mgr):
@@ -137,7 +155,9 @@ class TestUpdateSessionEnded:
         mgr.save_session_params("sid-end", "model-x", {})
         mgr.update_session_ended("sid-end")
         conn = mgr._get_conn()
-        row = conn.execute("SELECT ended_at FROM sessions WHERE session_id = 'sid-end'").fetchone()
+        row = conn.execute(
+            "SELECT ended_at FROM sessions WHERE session_id = 'sid-end'"
+        ).fetchone()
         assert row["ended_at"] is not None
         assert "T" in row["ended_at"]
 
@@ -160,7 +180,9 @@ class TestUpdateSessionEnded:
         mgr.save_session_params("sid-y", "model-y", {})
         mgr.update_session_ended("sid-x")
         conn = mgr._get_conn()
-        row_y = conn.execute("SELECT ended_at FROM sessions WHERE session_id = 'sid-y'").fetchone()
+        row_y = conn.execute(
+            "SELECT ended_at FROM sessions WHERE session_id = 'sid-y'"
+        ).fetchone()
         assert row_y["ended_at"] is None
 
 
@@ -281,8 +303,14 @@ class TestApplyLastSessionDefaults:
         import argparse
         from make_agent.main import _apply_last_session_defaults
 
-        args = argparse.Namespace(model=None, reasoning_effort="medium", max_tokens=4096,
-                                  max_tool_output=32000, tool_timeout=600, prompt_cache=False)
+        args = argparse.Namespace(
+            model=None,
+            reasoning_effort="medium",
+            max_tokens=4096,
+            max_tool_output=32000,
+            tool_timeout=600,
+            prompt_cache=False,
+        )
         last = {"model": "claude-opus", "reasoning_effort": "high"}
         _apply_last_session_defaults(args, last, provided=frozenset())
         assert args.model == "claude-opus"
@@ -291,8 +319,14 @@ class TestApplyLastSessionDefaults:
         import argparse
         from make_agent.main import _apply_last_session_defaults
 
-        args = argparse.Namespace(model="gpt-4o", reasoning_effort="low", max_tokens=4096,
-                                  max_tool_output=32000, tool_timeout=600, prompt_cache=False)
+        args = argparse.Namespace(
+            model="gpt-4o",
+            reasoning_effort="low",
+            max_tokens=4096,
+            max_tool_output=32000,
+            tool_timeout=600,
+            prompt_cache=False,
+        )
         last = {"model": "claude-opus", "reasoning_effort": "high"}
         _apply_last_session_defaults(args, last, provided=frozenset({"model"}))
         assert args.model == "gpt-4o"  # unchanged — was explicitly provided
@@ -301,8 +335,14 @@ class TestApplyLastSessionDefaults:
         import argparse
         from make_agent.main import _apply_last_session_defaults
 
-        args = argparse.Namespace(model="gpt-4o", reasoning_effort="medium", max_tokens=4096,
-                                  max_tool_output=32000, tool_timeout=600, prompt_cache=False)
+        args = argparse.Namespace(
+            model="gpt-4o",
+            reasoning_effort="medium",
+            max_tokens=4096,
+            max_tool_output=32000,
+            tool_timeout=600,
+            prompt_cache=False,
+        )
         last = {"model": "gpt-4o", "reasoning_effort": "xhigh"}
         _apply_last_session_defaults(args, last, provided=frozenset())
         assert args.reasoning_effort == "xhigh"
@@ -311,9 +351,20 @@ class TestApplyLastSessionDefaults:
         import argparse
         from make_agent.main import _apply_last_session_defaults
 
-        args = argparse.Namespace(model=None, reasoning_effort="medium", max_tokens=4096,
-                                  max_tool_output=32000, tool_timeout=600, prompt_cache=False)
-        last = {"model": "m", "max_tokens": 8192, "max_tool_output": 64000, "tool_timeout": 300}
+        args = argparse.Namespace(
+            model=None,
+            reasoning_effort="medium",
+            max_tokens=4096,
+            max_tool_output=32000,
+            tool_timeout=600,
+            prompt_cache=False,
+        )
+        last = {
+            "model": "m",
+            "max_tokens": 8192,
+            "max_tool_output": 64000,
+            "tool_timeout": 300,
+        }
         _apply_last_session_defaults(args, last, provided=frozenset())
         assert args.max_tokens == 8192
         assert args.max_tool_output == 64000
@@ -323,8 +374,14 @@ class TestApplyLastSessionDefaults:
         import argparse
         from make_agent.main import _apply_last_session_defaults
 
-        args = argparse.Namespace(model=None, reasoning_effort="medium", max_tokens=4096,
-                                  max_tool_output=32000, tool_timeout=600, prompt_cache=False)
+        args = argparse.Namespace(
+            model=None,
+            reasoning_effort="medium",
+            max_tokens=4096,
+            max_tool_output=32000,
+            tool_timeout=600,
+            prompt_cache=False,
+        )
         last = {"model": "m", "use_prompt_cache": True}
         _apply_last_session_defaults(args, last, provided=frozenset())
         assert args.prompt_cache is True
@@ -333,8 +390,14 @@ class TestApplyLastSessionDefaults:
         import argparse
         from make_agent.main import _apply_last_session_defaults
 
-        args = argparse.Namespace(model=None, reasoning_effort="medium", max_tokens=4096,
-                                  max_tool_output=32000, tool_timeout=600, prompt_cache=False)
+        args = argparse.Namespace(
+            model=None,
+            reasoning_effort="medium",
+            max_tokens=4096,
+            max_tool_output=32000,
+            tool_timeout=600,
+            prompt_cache=False,
+        )
         last = {"model": "m"}  # no reasoning_effort
         _apply_last_session_defaults(args, last, provided=frozenset())
         assert args.reasoning_effort == "medium"  # default kept
@@ -346,20 +409,25 @@ class TestApplyLastSessionDefaults:
 class TestDestFromOption:
     def test_long_flag_with_dashes(self):
         from make_agent.main import _dest_from_option
+
         assert _dest_from_option("--max-tokens") == "max_tokens"
 
     def test_long_flag_equals_form(self):
         from make_agent.main import _dest_from_option
+
         assert _dest_from_option("--max-tokens=8192") == "max_tokens"
 
     def test_short_flag(self):
         from make_agent.main import _dest_from_option
+
         assert _dest_from_option("-v") == "v"
 
     def test_no_dashes_in_name(self):
         from make_agent.main import _dest_from_option
+
         assert _dest_from_option("--model") == "model"
 
     def test_prompt_cache_flag(self):
         from make_agent.main import _dest_from_option
+
         assert _dest_from_option("--prompt-cache") == "prompt_cache"

@@ -172,9 +172,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
     if last:
         # Determine which flags were actually provided on the CLI.
         provided: frozenset[str] = frozenset(
-            _dest_from_option(opt)
-            for opt in sys.argv[1:]
-            if opt.startswith("-")
+            _dest_from_option(opt) for opt in sys.argv[1:] if opt.startswith("-")
         )
         _apply_last_session_defaults(args, last, provided)
 
