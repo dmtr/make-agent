@@ -60,7 +60,9 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -89,7 +91,9 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -118,7 +122,9 @@ class TestRunPromptInput:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -187,7 +193,9 @@ class TestResolveSystemPrompt:
     def test_returns_empty_string_when_nothing_found(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         args = _run_args(system=None, system_file=None)
-        with patch.object(main_module, "mode_dir", return_value=tmp_path / "nonexistent"):
+        with patch.object(
+            main_module, "mode_dir", return_value=tmp_path / "nonexistent"
+        ):
             result = main_module._resolve_system_prompt(args)
         assert result == ""
 
@@ -201,7 +209,9 @@ class TestResolveSystemPrompt:
 
 class TestParseDisabledTools:
     def test_all_returns_makefile_names(self):
-        assert main_module._parse_disabled_tools("all", "makefile") == builtin_tool_names("makefile")
+        assert main_module._parse_disabled_tools(
+            "all", "makefile"
+        ) == builtin_tool_names("makefile")
 
     def test_unknown_name_exits(self):
         with patch.object(sys, "exit", side_effect=SystemExit) as mock_exit:

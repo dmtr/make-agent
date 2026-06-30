@@ -13,7 +13,9 @@ from make_agent.builtin_tools.skill_tools import create_skill as create_makefile
 from make_agent.builtin_tools.skill_tools import execute_skill as execute_makefile_skill
 from make_agent.builtin_tools.skill_tools import list_skills as list_makefile_skills
 from make_agent.builtin_tools.skill_tools import read_skill as read_makefile_skill
-from make_agent.builtin_tools.skill_tools import validate_skill as validate_makefile_skill
+from make_agent.builtin_tools.skill_tools import (
+    validate_skill as validate_makefile_skill,
+)
 from make_agent.memory import MEMORY_SCHEMAS, Memory, get_memory_executors
 
 from .runner import ToolExecutionResult, get_tool_result
@@ -38,7 +40,9 @@ class ToolHandler:
         self._skills_dir = skills_dir
 
         skill_executors: dict[str, Any] = {
-            "list_skills": lambda **_kw: list_makefile_skills(skills_dir, enabled_skills),
+            "list_skills": lambda **_kw: list_makefile_skills(
+                skills_dir, enabled_skills
+            ),
             "read_skill": lambda name, **_kw: read_makefile_skill(name, skills_dir),
             "execute_skill": lambda name, command, **_kw: execute_makefile_skill(
                 name, command, skills_dir, tool_timeout

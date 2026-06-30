@@ -46,7 +46,9 @@ class TestParseEnabledSkills:
         mock_exit.assert_called_once()
 
     def test_whitespace_stripped(self):
-        result = main_module._parse_enabled_skills(" git , run ", frozenset({"git", "run"}))
+        result = main_module._parse_enabled_skills(
+            " git , run ", frozenset({"git", "run"})
+        )
         assert result == frozenset({"git", "run"})
 
 
@@ -79,7 +81,9 @@ class TestListSkillsFiltering:
         for name in ("git", "run", "file-list"):
             (tmp_path / name).mkdir()
             (tmp_path / name / "skill.mk").write_text(_SKILL_MK)
-        result = list_skills(str(tmp_path), enabled_skills=frozenset({"git", "file-list"}))
+        result = list_skills(
+            str(tmp_path), enabled_skills=frozenset({"git", "file-list"})
+        )
         assert "git:" in result
         assert "file-list:" in result
         assert "run:" not in result
@@ -142,7 +146,9 @@ class TestCmdRunWithEnabledSkills:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -157,7 +163,9 @@ class TestCmdRunWithEnabledSkills:
         assert "run:" not in result
 
     def test_no_enabled_skills_flag_passes_none(self, skills_dir, tmp_path):
-        args = _run_args(prompt="do it", skills_dir=str(skills_dir), enabled_skills=None)
+        args = _run_args(
+            prompt="do it", skills_dir=str(skills_dir), enabled_skills=None
+        )
         captured: dict = {}
 
         async def _fake_run(**kwargs):
@@ -166,7 +174,9 @@ class TestCmdRunWithEnabledSkills:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
+            patch.object(
+                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
+            ),
             patch.object(
                 main_module,
                 "mode_memory_path",

@@ -57,7 +57,9 @@ def test_parse_trusted_skills_all_case_insensitive():
 # ── ToolHandler.is_skill_trusted ───────────────────────────────────────────────
 
 
-def _make_handler(tmp_path, trusted_skills: frozenset[str] = frozenset()) -> ToolHandler:
+def _make_handler(
+    tmp_path, trusted_skills: frozenset[str] = frozenset()
+) -> ToolHandler:
     memory = Memory(tmp_path / "memory.db")
     return ToolHandler(str(tmp_path), memory, trusted_skills=trusted_skills)
 

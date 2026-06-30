@@ -36,7 +36,9 @@ def _init_logging(loglevel: str) -> None:
     # Remove any existing root handlers so basicConfig always adds our file handler.
     for h in logging.root.handlers[:]:
         logging.root.removeHandler(h)
-    logging.basicConfig(filename=log_file(), level=level, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        filename=log_file(), level=level, format="%(asctime)s %(levelname)s %(message)s"
+    )
 
 
 def _resolve_system_prompt(args: argparse.Namespace) -> str:
@@ -75,7 +77,10 @@ def _parse_disabled_tools(value: str | None, mode: str) -> frozenset[str]:
     names = frozenset(name.strip() for name in value.split(",") if name.strip())
     unknown = names - available
     if unknown:
-        sys.exit("make-agent: unknown built-in tool(s): " f"{', '.join(sorted(unknown))}. Valid names for {mode}: {', '.join(sorted(available))}")
+        sys.exit(
+            "make-agent: unknown built-in tool(s): "
+            f"{', '.join(sorted(unknown))}. Valid names for {mode}: {', '.join(sorted(available))}"
+        )
     return names
 
 
@@ -88,7 +93,9 @@ def _parse_trusted_skills(value: str | None) -> frozenset[str]:
     return frozenset(name.strip() for name in value.split(",") if name.strip())
 
 
-def _parse_enabled_skills(value: str | None, all_names: frozenset[str]) -> frozenset[str] | None:
+def _parse_enabled_skills(
+    value: str | None, all_names: frozenset[str]
+) -> frozenset[str] | None:
     """Parse --enabled-skills into a frozenset.
 
     Returns None when the user didn't pass the flag (meaning: use all discovered skills).
@@ -101,7 +108,10 @@ def _parse_enabled_skills(value: str | None, all_names: frozenset[str]) -> froze
     names = frozenset(name.strip() for name in value.split(",") if name.strip())
     unknown = names - all_names
     if unknown:
-        sys.exit("make-agent: unknown skill(s): " f"{', '.join(sorted(unknown))}. Valid names: {', '.join(sorted(all_names))}")
+        sys.exit(
+            "make-agent: unknown skill(s): "
+            f"{', '.join(sorted(unknown))}. Valid names: {', '.join(sorted(all_names))}"
+        )
     return names
 
 
@@ -110,7 +120,9 @@ def _discover_skill_names(skills_dir: str) -> list[str]:
     path = Path(skills_dir)
     if not path.exists():
         return []
-    return sorted(p.name for p in path.iterdir() if p.is_dir() and (p / "skill.mk").exists())
+    return sorted(
+        p.name for p in path.iterdir() if p.is_dir() and (p / "skill.mk").exists()
+    )
 
 
 def _dest_from_option(opt: str) -> str:
@@ -157,7 +169,9 @@ def _cmd_run(args: argparse.Namespace) -> None:
     last = session_mgr.get_last_session_params()
     if last:
         # Determine which flags were actually provided on the CLI.
-        provided: frozenset[str] = frozenset(_dest_from_option(opt) for opt in sys.argv[1:] if opt.startswith("-"))
+        provided: frozenset[str] = frozenset(
+            _dest_from_option(opt) for opt in sys.argv[1:] if opt.startswith("-")
+        )
         _apply_last_session_defaults(args, last, provided)
 
     if args.model is None:
@@ -238,7 +252,9 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     run_p = subparsers.add_parser("run", help="Start the interactive agent (default)")
-    run_p.add_argument("--model", default=None, metavar="MODEL", help="litellm model string (required)")
+    run_p.add_argument(
+        "--model", default=None, metavar="MODEL", help="litellm model string (required)"
+    )
     system_g = run_p.add_mutually_exclusive_group()
     system_g.add_argument(
         "--system",
