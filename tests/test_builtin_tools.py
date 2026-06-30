@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from make_agent.builtin_tools import builtin_tool_names
@@ -17,7 +17,8 @@ from make_agent.builtin_tools.skill_tools import (
     read_skill,
     validate_skill,
 )
-from make_agent.skill_backend import MakefileSkillBackend
+from make_agent.memory import Memory
+from make_agent.tool_handler import ToolHandler
 
 _SKILL_MK = """\
 define DESCRIPTION
@@ -110,101 +111,107 @@ def test_read_skill_returns_raw_mk(tmp_path):
     assert "read-file" in result
 
 
-def test_execute_skill_invalid_name(tmp_path):
-    result = execute_skill("../evil", "make", str(tmp_path))
+async def test_execute_skill_invalid_name(tmp_path):
+    result = await execute_skill("../evil", "make", str(tmp_path))
     assert result.startswith("Error")
 
 
-def test_execute_skill_not_found(tmp_path):
-    result = execute_skill("ghost", "make", str(tmp_path))
+async def test_execute_skill_not_found(tmp_path):
+    result = await execute_skill("ghost", "make", str(tmp_path))
     assert "not found" in result
 
 
-def test_execute_skill_runs_default_target(tmp_path):
+async def test_execute_skill_runs_default_target(tmp_path):
     (tmp_path / "full").mkdir()
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
-    fake_proc = MagicMock()
-    fake_proc.stdout = b"hello world\n"
-    fake_proc.stderr = b""
-    fake_proc.returncode = 0
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"hello world\n", b""))
+    mock_proc.returncode = 0
     with patch(
-        "make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc
-    ) as mock_run:
-        result = execute_skill("full", "make", str(tmp_path))
-    mock_run.assert_called_once()
-    call_args = mock_run.call_args.args[0]
+        "make_agent.builtin_tools.skill_tools.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ) as mock_create:
+        result = await execute_skill("full", "make", str(tmp_path))
+    call_args = mock_create.call_args.args
     assert "make" in call_args
     assert result == "hello world"
 
 
-def test_execute_skill_runs_named_target(tmp_path):
+async def test_execute_skill_runs_named_target(tmp_path):
     (tmp_path / "full").mkdir()
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
-    fake_proc = MagicMock()
-    fake_proc.stdout = b"hello world\n"
-    fake_proc.stderr = b""
-    fake_proc.returncode = 0
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"hello world\n", b""))
+    mock_proc.returncode = 0
     with patch(
-        "make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc
-    ) as mock_run:
-        result = execute_skill("full", "make read-file", str(tmp_path))
-    call_args = mock_run.call_args.args[0]
+        "make_agent.builtin_tools.skill_tools.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ) as mock_create:
+        result = await execute_skill("full", "make read-file", str(tmp_path))
+    call_args = mock_create.call_args.args
     assert "read-file" in call_args
     assert result == "hello world"
 
 
-def test_execute_skill_leading_env_vars(tmp_path):
+async def test_execute_skill_leading_env_vars(tmp_path):
     (tmp_path / "full").mkdir()
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
-    fake_proc = MagicMock()
-    fake_proc.stdout = b"ok\n"
-    fake_proc.stderr = b""
-    fake_proc.returncode = 0
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"ok\n", b""))
+    mock_proc.returncode = 0
     with patch(
-        "make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc
-    ) as mock_run:
-        execute_skill("full", "FILE=/safe/f.txt make read-file", str(tmp_path))
-    call_kwargs = mock_run.call_args.kwargs
+        "make_agent.builtin_tools.skill_tools.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ) as mock_create:
+        await execute_skill("full", "FILE=/safe/f.txt make read-file", str(tmp_path))
+    call_kwargs = mock_create.call_args.kwargs
     assert call_kwargs["env"]["FILE"] == "/safe/f.txt"
-    assert "read-file" in mock_run.call_args.args[0]
+    assert "read-file" in mock_create.call_args.args
 
 
-def test_execute_skill_failed_target(tmp_path):
+async def test_execute_skill_failed_target(tmp_path):
     (tmp_path / "full").mkdir()
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
-    fake_proc = MagicMock()
-    fake_proc.stdout = b""
-    fake_proc.stderr = b"make: *** No rule to make target 'bad-target'"
-    fake_proc.returncode = 2
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(
+        return_value=(b"", b"make: *** No rule to make target 'bad-target'")
+    )
+    mock_proc.returncode = 2
     with patch(
-        "make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc
+        "make_agent.builtin_tools.skill_tools.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
     ):
-        result = execute_skill("full", "make bad-target", str(tmp_path))
+        result = await execute_skill("full", "make bad-target", str(tmp_path))
     assert "ERROR" in result
 
 
-def test_execute_skill_invalid_env_var_name(tmp_path):
+async def test_execute_skill_invalid_env_var_name(tmp_path):
     (tmp_path / "full").mkdir()
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
-    result = execute_skill("full", "bad-key=value make read-file", str(tmp_path))
+    result = await execute_skill("full", "bad-key=value make read-file", str(tmp_path))
     assert result.startswith("Error")
 
 
-def test_execute_skill_empty_command(tmp_path):
+async def test_execute_skill_empty_command(tmp_path):
     (tmp_path / "full").mkdir()
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
-    result = execute_skill("full", "", str(tmp_path))
+    result = await execute_skill("full", "", str(tmp_path))
     assert result.startswith("Error")
 
 
-def test_execute_skill_rejects_forbidden_make_options(tmp_path):
+async def test_execute_skill_rejects_forbidden_make_options(tmp_path):
     (tmp_path / "full").mkdir()
     (tmp_path / "full" / "skill.mk").write_text(_SKILL_MK)
-    with patch("make_agent.builtin_tools.skill_tools.subprocess.run") as mock_run:
-        result = execute_skill("full", "make -f /tmp/evil.mk read-file", str(tmp_path))
+    with patch(
+        "make_agent.builtin_tools.skill_tools.asyncio.create_subprocess_exec",
+        AsyncMock(),
+    ) as mock_create:
+        result = await execute_skill(
+            "full", "make -f /tmp/evil.mk read-file", str(tmp_path)
+        )
     assert result.startswith("Error")
     assert "not allowed" in result
-    mock_run.assert_not_called()
+    mock_create.assert_not_called()
 
 
 def test_create_skill_invalid_name(tmp_path):
@@ -337,9 +344,10 @@ def test_builtin_tool_names_unsupported_mode():
         builtin_tool_names("python")
 
 
-def test_makefile_backend_returns_expected_tools(tmp_path):
-    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
-    assert set(backend.executors) == {
+def test_tool_handler_returns_expected_tools(tmp_path):
+    memory = Memory(tmp_path / "memory.db")
+    handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
+    expected = {
         "list_skills",
         "read_skill",
         "execute_skill",
@@ -347,38 +355,42 @@ def test_makefile_backend_returns_expected_tools(tmp_path):
         "validate_skill",
         "write_file",
         "edit_file",
+        "search_user_memory",
+        "search_agent_memory",
+        "get_recent_messages",
     }
-    assert {schema["function"]["name"] for schema in backend.schemas} == set(
-        backend.executors
-    )
+    assert handler.tool_names == expected
 
 
-def test_makefile_backend_list_skills_callable(tmp_path):
-    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
-    result = backend.executors["list_skills"]()
+def test_tool_handler_list_skills_callable(tmp_path):
+    memory = Memory(tmp_path / "memory.db")
+    handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
+    result = handler._executors["list_skills"]()  # noqa: SLF001
     assert "No skills found" in result
 
 
-def test_makefile_backend_validate_skill_callable(tmp_path):
+def test_tool_handler_validate_skill_callable(tmp_path):
     (tmp_path / "ok").mkdir()
     (tmp_path / "ok" / "skill.mk").write_text(_SKILL_MK)
-    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
-    result = backend.executors["validate_skill"](name="ok")
+    memory = Memory(tmp_path / "memory.db")
+    handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
+    result = handler._executors["validate_skill"](name="ok")  # noqa: SLF001
     assert result.startswith("OK")
 
 
-def test_makefile_backend_execute_skill_callable(tmp_path):
+async def test_tool_handler_execute_skill_callable(tmp_path):
     (tmp_path / "simple").mkdir()
     (tmp_path / "simple" / "skill.mk").write_text(_SKILL_MK)
-    fake_proc = MagicMock()
-    fake_proc.stdout = b"done\n"
-    fake_proc.stderr = b""
-    fake_proc.returncode = 0
-    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
+    mock_proc = MagicMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"done\n", b""))
+    mock_proc.returncode = 0
+    memory = Memory(tmp_path / "memory.db")
+    handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
     with patch(
-        "make_agent.builtin_tools.skill_tools.subprocess.run", return_value=fake_proc
+        "make_agent.builtin_tools.skill_tools.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
     ):
-        result = backend.executors["execute_skill"](
+        result = await handler._executors["execute_skill"](  # noqa: SLF001
             name="simple", command="make read-file"
         )
     assert result == "done"
@@ -432,17 +444,19 @@ def test_edit_file_rejects_traversal(tmp_path):
     assert result.startswith("Error")
 
 
-def test_makefile_backend_write_file_callable(tmp_path):
-    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
-    result = backend.executors["write_file"](path="out.txt", content="hello")
+def test_tool_handler_write_file_callable(tmp_path):
+    memory = Memory(tmp_path / "memory.db")
+    handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
+    result = handler._executors["write_file"](path="out.txt", content="hello")  # noqa: SLF001
     assert "Successfully wrote" in result
     assert (tmp_path / "out.txt").read_text() == "hello"
 
 
-def test_makefile_backend_edit_file_callable(tmp_path):
+def test_tool_handler_edit_file_callable(tmp_path):
     (tmp_path / "src.py").write_text("x = 1")
-    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
-    result = backend.executors["edit_file"](
+    memory = Memory(tmp_path / "memory.db")
+    handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
+    result = handler._executors["edit_file"](  # noqa: SLF001
         path="src.py", old_text="x = 1", new_text="x = 2"
     )
     assert "Successfully replaced" in result

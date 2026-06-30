@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import textwrap
-from pathlib import Path
-
 from make_agent.memory import Memory
 from make_agent.parser import parse
-from make_agent.skill_backend import MakefileSkillBackend
-from make_agent.tool_handler import ToolHandler, build_tools, run_tool
+from make_agent.tool_handler import ToolHandler, build_tools
 
 
 def test_build_tools_no_tool_rules():
@@ -67,219 +63,6 @@ def test_build_tools_type_is_string():
     assert build_tools(mf)[0]["type"] == "function"
 
 
-def _write_makefile(tmp_path: Path, content: str) -> Path:
-    mf = tmp_path / "Makefile"
-    mf.write_text(textwrap.dedent(content))
-    return mf
-
-
-async def test_run_tool_stdout_captured(tmp_path):
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: hello
-        hello:
-        \t@echo hello world
-    """,
-    )
-    result = await run_tool("hello", {}, mf)
-    assert "hello world" in result
-
-
-async def test_run_tool_passes_variables(tmp_path):
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: greet
-        greet:
-        \t@echo $(GREETING) $(NAME)
-    """,
-    )
-    result = await run_tool("greet", {"NAME": "Alice", "GREETING": "Hi"}, mf)
-    assert "Hi Alice" in result
-
-
-async def test_run_tool_error_on_nonzero_exit(tmp_path):
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: fail
-        fail:
-        \t@exit 1
-    """,
-    )
-    result = await run_tool("fail", {}, mf)
-    assert "ERROR" in result.output
-
-
-async def test_run_tool_error_includes_stdout(tmp_path):
-    """Stdout output produced before a failure must not be discarded."""
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: partial
-        partial:
-        \t@echo partial output
-        \t@exit 1
-    """,
-    )
-    result = await run_tool("partial", {}, mf)
-    assert "ERROR" in result.output
-    assert "partial output" in result.output
-
-
-async def test_run_tool_error_includes_stderr(tmp_path):
-    """Stderr is reported separately from stdout."""
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: warn
-        warn:
-        \t@echo error detail >&2; exit 2
-    """,
-    )
-    result = await run_tool("warn", {}, mf)
-    assert "ERROR" in result.output
-    assert "error detail" in result.output
-
-
-async def test_run_tool_unknown_target(tmp_path):
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: build
-        build:
-        \t@echo ok
-    """,
-    )
-    result = await run_tool("nonexistent", {}, mf)
-    assert "ERROR" in result.output
-
-
-async def test_run_tool_timeout(tmp_path):
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: slow
-        slow:
-        \t@sleep 10
-    """,
-    )
-    result = await run_tool("slow", {}, mf, timeout=1)
-    assert "exceeded" in result.output
-    assert "slow" in result.output
-
-
-async def test_run_tool_rejects_invalid_argument_name(tmp_path):
-    """Argument names must be make-variable-safe to block option injection."""
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: greet
-        greet:
-        \t@echo ok
-    """,
-    )
-    result = await run_tool("greet", {"--file": "x"}, mf)
-    assert "not a valid make variable name" in result.output
-
-
-async def test_run_tool_rejects_system_env_var_override(tmp_path):
-    """Arguments must not be allowed to shadow existing environment variables."""
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: noop
-        noop:
-        \t@true
-    """,
-    )
-    result = await run_tool("noop", {"PATH": "/evil/bin"}, mf)
-    assert "shadows the system environment variable" in result.output
-
-
-# ── params.mk injection ───────────────────────────────────────────────────────
-
-
-async def test_run_tool_param_accessible_via_shell_var(tmp_path):
-    """Single-line params are accessible as $$PARAM (shell env var) in recipes."""
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: greet
-        greet:
-        \t@printf '%s' "$$NAME"
-    """,
-    )
-    result = await run_tool("greet", {"NAME": "Alice"}, mf)
-    assert "Alice" in result
-
-
-async def test_run_tool_multiline_value(tmp_path):
-    """Multiline values are available as $$PARAM via the env var mechanism."""
-    out = tmp_path / "out.txt"
-    mf = _write_makefile(
-        tmp_path,
-        f"""\
-        .PHONY: write-file
-        write-file:
-        \t@printf '%s' "$$CONTENT" > "{out}"
-    """,
-    )
-    multiline = "line one\nline two\nline three"
-    await run_tool("write-file", {"CONTENT": multiline}, mf)
-    # Verify the file was written correctly
-    assert out.read_text() == multiline
-
-
-async def test_run_tool_no_temp_files_created(tmp_path):
-    """No temporary files are ever created — all params go via env vars."""
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: noop
-        noop:
-        \t@true
-    """,
-    )
-    before = set(tmp_path.iterdir())
-    await run_tool("noop", {"X": "hello\nworld"}, mf)
-    after = set(tmp_path.iterdir())
-    assert after == before
-
-
-async def test_run_tool_endef_in_multiline_value(tmp_path):
-    """A multiline value containing a bare 'endef' line is passed correctly."""
-    out = tmp_path / "out.txt"
-    mf = _write_makefile(
-        tmp_path,
-        f"""\
-        .PHONY: write-file
-        write-file:
-        \t@printf '%s' "$$CONTENT" > "{out}"
-    """,
-    )
-    value = "before\nendef\nafter"
-    await run_tool("write-file", {"CONTENT": value}, mf)
-    assert "before" in out.read_text()
-    assert "after" in out.read_text()
-
-
-async def test_run_tool_quotes_in_value(tmp_path):
-    """Values with double quotes are passed correctly via env vars."""
-    out = tmp_path / "out.txt"
-    mf = _write_makefile(
-        tmp_path,
-        f"""\
-        .PHONY: show
-        show:
-        \t@printf '%s' "$$MSG" > "{out}"
-    """,
-    )
-    await run_tool("show", {"MSG": 'say "hello"'}, mf)
-    assert 'say "hello"' in out.read_text()
-
-
 # ── format_tool_result ────────────────────────────────────────────────────────
 
 
@@ -334,24 +117,9 @@ def test_format_tool_result_unlimited_when_max_output_zero():
     assert "omitted_chars" not in result
 
 
-async def test_run_tool_truncates_output(tmp_path):
-    mf = _write_makefile(
-        tmp_path,
-        """\
-        .PHONY: big
-        big:
-        \t@python3 -c "print('a' * 500)"
-    """,
-    )
-    result = await run_tool("big", {}, mf, max_output=100)
-    assert len(result.output) == 100
-    assert "omitted_chars" in result.output
-
-
 async def test_tool_handler_supports_async_backend_executors(tmp_path):
     memory = Memory(tmp_path / "memory.db")
-    backend = MakefileSkillBackend(str(tmp_path), base_dir=tmp_path)
-    handler = ToolHandler(backend, memory)
+    handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
 
     async def _async_tool(**kwargs):
         assert kwargs == {"name": "ok"}

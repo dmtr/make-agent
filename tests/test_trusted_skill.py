@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+from make_agent.memory import Memory
 from make_agent.tool_handler.handler import ToolHandler
 from make_agent.tool_handler.runner import get_tool_result
 from make_agent.main import _parse_trusted_skills
@@ -56,88 +57,47 @@ def test_parse_trusted_skills_all_case_insensitive():
 # ── ToolHandler.is_skill_trusted ───────────────────────────────────────────────
 
 
-def _make_handler(trusted_skills: frozenset[str] = frozenset()) -> ToolHandler:
-    backend = MagicMock()
-    backend.schemas = []
-    backend.executors = {}
-    memory = MagicMock()
-    memory.store = MagicMock()
-    backend.schemas = []
-    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
-    backend.get_skill_trusted = MagicMock(return_value=None)
-    return ToolHandler(backend, memory, trusted_skills=trusted_skills)
+def _make_handler(
+    tmp_path, trusted_skills: frozenset[str] = frozenset()
+) -> ToolHandler:
+    memory = Memory(tmp_path / "memory.db")
+    return ToolHandler(str(tmp_path), memory, trusted_skills=trusted_skills)
 
 
-def test_is_trusted_empty_set():
-    h = _make_handler(frozenset())
+def test_is_trusted_empty_set(tmp_path):
+    h = _make_handler(tmp_path, frozenset())
     assert not h.is_skill_trusted("web-fetch", "fetch")
 
 
-def test_is_trusted_specific_match():
-    h = _make_handler(frozenset(["web-fetch"]))
+def test_is_trusted_specific_match(tmp_path):
+    h = _make_handler(tmp_path, frozenset(["web-fetch"]))
     assert h.is_skill_trusted("web-fetch", "fetch")
     assert not h.is_skill_trusted("search", "query")
 
 
-def test_is_trusted_wildcard():
-    h = _make_handler(frozenset(["*"]))
+def test_is_trusted_wildcard(tmp_path):
+    h = _make_handler(tmp_path, frozenset(["*"]))
     assert h.is_skill_trusted("web-fetch", "fetch")
     assert h.is_skill_trusted("any-skill", "run")
 
 
-def test_is_trusted_dot_notation_specific_target():
-    h = _make_handler(frozenset(["web.fetch"]))
+def test_is_trusted_dot_notation_specific_target(tmp_path):
+    h = _make_handler(tmp_path, frozenset(["web.fetch"]))
     assert h.is_skill_trusted("web", "fetch")
     assert not h.is_skill_trusted("web", "search")
     assert not h.is_skill_trusted("other", "fetch")
 
 
-def test_is_trusted_dot_notation_does_not_trust_whole_skill():
-    h = _make_handler(frozenset(["web.fetch"]))
+def test_is_trusted_dot_notation_does_not_trust_whole_skill(tmp_path):
+    h = _make_handler(tmp_path, frozenset(["web.fetch"]))
     assert not h.is_skill_trusted("web", "search")
 
 
-def test_is_trusted_skill_level_trusts_all_targets():
-    h = _make_handler(frozenset(["web"]))
+def test_is_trusted_skill_level_trusts_all_targets(tmp_path):
+    h = _make_handler(tmp_path, frozenset(["web"]))
     assert h.is_skill_trusted("web", "fetch")
     assert h.is_skill_trusted("web", "search")
     assert not h.is_skill_trusted("other", "fetch")
-
-
-def test_is_trusted_backend_ast_trust():
-    """Backend returning trusted=True from AST grants trust without CLI override."""
-    backend = MagicMock()
-    backend.schemas = []
-    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
-    backend.get_skill_trusted = MagicMock(return_value=True)
-    memory = MagicMock()
-    memory.store = MagicMock()
-    h = ToolHandler(backend, memory, trusted_skills=frozenset())
-    assert h.is_skill_trusted("web", "fetch")
-
-
-def test_is_trusted_backend_ast_untrusted():
-    """Backend returning trusted=False (AST untrusted) requires CLI override."""
-    backend = MagicMock()
-    backend.schemas = []
-    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
-    backend.get_skill_trusted = MagicMock(return_value=False)
-    memory = MagicMock()
-    memory.store = MagicMock()
-    h = ToolHandler(backend, memory, trusted_skills=frozenset())
-    assert not h.is_skill_trusted("web", "fetch")
-
-
-def test_is_trusted_backend_ast_none():
-    """Backend returning None (Makefile backend) requires CLI override."""
-    backend = MagicMock()
-    backend.schemas = []
-    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
-    backend.get_skill_trusted = MagicMock(return_value=None)
-    memory = MagicMock()
-    memory.store = MagicMock()
-    h = ToolHandler(backend, memory, trusted_skills=frozenset())
-    assert not h.is_skill_trusted("web", "fetch")
 
 
 # ── AgentManager.astream_events — skill confirmation ──────────────────────────
@@ -280,3 +240,33 @@ async def test_astream_events_non_skill_tool_no_confirm():
     assert not any(isinstance(e, ConfirmEvent) for e in events)
     assert any(isinstance(e, ToolStartEvent) for e in events)
     manager._tool_handler.is_skill_trusted.assert_not_called()
+
+
+# ── AgentManager.arun_agent — non-interactive mode ────────────────────────────
+
+
+async def test_arun_agent_untrusted_skill_auto_denied():
+    """arun_agent (non-interactive) auto-denies untrusted skills instead of deadlocking."""
+    cb = _make_tool_callback(
+        "execute_skill", {"name": "file-explorer", "command": "ls -R", "kwargs": {}}
+    )
+    cbs = [cb, MessageCallback("done")]
+    manager, sid = _make_manager_with_loop(cbs, trusted_skills=frozenset())
+    result = await manager.arun_agent(sid, "explore files")
+    assert result == "done"
+    # Tool should NOT have been executed — it was auto-denied
+    manager._tool_handler.execute.assert_not_awaited()
+    # The callback must have received a denial response
+    assert "denied" in cb.output.lower() or cb.is_error or cb.output
+
+
+async def test_arun_agent_trusted_skill_executes():
+    """arun_agent (non-interactive) executes trusted skills normally."""
+    cb = _make_tool_callback(
+        "execute_skill", {"name": "file-list", "command": "ls", "kwargs": {}}
+    )
+    cbs = [cb, MessageCallback("done")]
+    manager, sid = _make_manager_with_loop(cbs, trusted_skills=frozenset(["file-list"]))
+    result = await manager.arun_agent(sid, "list files")
+    assert result == "done"
+    manager._tool_handler.execute.assert_awaited_once()

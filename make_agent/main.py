@@ -10,7 +10,6 @@ from pathlib import Path
 from make_agent.agent_core import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOOL_OUTPUT,
-    DEFAULT_TOOL_TIMEOUT,
     DEFAULT_USE_PROMPT_CACHE,
 )
 from make_agent.agent_shell import run
@@ -23,7 +22,6 @@ from make_agent.app_dirs import (
 )
 from make_agent.builtin_tools import builtin_tool_names
 from make_agent.memory import Memory, UserSessionManager
-from make_agent.skill_backend import MakefileSkillBackend
 from make_agent.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
@@ -190,7 +188,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
     system_prompt = _resolve_system_prompt(args)
     disabled = _parse_disabled_tools(args.disable_builtin_tools, _SKILL_MODE)
     if args.skills_dir:
-        skills_dir = str(Path(args.skills_dir) / _SKILL_MODE)
+        skills_dir = str(Path(args.skills_dir))
     else:
         skills_dir = str(default_skills_dir(_SKILL_MODE))
 
@@ -198,11 +196,16 @@ def _cmd_run(args: argparse.Namespace) -> None:
     enabled_skills = _parse_enabled_skills(args.enabled_skills, frozenset(all_names))
 
     memory = Memory(db_path)
-    backend = MakefileSkillBackend(
-        skills_dir, DEFAULT_TOOL_TIMEOUT, Path.cwd(), enabled_skills
-    )
     trusted_skills = _parse_trusted_skills(getattr(args, "trusted_skills", None))
-    tool_handler = ToolHandler(backend, memory, disabled, trusted_skills)
+    tool_handler = ToolHandler(
+        skills_dir=skills_dir,
+        memory=memory,
+        tool_timeout=args.tool_timeout,
+        base_dir=Path.cwd(),
+        enabled_skills=enabled_skills,
+        disabled=disabled,
+        trusted_skills=trusted_skills,
+    )
 
     # ── persist the resolved session parameters ───────────────────────────────
     session_id = str(uuid.uuid4())

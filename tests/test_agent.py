@@ -10,7 +10,6 @@ from make_agent.agent_core import AgentConfig, AgenticLoop
 from make_agent.memory import Memory
 from make_agent.provider import TextDelta, ToolCallDelta, ToolCallStart, UsageDelta
 from make_agent.provider.anthropic import MAX_RETRIES, _parse_retry_after
-from make_agent.skill_backend import MakefileSkillBackend
 from make_agent.tool_handler import ToolHandler
 
 
@@ -170,9 +169,7 @@ class TestAgentSafetyGuards:
     def _make_agent(self, tmp_path, provider):
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
+        tool_handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
         agent = AgenticLoop(
             AgentConfig(
                 system_prompt="You are a helper.",
@@ -223,9 +220,7 @@ class TestAssistantMessageContent:
     async def test_tool_call_without_text_has_empty_string_content(self, tmp_path):
         """When the LLM streams a tool call with no text, the assistant message content must be ''."""
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
+        tool_handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
         provider = MockProvider(
             _tool_call_chunks("tc1", "say_hi", "{}"),
             _text_chunks("all done"),
@@ -273,9 +268,7 @@ class TestAnthropicParallelToolCalls:
 
     def _make_agent(self, tmp_path, provider):
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
+        tool_handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
         agent = AgenticLoop(
             AgentConfig(
                 system_prompt="You are a helper.",
@@ -362,9 +355,7 @@ class TestAnthropicEmptyArguments:
     def _make_agent(self, tmp_path, provider):
 
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
+        tool_handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
         agent = AgenticLoop(
             AgentConfig(
                 system_prompt="You are a helper.",
@@ -425,9 +416,7 @@ class TestAgentSystemPromptCache:
 
     def _make_agent(self, tmp_path, model: str, use_prompt_cache: bool):
         memory = Memory(tmp_path / "memory.db")
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
+        tool_handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
         config = AgentConfig(
             system_prompt="You are a helpful assistant.",
             model=model,

@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import make_agent.main as main_module
 from make_agent.builtin_tools import builtin_tool_names
-from make_agent.skill_backend import MakefileSkillBackend
 
 
 def _run(*args: str, **kwargs) -> subprocess.CompletedProcess:
@@ -79,11 +78,10 @@ class TestRunPromptInput:
 
         assert captured["prompt"] == "hello from file"
         assert captured["system_prompt"] == ""
-        assert isinstance(captured["tool_handler"]._backend, MakefileSkillBackend)  # noqa: SLF001
         assert captured["tool_handler"].tool_names == builtin_tool_names("makefile")
         assert captured["memory"]._db_path == tmp_path / "makefile-memory.db"  # noqa: SLF001
 
-    def test_makefile_mode_builds_makefile_backend(self, tmp_path):
+    def test_makefile_mode_builds_tool_handler(self, tmp_path):
         args = _run_args(prompt="do something", skill_mode="makefile")
         captured: dict = {}
 
@@ -111,37 +109,8 @@ class TestRunPromptInput:
 
         assert captured["system_prompt"] == ""
         assert captured["prompt"] == "do something"
-        assert isinstance(captured["tool_handler"]._backend, MakefileSkillBackend)  # noqa: SLF001
         assert captured["tool_handler"].tool_names == builtin_tool_names("makefile")
         assert captured["memory"]._db_path == tmp_path / "makefile-memory.db"  # noqa: SLF001
-
-    def test_custom_skills_dir_makefile_mode_gets_mode_subfolder(self, tmp_path):
-        custom_dir = tmp_path / "custom"
-        args = _run_args(
-            prompt="do something", skill_mode="makefile", skills_dir=str(custom_dir)
-        )
-        captured: dict = {}
-
-        async def _fake_run(**kwargs):
-            captured.update(kwargs)
-
-        with (
-            patch.object(main_module, "run", _fake_run),
-            patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(
-                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
-            ),
-            patch.object(
-                main_module,
-                "mode_memory_path",
-                return_value=tmp_path / "makefile-memory.db",
-            ),
-        ):
-            main_module._cmd_run(args)
-
-        backend = captured["tool_handler"]._backend  # noqa: SLF001
-        assert isinstance(backend, MakefileSkillBackend)
-        assert backend._skills_dir == str(custom_dir / "makefile")  # noqa: SLF001
 
     def test_prompt_cache_flag_is_passed_to_run(self, tmp_path):
         args = _run_args(prompt="continue", prompt_cache=True)
