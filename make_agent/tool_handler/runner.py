@@ -1,45 +1,18 @@
-"""Tool schema builders, subprocess runner, and execution result type.
-
-Parameter injection
--------------------
-Every parameter value is set as an environment variable for the subprocess.
-Recipes access it with shell syntax (``$$PARAM``)::
-
-    greet:
-        @echo "Hello, $$NAME!"
-
-    write-file:
-        @printf '%s' "$$CONTENT" > output.txt
-
-This works for both single-line and multiline values — the OS passes env vars
-to the recipe shell intact regardless of newlines.  Make also auto-imports
-environment variables as Make variables, so ``$(PARAM)`` continues to work
-for simple values where the Makefile does not define its own ``PARAM``.
-"""
+"""Tool schema builders and execution result type."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
-import re
-from pathlib import Path
 from typing import Any, NamedTuple
 
 from make_agent.parser import Makefile, Param
 
 logger = logging.getLogger(__name__)
 
-_VALID_MAKE_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
 
 class ToolExecutionResult(NamedTuple):
     is_error: bool
     output: str
-
-
-def _is_valid_make_var_name(name: str) -> bool:
-    return bool(_VALID_MAKE_VAR_NAME_RE.fullmatch(name))
 
 
 def _param_schema(p: Param) -> dict[str, str]:
@@ -119,69 +92,3 @@ def get_tool_result(
             final_result = final_result[:available] + notice
 
     return ToolExecutionResult(is_error=is_error, output=final_result)
-
-
-async def run_tool(
-    target: str,
-    arguments: dict[str, Any],
-    makefile_path: Path,
-    timeout: int = 600,
-    max_output: int = 0,
-) -> ToolExecutionResult:
-    """Invoke ``make`` with safely injected parameters and return the result.
-
-    All parameter values are injected as environment variables.  Recipes access
-    them with shell syntax (``$$PARAM``).  When *max_output* is non-zero and
-    the combined output exceeds that limit, the excess is dropped and a
-    truncation notice is appended.
-
-    Raises :exc:`asyncio.CancelledError` if cancelled mid-execution (the
-    subprocess is killed before re-raising).
-    """
-    for k in arguments:
-        if not _is_valid_make_var_name(k):
-            return get_tool_result("", f"{k!r} is not a valid make variable name", None)
-        if k in os.environ:
-            return get_tool_result(
-                "",
-                f"argument {k!r} shadows the system environment variable {k!r}",
-                None,
-            )
-
-    env = {**os.environ, **{k: str(v) for k, v in arguments.items()}}
-    cmd = ["make", "--no-print-directory", "-f", str(makefile_path), target]
-    logger.debug("running tool with command: %s", " ".join(cmd))
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            stdin=asyncio.subprocess.DEVNULL,
-        )
-    except OSError as e:
-        logger.error("OS error when running tool %s: %s", target, e)
-        return get_tool_result("", f"failed to run make: {e}", None)
-
-    try:
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        logger.error("tool '%s' exceeded %ds timeout", target, timeout)
-        return get_tool_result("", f"tool '{target}' exceeded {timeout}s limit", None)
-    except asyncio.CancelledError:
-        proc.kill()
-        await proc.wait()
-        raise
-
-    stdout = stdout_b.decode(errors="replace")
-    stderr = stderr_b.decode(errors="replace")
-    logger.info(
-        "result of '%s': exit %s, stdout: %r, stderr: %r",
-        " ".join(cmd),
-        proc.returncode,
-        stdout,
-        stderr,
-    )
-    return get_tool_result(stdout, stderr, proc.returncode, max_output)

@@ -7,9 +7,10 @@ import sys
 from unittest.mock import patch
 
 import make_agent.main as main_module
+import pytest
 from make_agent.builtin_tools.skill_tools import list_skills
 from make_agent.main import _discover_skill_names
-from make_agent.skill_backend import MakefileSkillBackend
+from make_agent.tool_handler import ToolHandler
 
 _SKILL_MK = """\
 define DESCRIPTION
@@ -45,9 +46,7 @@ class TestParseEnabledSkills:
         mock_exit.assert_called_once()
 
     def test_whitespace_stripped(self):
-        result = main_module._parse_enabled_skills(
-            " git , run ", frozenset({"git", "run"})
-        )
+        result = main_module._parse_enabled_skills(" git , run ", frozenset({"git", "run"}))
         assert result == frozenset({"git", "run"})
 
 
@@ -80,9 +79,7 @@ class TestListSkillsFiltering:
         for name in ("git", "run", "file-list"):
             (tmp_path / name).mkdir()
             (tmp_path / name / "skill.mk").write_text(_SKILL_MK)
-        result = list_skills(
-            str(tmp_path), enabled_skills=frozenset({"git", "file-list"})
-        )
+        result = list_skills(str(tmp_path), enabled_skills=frozenset({"git", "file-list"}))
         assert "git:" in result
         assert "file-list:" in result
         assert "run:" not in result
@@ -96,36 +93,45 @@ class TestListSkillsFiltering:
 
 class TestBackendIntegration:
     def test_list_skills_filtered(self, tmp_path):
+        from make_agent.memory import Memory
+
         for name in ("git", "run"):
             (tmp_path / name).mkdir()
             (tmp_path / name / "skill.mk").write_text(_SKILL_MK)
-        backend = MakefileSkillBackend(str(tmp_path), enabled_skills=frozenset({"git"}))
-        result = backend.executors["list_skills"]()
+        memory = Memory(tmp_path / "memory.db")
+        handler = ToolHandler(str(tmp_path), memory, enabled_skills=frozenset({"git"}))
+        result = handler._executors["list_skills"]()  # noqa: SLF001
         assert "git:" in result
         assert "run:" not in result
 
     def test_default_no_filter(self, tmp_path):
         """When enabled_skills is None (default), all skills work."""
+        from make_agent.memory import Memory
+
         (tmp_path / "git").mkdir()
         (tmp_path / "git" / "skill.mk").write_text(_SKILL_MK)
-        backend = MakefileSkillBackend(str(tmp_path))  # no enabled_skills
-        result = backend.executors["list_skills"]()
+        memory = Memory(tmp_path / "memory.db")
+        handler = ToolHandler(str(tmp_path), memory)
+        result = handler._executors["list_skills"]()  # noqa: SLF001
         assert "git:" in result
 
 
 class TestCmdRunWithEnabledSkills:
-    def test_enabled_skills_passed_to_backend(self, tmp_path):
-        # _cmd_run appends /makefile to the skills_dir, so create there.
-        skills_dir = tmp_path / "skills" / "makefile"
+    @pytest.fixture
+    def skills_dir(self, tmp_path):
+        skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
         (skills_dir / "git").mkdir()
         (skills_dir / "git" / "skill.mk").write_text(_SKILL_MK)
         (skills_dir / "run").mkdir()
         (skills_dir / "run" / "skill.mk").write_text(_SKILL_MK)
+        return skills_dir
+
+    def test_enabled_skills_passed_to_backend(self, skills_dir, tmp_path):
 
         args = _run_args(
             prompt="do it",
-            skills_dir=str(tmp_path / "skills"),
+            skills_dir=str(skills_dir),
             enabled_skills="git",
         )
         captured: dict = {}
@@ -136,9 +142,7 @@ class TestCmdRunWithEnabledSkills:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(
-                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
-            ),
+            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -147,20 +151,13 @@ class TestCmdRunWithEnabledSkills:
         ):
             main_module._cmd_run(args)
 
-        backend = captured["tool_handler"]._backend
-        assert isinstance(backend, MakefileSkillBackend)
-        result = backend.executors["list_skills"]()
+        handler = captured["tool_handler"]
+        result = handler._executors["list_skills"]()  # noqa: SLF001
         assert "git:" in result
         assert "run:" not in result
 
-    def test_no_enabled_skills_flag_passes_none(self, tmp_path):
-        # _cmd_run appends /makefile to the skills_dir, so create there.
-        skills_dir = tmp_path / "skills" / "makefile"
-        skills_dir.mkdir(parents=True)
-        (skills_dir / "git").mkdir()
-        (skills_dir / "git" / "skill.mk").write_text(_SKILL_MK)
-
-        args = _run_args(prompt="do it", skills_dir=str(tmp_path / "skills"))
+    def test_no_enabled_skills_flag_passes_none(self, skills_dir, tmp_path):
+        args = _run_args(prompt="do it", skills_dir=str(skills_dir), enabled_skills=None)
         captured: dict = {}
 
         async def _fake_run(**kwargs):
@@ -169,9 +166,7 @@ class TestCmdRunWithEnabledSkills:
         with (
             patch.object(main_module, "run", _fake_run),
             patch.object(main_module, "ensure_mode_system_prompt"),
-            patch.object(
-                main_module, "mode_dir", return_value=tmp_path / "makefile-mode"
-            ),
+            patch.object(main_module, "mode_dir", return_value=tmp_path / "makefile-mode"),
             patch.object(
                 main_module,
                 "mode_memory_path",
@@ -180,10 +175,8 @@ class TestCmdRunWithEnabledSkills:
         ):
             main_module._cmd_run(args)
 
-        backend = captured["tool_handler"]._backend
-        assert isinstance(backend, MakefileSkillBackend)
-        # None means all skills enabled
-        result = backend.executors["list_skills"]()
+        handler = captured["tool_handler"]
+        result = handler._executors["list_skills"]()  # noqa: SLF001
         assert "git:" in result
 
 

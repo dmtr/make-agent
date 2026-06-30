@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
+from make_agent.builtin_tools.file_tools import FILE_SCHEMAS, edit_file, write_file
+from make_agent.builtin_tools.skill_tools import SKILL_SCHEMAS as MAKEFILE_SKILL_SCHEMAS
+from make_agent.builtin_tools.skill_tools import create_skill as create_makefile_skill
+from make_agent.builtin_tools.skill_tools import execute_skill as execute_makefile_skill
+from make_agent.builtin_tools.skill_tools import list_skills as list_makefile_skills
+from make_agent.builtin_tools.skill_tools import read_skill as read_makefile_skill
+from make_agent.builtin_tools.skill_tools import validate_skill as validate_makefile_skill
 from make_agent.memory import MEMORY_SCHEMAS, Memory, get_memory_executors
-from make_agent.skill_backend import SkillBackend
 
 from .runner import ToolExecutionResult, get_tool_result
 
 logger = logging.getLogger(__name__)
-
-_SKILL_EXECUTION_TOOL = "execute_skill"
 
 
 class ToolHandler:
@@ -21,35 +26,47 @@ class ToolHandler:
 
     def __init__(
         self,
-        backend: SkillBackend,
+        skills_dir: str,
         memory: Memory,
+        tool_timeout: int = 600,
+        base_dir: Path | None = None,
+        enabled_skills: frozenset[str] | None = None,
         disabled: frozenset[str] = frozenset(),
         trusted_skills: frozenset[str] = frozenset(),
     ) -> None:
-        active_backend_schemas = [
-            schema
-            for schema in backend.schemas
-            if schema["function"]["name"] not in disabled
-        ]
-        active_memory_schemas = [
-            schema
-            for schema in MEMORY_SCHEMAS
-            if schema["function"]["name"] not in disabled
-        ]
-        self._schemas: list[dict] = active_backend_schemas + active_memory_schemas
-        self._executors: dict[str, Any] = {
-            **{
-                name: executor
-                for name, executor in backend.executors.items()
-                if name not in disabled
-            },
-            **{
-                name: executor
-                for name, executor in get_memory_executors(memory).items()
-                if name not in disabled
-            },
+        _base_dir = base_dir if base_dir is not None else Path.cwd()
+        self._skills_dir = skills_dir
+
+        skill_executors: dict[str, Any] = {
+            "list_skills": lambda **_kw: list_makefile_skills(skills_dir, enabled_skills),
+            "read_skill": lambda name, **_kw: read_makefile_skill(name, skills_dir),
+            "execute_skill": lambda name, command, **_kw: execute_makefile_skill(
+                name, command, skills_dir, tool_timeout
+            ),
+            "create_skill": lambda name, mk_content, **_kw: create_makefile_skill(
+                name, mk_content, skills_dir
+            ),
+            "validate_skill": lambda name, **_kw: validate_makefile_skill(
+                name, skills_dir
+            ),
+            "write_file": lambda path, content, **_kw: write_file(
+                path, content, _base_dir
+            ),
+            "edit_file": lambda path, old_text, new_text, **_kw: edit_file(
+                path, old_text, new_text, _base_dir
+            ),
         }
-        self._backend = backend
+        all_schemas = MAKEFILE_SKILL_SCHEMAS + FILE_SCHEMAS + MEMORY_SCHEMAS
+        all_executors = {**skill_executors, **get_memory_executors(memory)}
+
+        self._schemas: list[dict] = [
+            s for s in all_schemas if s["function"]["name"] not in disabled
+        ]
+        self._executors: dict[str, Any] = {
+            name: executor
+            for name, executor in all_executors.items()
+            if name not in disabled
+        }
         self._trusted_skills = trusted_skills
 
     get_tool_result = staticmethod(get_tool_result)
@@ -60,10 +77,7 @@ class ToolHandler:
             return True
         if f"{skill_name}.{target}" in self._trusted_skills:
             return True
-        if skill_name in self._trusted_skills:
-            return True
-        backend_trusted = self._backend.get_skill_trusted(skill_name)
-        return backend_trusted is True
+        return skill_name in self._trusted_skills
 
     @property
     def schemas(self) -> list[dict]:

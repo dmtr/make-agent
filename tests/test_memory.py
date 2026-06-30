@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-from make_agent.skill_backend import MakefileSkillBackend
 from make_agent.memory import MEMORY_SCHEMAS, Memory, get_memory_executors
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -428,12 +427,13 @@ class TestMemoryBuiltinTools:
         result = tools["search_agent_memory"](query="recall things")
         assert "I can recall things" in result
 
-    def test_no_memory_tools_in_builtin_tools(self):
-        backend = MakefileSkillBackend("agents_dir")
-        tools = backend.executors
-        assert "search_user_memory" not in tools
-        assert "search_agent_memory" not in tools
-        assert "get_recent_messages" not in tools
+    def test_no_memory_tools_in_skill_executors(self, tmp_path):
+        from make_agent.builtin_tools.skill_tools import SKILL_SCHEMAS
+
+        skill_names = {s["function"]["name"] for s in SKILL_SCHEMAS}
+        assert "search_user_memory" not in skill_names
+        assert "search_agent_memory" not in skill_names
+        assert "get_recent_messages" not in skill_names
 
     def test_memory_schemas_count(self):
         schemas = MEMORY_SCHEMAS
@@ -478,9 +478,7 @@ class TestAgentAutoStorage:
             skills_dir=str(tmp_path),
             provider=provider,
         )
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), mem
-        )
+        tool_handler = ToolHandler(str(tmp_path), mem, base_dir=tmp_path)
         manager = AgentManager(tool_handler, middlewares=[SessionMiddleware(mem)])
         session_id = manager.create_session(config)
         return manager, session_id
@@ -525,9 +523,7 @@ class TestMemoryAlwaysActive:
 
         memory = Memory(tmp_path / "memory.db")
         provider = MockProvider([TextDelta(text="hi")])
-        tool_handler = ToolHandler(
-            MakefileSkillBackend(str(tmp_path), base_dir=tmp_path), memory
-        )
+        tool_handler = ToolHandler(str(tmp_path), memory, base_dir=tmp_path)
         manager = AgentManager(tool_handler, middlewares=[SessionMiddleware(memory)])
         config = AgentConfig(
             system_prompt="",

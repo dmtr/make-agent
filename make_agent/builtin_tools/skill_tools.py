@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import shlex
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -170,7 +170,7 @@ def read_skill(name: str, skills_dir: str) -> str:
         return f"Error: could not read skill.mk: {e}"
 
 
-def execute_skill(
+async def execute_skill(
     name: str,
     command: str,
     skills_dir: str,
@@ -230,22 +230,32 @@ def execute_skill(
     env = {**os.environ, **env_vars}
     cmd = ["make", "--no-print-directory", "-f", str(mk), *make_args]
     try:
-        proc = subprocess.run(
-            cmd,
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
             env=env,
-            capture_output=True,
-            timeout=timeout,
-            stdin=subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL,
         )
-    except subprocess.TimeoutExpired:
-        return f"Error: execute_skill '{name}' exceeded {timeout}s timeout"
     except OSError as e:
         return f"Error: failed to run make: {e}"
-    stdout = proc.stdout.decode(errors="replace")
-    stderr = proc.stderr.decode(errors="replace")
-    from make_agent.tool_handler import ToolHandler  # local import avoids circular dep
 
-    return ToolHandler.get_tool_result(stdout, stderr, proc.returncode).output
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return f"Error: execute_skill '{name}' exceeded {timeout}s timeout"
+    except asyncio.CancelledError:
+        proc.kill()
+        await proc.wait()
+        raise
+
+    stdout = stdout_b.decode(errors="replace")
+    stderr = stderr_b.decode(errors="replace")
+    from make_agent.tool_handler.runner import get_tool_result  # avoids circular import
+
+    return get_tool_result(stdout, stderr, proc.returncode).output
 
 
 def _write_no_symlink(path: Path, content: str) -> None:

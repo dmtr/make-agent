@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+from make_agent.memory import Memory
 from make_agent.tool_handler.handler import ToolHandler
 from make_agent.tool_handler.runner import get_tool_result
 from make_agent.main import _parse_trusted_skills
@@ -56,88 +57,45 @@ def test_parse_trusted_skills_all_case_insensitive():
 # ── ToolHandler.is_skill_trusted ───────────────────────────────────────────────
 
 
-def _make_handler(trusted_skills: frozenset[str] = frozenset()) -> ToolHandler:
-    backend = MagicMock()
-    backend.schemas = []
-    backend.executors = {}
-    memory = MagicMock()
-    memory.store = MagicMock()
-    backend.schemas = []
-    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
-    backend.get_skill_trusted = MagicMock(return_value=None)
-    return ToolHandler(backend, memory, trusted_skills=trusted_skills)
+def _make_handler(tmp_path, trusted_skills: frozenset[str] = frozenset()) -> ToolHandler:
+    memory = Memory(tmp_path / "memory.db")
+    return ToolHandler(str(tmp_path), memory, trusted_skills=trusted_skills)
 
 
-def test_is_trusted_empty_set():
-    h = _make_handler(frozenset())
+def test_is_trusted_empty_set(tmp_path):
+    h = _make_handler(tmp_path, frozenset())
     assert not h.is_skill_trusted("web-fetch", "fetch")
 
 
-def test_is_trusted_specific_match():
-    h = _make_handler(frozenset(["web-fetch"]))
+def test_is_trusted_specific_match(tmp_path):
+    h = _make_handler(tmp_path, frozenset(["web-fetch"]))
     assert h.is_skill_trusted("web-fetch", "fetch")
     assert not h.is_skill_trusted("search", "query")
 
 
-def test_is_trusted_wildcard():
-    h = _make_handler(frozenset(["*"]))
+def test_is_trusted_wildcard(tmp_path):
+    h = _make_handler(tmp_path, frozenset(["*"]))
     assert h.is_skill_trusted("web-fetch", "fetch")
     assert h.is_skill_trusted("any-skill", "run")
 
 
-def test_is_trusted_dot_notation_specific_target():
-    h = _make_handler(frozenset(["web.fetch"]))
+def test_is_trusted_dot_notation_specific_target(tmp_path):
+    h = _make_handler(tmp_path, frozenset(["web.fetch"]))
     assert h.is_skill_trusted("web", "fetch")
     assert not h.is_skill_trusted("web", "search")
     assert not h.is_skill_trusted("other", "fetch")
 
 
-def test_is_trusted_dot_notation_does_not_trust_whole_skill():
-    h = _make_handler(frozenset(["web.fetch"]))
+def test_is_trusted_dot_notation_does_not_trust_whole_skill(tmp_path):
+    h = _make_handler(tmp_path, frozenset(["web.fetch"]))
     assert not h.is_skill_trusted("web", "search")
 
 
-def test_is_trusted_skill_level_trusts_all_targets():
-    h = _make_handler(frozenset(["web"]))
+def test_is_trusted_skill_level_trusts_all_targets(tmp_path):
+    h = _make_handler(tmp_path, frozenset(["web"]))
     assert h.is_skill_trusted("web", "fetch")
     assert h.is_skill_trusted("web", "search")
     assert not h.is_skill_trusted("other", "fetch")
-
-
-def test_is_trusted_backend_ast_trust():
-    """Backend returning trusted=True from AST grants trust without CLI override."""
-    backend = MagicMock()
-    backend.schemas = []
-    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
-    backend.get_skill_trusted = MagicMock(return_value=True)
-    memory = MagicMock()
-    memory.store = MagicMock()
-    h = ToolHandler(backend, memory, trusted_skills=frozenset())
-    assert h.is_skill_trusted("web", "fetch")
-
-
-def test_is_trusted_backend_ast_untrusted():
-    """Backend returning trusted=False (AST untrusted) requires CLI override."""
-    backend = MagicMock()
-    backend.schemas = []
-    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
-    backend.get_skill_trusted = MagicMock(return_value=False)
-    memory = MagicMock()
-    memory.store = MagicMock()
-    h = ToolHandler(backend, memory, trusted_skills=frozenset())
-    assert not h.is_skill_trusted("web", "fetch")
-
-
-def test_is_trusted_backend_ast_none():
-    """Backend returning None (Makefile backend) requires CLI override."""
-    backend = MagicMock()
-    backend.schemas = []
-    backend.executors = {"execute_skill": AsyncMock(return_value="ok")}
-    backend.get_skill_trusted = MagicMock(return_value=None)
-    memory = MagicMock()
-    memory.store = MagicMock()
-    h = ToolHandler(backend, memory, trusted_skills=frozenset())
-    assert not h.is_skill_trusted("web", "fetch")
 
 
 # ── AgentManager.astream_events — skill confirmation ──────────────────────────
