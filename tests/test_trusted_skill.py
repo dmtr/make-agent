@@ -238,3 +238,33 @@ async def test_astream_events_non_skill_tool_no_confirm():
     assert not any(isinstance(e, ConfirmEvent) for e in events)
     assert any(isinstance(e, ToolStartEvent) for e in events)
     manager._tool_handler.is_skill_trusted.assert_not_called()
+
+
+# ── AgentManager.arun_agent — non-interactive mode ────────────────────────────
+
+
+async def test_arun_agent_untrusted_skill_auto_denied():
+    """arun_agent (non-interactive) auto-denies untrusted skills instead of deadlocking."""
+    cb = _make_tool_callback(
+        "execute_skill", {"name": "file-explorer", "command": "ls -R", "kwargs": {}}
+    )
+    cbs = [cb, MessageCallback("done")]
+    manager, sid = _make_manager_with_loop(cbs, trusted_skills=frozenset())
+    result = await manager.arun_agent(sid, "explore files")
+    assert result == "done"
+    # Tool should NOT have been executed — it was auto-denied
+    manager._tool_handler.execute.assert_not_awaited()
+    # The callback must have received a denial response
+    assert "denied" in cb.output.lower() or cb.is_error or cb.output
+
+
+async def test_arun_agent_trusted_skill_executes():
+    """arun_agent (non-interactive) executes trusted skills normally."""
+    cb = _make_tool_callback(
+        "execute_skill", {"name": "file-list", "command": "ls", "kwargs": {}}
+    )
+    cbs = [cb, MessageCallback("done")]
+    manager, sid = _make_manager_with_loop(cbs, trusted_skills=frozenset(["file-list"]))
+    result = await manager.arun_agent(sid, "list files")
+    assert result == "done"
+    manager._tool_handler.execute.assert_awaited_once()

@@ -92,11 +92,21 @@ class AgentManager:
             raise SessionNotFoundError(f"Session with id {session_id} not found.")
 
     async def arun_agent(self, session_id: str, message: str) -> str:
-        """Run one agent turn and return the final reply text."""
+        """Run one agent turn and return the final reply text.
+
+        When the agent encounters an untrusted skill, a :class:`ConfirmEvent`
+        is yielded.  Because there is no interactive user in this mode,
+        the event is auto-denied so the agent can continue with an error
+        message instead of deadlocking forever.
+        """
         result = ""
         async for event in self.astream_events(session_id, message):
             if isinstance(event, DoneEvent):
                 result = event.content
+            elif isinstance(event, ConfirmEvent):
+                # No interactive user available — deny untrusted skills
+                # so the agent receives a denial message instead of hanging.
+                event.deny()
         return result
 
     async def _stream_events_core(self, request: Request) -> AsyncIterator[AgentEvent]:
