@@ -632,6 +632,36 @@ class AgenticLoop:
         self._messages = system + [summary_msg] + current_turn
         return old_len - len(self._messages), len(prior_turns)
 
+    def truncate_to_turn(self, turn_number: int) -> int:
+        """Truncate conversation history to keep only the first *turn_number* turns.
+
+        A "turn" starts with a ``role=user`` message and includes all subsequent
+        messages (assistant, tool_calls, tool results) until the next user message
+        or end of list.  System messages are always preserved.
+
+        Returns the number of messages removed.  Raises ``ValueError`` if
+        *turn_number* is out of range.
+        """
+        system = [m for m in self._messages if m.get("role") == "system"]
+        non_system = [m for m in self._messages if m.get("role") != "system"]
+
+        turns: list[list[dict]] = []
+        for msg in non_system:
+            if msg.get("role") == "user":
+                turns.append([msg])
+            elif turns:
+                turns[-1].append(msg)
+
+        if turn_number < 1 or turn_number > len(turns):
+            raise ValueError(
+                f"turn_number {turn_number} out of range (1–{len(turns)})"
+            )
+
+        kept = [m for turn in turns[:turn_number] for m in turn]
+        removed = len(non_system) - len(kept)
+        self._messages = system + kept
+        return removed
+
     async def arun(self, user_input: str) -> str:
         """Send *user_input* to the LLM and return the assistant's final reply.
 

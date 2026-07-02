@@ -238,6 +238,24 @@ class AgentManager:
                 return mw._memory.get_session_stats(session_id)
         return {}
 
+    def truncate_session(self, session_id: str, turn_number: int) -> int:
+        """Truncate the conversation history of a session to the given turn.
+
+        Returns the number of messages removed.
+        """
+        loop = self.get_agent(session_id)
+        return loop.truncate_to_turn(turn_number)
+
+    def rotate_session_id(self, session_id: str) -> str:
+        """Assign a new session_id to an existing loop for tracking purposes.
+
+        Returns the new session_id.
+        """
+        new_id = self.get_session_id()
+        loop = self._sessions.pop(session_id)
+        self._sessions[new_id] = loop
+        return new_id
+
     # ── queue bridge ──────────────────────────────────────────────────────────
 
     async def run_shell_bridge(

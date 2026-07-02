@@ -286,6 +286,21 @@ class ShellState:
     def add_alert(self, level: str, message: str) -> None:
         self.current_alert = InlineAlert(level=level, message=message)
 
+    def branch_to_turn(self, turn_index: int) -> int:
+        """Truncate transcript to the given turn index.
+
+        Returns the number of turns removed.  Resets ``viewed_turn_index``
+        to ``None`` so the UI follows the new latest turn.
+        """
+        if turn_index < 0 or turn_index >= len(self.transcript):
+            raise ValueError(
+                f"turn_index {turn_index} out of range (0–{len(self.transcript) - 1})"
+            )
+        removed = len(self.transcript) - (turn_index + 1)
+        self.transcript = self.transcript[: turn_index + 1]
+        self.viewed_turn_index = None
+        return removed
+
 
 # ── MakeAgentShell ──────────────────────────────────────────────────────────────
 
@@ -318,6 +333,7 @@ class MakeAgentShell:
             "export": self._cmd_export,
             "stats": self._cmd_stats,
             "help": self._cmd_help,
+            "branch": self._cmd_branch,
         }
 
     # ── rendering ───────────────────────────────────────────────────────────────
@@ -458,7 +474,7 @@ class MakeAgentShell:
             return [
                 (
                     "class:hint.transcript",
-                    f"  ► {position}  Ctrl+P prev  Ctrl+N next  ↑↓ scroll  Ctrl+T exit",
+                    f"  ► {position}  Ctrl+P prev  Ctrl+N next  /branch [prompt]  Ctrl+T exit",
                 )
             ]
 
@@ -709,10 +725,10 @@ class MakeAgentShell:
 
     # ── command handlers ─────────────────────────────────────────────────────────
 
-    def _cmd_exit(self) -> bool:
+    def _cmd_exit(self, arg: str | None = None) -> bool:
         return True
 
-    def _cmd_export(self) -> bool:
+    def _cmd_export(self, arg: str | None = None) -> bool:
         path = self._agent_manager.export_conversation(self._session_id)
         if path:
             self._state.add_alert("INFO", f"Conversation exported to {path}")
@@ -720,7 +736,7 @@ class MakeAgentShell:
             self._state.add_alert("INFO", "Nothing to export yet.")
         return False
 
-    def _cmd_stats(self) -> bool:
+    def _cmd_stats(self, arg: str | None = None) -> bool:
         stats = self._agent_manager.get_token_stats(self._session_id)
         if not stats:
             self._state.add_alert(
@@ -736,7 +752,7 @@ class MakeAgentShell:
             )
         return False
 
-    def _cmd_help(self) -> bool:
+    def _cmd_help(self, arg: str | None = None) -> bool:
         cmds = "  ".join(f"/{name}" for name in self._commands)
         self._state.add_alert("INFO", f"Commands: {cmds}")
         self._state.add_alert(
@@ -744,16 +760,82 @@ class MakeAgentShell:
         )
         return False
 
+    def _cmd_branch(self, arg: str | None = None) -> bool:
+        """Branch from the currently viewed turn, discarding all later turns.
+
+        If *arg* is provided, it is sent as a new user prompt immediately
+        after the branch.  Returns False (don't exit the shell).
+        """
+        state = self._state
+
+        # Must be viewing a specific turn (not the live latest)
+        idx = state.viewed_turn_index
+        if idx is None:
+            if state.transcript_focused and len(state.transcript) > 1:
+                # Viewing the latest turn — nothing to branch from
+                state.add_alert(
+                    "INFO", "Already at the latest turn. Navigate to an earlier turn first (Ctrl+P)."
+                )
+            elif state.transcript_focused and len(state.transcript) <= 1:
+                state.add_alert("INFO", "Only one turn — nothing to branch from.")
+            else:
+                state.add_alert(
+                    "WARNING", "Enter transcript mode and navigate to a turn first (Ctrl+T, Ctrl+P/N)."
+                )
+            return False
+
+        turn_number = idx + 1  # 1-indexed for display and for truncate_to_turn
+        total_turns = len(state.transcript)
+        turns_removed = total_turns - turn_number
+
+        if turns_removed == 0:
+            state.add_alert("INFO", "Already at the latest turn. Nothing to branch.")
+            return False
+
+        # 1. Truncate LLM context
+        try:
+            removed_msgs = self._agent_manager.truncate_session(
+                self._session_id, turn_number
+            )
+        except ValueError as e:
+            state.add_alert("ERROR", str(e))
+            return False
+
+        # 2. Truncate transcript
+        state.branch_to_turn(idx)
+
+        # 3. Rotate session ID for clean tracking
+        self._session_id = self._agent_manager.rotate_session_id(self._session_id)
+
+        # 4. Exit transcript focus — return to live composer
+        state.transcript_focused = False
+
+        # 5. Refresh UI
+        self._refresh()
+
+        state.add_alert(
+            "INFO",
+            f"Branched from turn {turn_number} (removed {turns_removed} turn(s), {removed_msgs} message(s))",
+        )
+
+        # 6. If a prompt was provided, send it as the first turn of the new branch
+        if arg:
+            asyncio.ensure_future(self._run_turn(arg))
+
+        return False
+
     def _dispatch_command(self, line: str) -> bool:
         """Dispatch a /command. Returns True if the shell should exit."""
-        name, *_ = line.strip().split(None, 1)
+        parts = line.strip().split(None, 1)
+        name = parts[0]
+        arg = parts[1].strip() if len(parts) > 1 else None
         handler = self._commands.get(name)
         if handler is None:
             self._state.add_alert(
                 "WARNING", f"Unknown command: /{name}  (type /help for a list)"
             )
             return False
-        return handler()
+        return handler(arg)
 
     # ── event consumption ────────────────────────────────────────────────────────
 
