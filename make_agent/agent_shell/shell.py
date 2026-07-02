@@ -560,9 +560,7 @@ class MakeAgentShell:
 
         def _set_transcript_focus(enabled: bool) -> None:
             state.transcript_focused = enabled
-            if enabled:
-                layout.focus(response_area)
-            else:
+            if not enabled:
                 # Reset history view when exiting — return to live latest turn
                 state.viewed_turn_index = None
                 layout.focus(composer_input)
@@ -572,7 +570,7 @@ class MakeAgentShell:
 
         @kb.add("enter")
         def _on_enter(event) -> None:
-            if state.status != AgentStatus.IDLE or state.transcript_focused:
+            if state.status != AgentStatus.IDLE:
                 return
 
             text = composer_input.text.strip()
@@ -584,11 +582,16 @@ class MakeAgentShell:
                 self._history_manager.submit()  # Reset nav state after sending
 
             if text.startswith("/"):
+                # Always allow commands — even in transcript mode (/branch needs it)
                 should_exit = self._dispatch_command(text[1:])
                 if should_exit:
                     event.app.exit()
                 else:
                     self._refresh()
+            elif state.transcript_focused:
+                # Regular message while viewing history: exit transcript mode first
+                _set_transcript_focus(False)
+                asyncio.ensure_future(self._run_turn(text))
             else:
                 asyncio.ensure_future(self._run_turn(text))
 
@@ -804,13 +807,10 @@ class MakeAgentShell:
         # 2. Truncate transcript
         state.branch_to_turn(idx)
 
-        # 3. Rotate session ID for clean tracking
-        self._session_id = self._agent_manager.rotate_session_id(self._session_id)
-
-        # 4. Exit transcript focus — return to live composer
+        # 3. Exit transcript focus — return to live composer
         state.transcript_focused = False
 
-        # 5. Refresh UI
+        # 4. Refresh UI
         self._refresh()
 
         state.add_alert(
@@ -818,7 +818,7 @@ class MakeAgentShell:
             f"Branched from turn {turn_number} (removed {turns_removed} turn(s), {removed_msgs} message(s))",
         )
 
-        # 6. If a prompt was provided, send it as the first turn of the new branch
+        # 5. If a prompt was provided, send it as the first turn of the new branch
         if arg:
             asyncio.ensure_future(self._run_turn(arg))
 
